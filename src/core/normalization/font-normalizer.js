@@ -1,18 +1,8 @@
-/**
- * Normalises CSS `font-family` strings to a consistent title-cased format.
- * Runs in the content-script context; pure synchronous string manipulation.
- * Invariant: always returns a string (or the original non-string value unchanged).
- * Called by: normalizer-engine.js for every `font-family` CSS property.
- */
-
-// CSS generic family keywords — left lowercase per the spec, never title-cased.
 const GENERIC_FAMILIES = [
   'serif', 'sans-serif', 'monospace', 'cursive', 'fantasy',
   'system-ui', 'ui-serif', 'ui-sans-serif', 'ui-monospace', 'ui-rounded'
 ];
 
-// Maps lowercase font names to their conventional display-casing.
-// Used before the generic title-case fallback to preserve names like "Comic Sans MS".
 const FONT_ALIASES = {
   'arial': 'Arial',
   'helvetica': 'Helvetica',
@@ -35,14 +25,6 @@ const FONT_ALIASES = {
   'consolas': 'Consolas'
 };
 
-/**
- * Parses a comma-separated `font-family` value and normalises each font name:
- * strips surrounding quotes, lower-cases, applies alias or title-case, then re-joins.
- * Generic family keywords (e.g. `sans-serif`) are preserved in lowercase per spec.
- *
- * @param {string|*} fontFamily - Raw value from a computed `font-family` property.
- * @returns {string} Normalised comma-separated font list, or the original value if not a string.
- */
 function normalizeFont(fontFamily) {
   if (!fontFamily || typeof fontFamily !== 'string') {
     return fontFamily;
@@ -56,7 +38,6 @@ function normalizeFont(fontFamily) {
   const normalized = fonts.map(font => {
     let cleaned = font.toLowerCase();
 
-    // Remove surrounding single or double quotes added by some browsers.
     cleaned = cleaned.replace(/^['"]|['"]$/g, '');
 
     cleaned = cleaned.trim();
@@ -69,7 +50,6 @@ function normalizeFont(fontFamily) {
       return FONT_ALIASES[cleaned];
     }
 
-    // Title-case unknown fonts so "open sans" and "Open Sans" compare as equal.
     return cleaned
       .split(' ')
       .map(word => word.charAt(0).toUpperCase() + word.slice(1))

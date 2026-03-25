@@ -1,30 +1,9 @@
-/**
- * In-process operation timer and stats aggregator. Runs in the MV3 service worker.
- * Failure mode contained here: none — all methods are pure in-memory and never throw.
- * Callers: any workflow that wraps operations with start()/end() or wrap().
- */
-
-/**
- * Tracks timing metrics per named operation: count, total, min, max, stdDev,
- * and percentiles over the last 100 samples.
- * Does not own logging — callers decide what to do with the returned stats.
- * Invariant: always call end() with the handle returned by start(), even on error —
- * an unended handle silently leaks that sample from the operation's history.
- */
 class PerformanceMonitor {
   constructor() {
     this.metrics = {};
     this.enabled = true;
   }
 
-  /**
-   * Begins timing an operation and returns an opaque handle to pass to end().
-   * Returns undefined when disabled — end() guards against this, so the pair
-   * is always safe to call unconditionally.
-   *
-   * @param {string} operation
-   * @returns {{operation: string, startTime: number, startMark: string} | undefined}
-   */
   start(operation) {
     if (!this.enabled) {return;}
     
@@ -45,15 +24,6 @@ class PerformanceMonitor {
     };
   }
 
-  /**
-   * Stops timing and records the sample. Raw float durations are stored in the
-   * metric for precision; only the returned summary values are rounded.
-   * The sample window is capped at 100 — stdDev and percentiles from getStats()
-   * are approximate once count exceeds that.
-   *
-   * @param {{operation: string, startTime: number} | undefined} handle
-   * @returns {{operation: string, duration: number, average: number} | null}
-   */
   end(handle) {
     if (!this.enabled || !handle) {return null;}
 
@@ -65,7 +35,6 @@ class PerformanceMonitor {
     metric.minTime = Math.min(metric.minTime, duration);
     metric.maxTime = Math.max(metric.maxTime, duration);
 
-    // Capped at 100 samples — percentiles and stdDev in getStats() are approximate beyond this.
     metric.samples.push(duration);
     if (metric.samples.length > 100) {
       metric.samples.shift();
@@ -78,15 +47,6 @@ class PerformanceMonitor {
     };
   }
 
-  /**
-   * Returns an async wrapper around fn that records timing via start()/end().
-   * Always returns an async function — a synchronous throw from fn becomes a
-   * rejected Promise rather than a thrown error.
-   *
-   * @param {string} operation
-   * @param {Function} fn
-   * @returns {(...args: any[]) => Promise<any>}
-   */
   wrap(operation, fn) {
     return async (...args) => {
       const handle = this.start(operation);
@@ -101,13 +61,6 @@ class PerformanceMonitor {
     };
   }
 
-  /**
-   * Returns aggregated stats for a named operation, including stdDev and percentiles
-   * computed over the last 100 samples. Returns null if the operation has no recorded samples.
-   *
-   * @param {string} operation
-   * @returns {{operation, count, total, average, min, max, stdDev, p50, p95, p99} | null}
-   */
   getStats(operation) {
     const metric = this.metrics[operation];
     if (!metric || metric.count === 0) {return null;}
@@ -130,7 +83,6 @@ class PerformanceMonitor {
     };
   }
 
-  /** Returns stats for every tracked operation as a keyed object. */
   getAllStats() {
     const stats = {};
     for (const op of Object.keys(this.metrics)) {
@@ -139,14 +91,6 @@ class PerformanceMonitor {
     return stats;
   }
 
-  /**
-   * Computes a percentile over an array of duration samples using the nearest-rank method.
-   * Spreads before sorting to avoid mutating the live samples array.
-   *
-   * @param {number[]} samples
-   * @param {number} p - Fraction in [0, 1], e.g. 0.95 for p95.
-   * @returns {number}
-   */
   _percentile(samples, p) {
     if (samples.length === 0) {return 0;}
     const sorted = [...samples].sort((a, b) => a - b);
@@ -154,12 +98,6 @@ class PerformanceMonitor {
     return Math.round(sorted[Math.max(0, index)]);
   }
 
-  /**
-   * Clears metrics. Pass an operation name to reset only that operation;
-   * omit the argument (or pass null) to clear all tracked operations.
-   *
-   * @param {string|null} [operation=null]
-   */
   reset(operation = null) {
     if (operation) {
       delete this.metrics[operation];

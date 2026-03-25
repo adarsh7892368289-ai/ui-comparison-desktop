@@ -1,22 +1,7 @@
-/**
- * Classifies a DOM element into one of three page sections: header, main, or footer.
- * Runs in the content-script context after DOM extraction.
- * Invariant: always returns a string — callers can compare without null-guarding.
- * Called by: extractor.js per-element enrichment pass.
- */
 import { get } from '../../config/defaults.js';
 
-// Word-boundary regexes prevent partial matches (e.g. "share" triggering "header").
 const HEADER_CLASS_RE = /(^|[^a-z])(header|top|navbar|masthead)([^a-z]|$)/i;
 const FOOTER_CLASS_RE = /(^|[^a-z])(footer|bottom|copyright)([^a-z]|$)/i;
-
-/**
- * Walks the ancestor chain looking for HTML5 landmark elements or ARIA roles
- * that unambiguously identify the section. Stops at <body> to avoid false positives.
- *
- * @param {Element} element - The element to classify.
- * @returns {'header'|'main'|'footer'|null} Null when no semantic landmark is found.
- */
 function classifyBySemantics(element) {
   let current = element;
 
@@ -43,13 +28,6 @@ function classifyBySemantics(element) {
   return null;
 }
 
-/**
- * Falls back to pixel thresholds when no semantic landmark exists.
- * Thresholds are capped at a viewport-relative value so they stay sane on infinite-scroll pages.
- *
- * @param {number} absoluteTop - Element's top offset from the document origin in pixels.
- * @returns {'header'|'main'|'footer'}
- */
 function classifyByPosition(absoluteTop) {
   const cfg            = get('extraction.section');
   const docHeight      = document.documentElement.scrollHeight;
@@ -63,14 +41,6 @@ function classifyByPosition(absoluteTop) {
   return 'main';
 }
 
-/**
- * Public entry point: semantic classification first, position-based fallback second.
- * Returns 'unknown' instead of throwing when inputs are missing or position math fails.
- *
- * @param {Element|null} element - The DOM element to classify.
- * @param {number|null} absoluteTop - Pre-computed top offset; pass null to skip position fallback.
- * @returns {'header'|'main'|'footer'|'unknown'}
- */
 function detectElementSection(element, absoluteTop) {
   if (!element) {return 'unknown';}
 

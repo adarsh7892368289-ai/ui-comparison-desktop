@@ -1,12 +1,3 @@
-/**
- * Expands CSS shorthand properties (margin, padding, border, background, font)
- * into their individual longhand equivalents before value normalisation.
- * Runs in the content-script context; pure synchronous object manipulation.
- * Invariant: longhands already present in the input are never overwritten.
- * Called by: normalizer-engine.js before per-property normalisation.
- */
-
-// Maps each supported shorthand to the longhands it expands into, in CSS declaration order.
 const SHORTHAND_PROPERTIES = {
   'margin':        ['margin-top', 'margin-right', 'margin-bottom', 'margin-left'],
   'padding':       ['padding-top', 'padding-right', 'padding-bottom', 'padding-left'],
@@ -16,7 +7,6 @@ const SHORTHAND_PROPERTIES = {
   'border-radius': ['border-top-left-radius', 'border-top-right-radius', 'border-bottom-right-radius', 'border-bottom-left-radius']
 };
 
-// These keys are deleted from the output so the normaliser only sees longhands.
 const SHORTHAND_KEYS_TO_DROP = new Set([
   'margin', 'padding',
   'border-width', 'border-style', 'border-color', 'border-radius',
@@ -24,13 +14,6 @@ const SHORTHAND_KEYS_TO_DROP = new Set([
   'background', 'font'
 ]);
 
-/**
- * Main entry point: shallow-copies `styles`, expands all known shorthands into longhands,
- * then deletes the shorthand keys. Returns the expanded map.
- *
- * @param {Record<string, string>} styles - Raw computed-style map (not mutated).
- * @returns {Record<string, string>} New map with only longhand properties.
- */
 function expandShorthands(styles) {
   const expanded = { ...styles };
 
@@ -64,14 +47,6 @@ function expandShorthands(styles) {
   return expanded;
 }
 
-/**
- * Applies the CSS 1-2-3-4 value repetition rules to produce exactly `count` longhand values.
- * Only handles space-separated shorthand values (not slash-separated like `border-radius` corners).
- *
- * @param {string} value - Raw shorthand value string.
- * @param {number} count - Number of longhands to fill (typically 4).
- * @returns {string[]} Array of `count` individual values.
- */
 function expandShorthandValue(value, count) {
   const parts = value.trim().split(/\s+/);
 
@@ -85,13 +60,6 @@ function expandShorthandValue(value, count) {
   return parts.slice(0, count);
 }
 
-/**
- * Expands the `border` shorthand into width, style, and colour longhands.
- * Tokens are classified by pattern: numeric/keyword → width, style keyword → style, rest → color.
- * Mutates `styles` in place; skips any longhand already present.
- *
- * @param {Record<string, string>} styles - Expanded styles map being built.
- */
 function expandBorderShorthand(styles) {
   const { border } = styles;
   if (!border) {return;}
@@ -132,13 +100,6 @@ function expandBorderShorthand(styles) {
   }
 }
 
-/**
- * Extracts `background-color` and `background-image` from the `background` shorthand via regex.
- * Best-effort: complex gradients or multi-background values may not parse correctly.
- * Mutates `styles` in place; skips longhands already present.
- *
- * @param {Record<string, string>} styles - Expanded styles map being built.
- */
 function expandBackgroundShorthand(styles) {
   const bg = styles.background;
   if (!bg) {return;}
@@ -154,13 +115,6 @@ function expandBackgroundShorthand(styles) {
   }
 }
 
-/**
- * Extracts font-style, font-weight, font-size, line-height, and font-family from
- * the `font` shorthand by classifying each space-separated token.
- * Mutates `styles` in place; skips longhands already present.
- *
- * @param {Record<string, string>} styles - Expanded styles map being built.
- */
 function expandFontShorthand(styles) {
   const { font } = styles;
   if (!font) {return;}

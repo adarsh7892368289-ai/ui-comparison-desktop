@@ -1,19 +1,7 @@
-/**
- * Builds and downloads a fully self-contained HTML diff report from a comparison result.
- * All screenshots are embedded as base64 data URIs; no network access is needed to view the file.
- * Runs in the popup context — depends on chrome.downloads and IDB blob storage.
- * Invariant: never throws — all failures are caught and returned as {success:false}.
- * Called by: export-workflow.js → exportComparisonAsHTML().
- */
 import logger from '../../../infrastructure/logger.js';
 import storage from '../../../infrastructure/idb-repository.js';
 import { transformToGroupedReport } from '../shared/report-transformer.js';
 
-/**
- * Transforms, embeds screenshots, builds the HTML document, and triggers a download.
- * @param {object} comparisonResult - Fully-resolved comparison result from compare-workflow.
- * @returns {Promise<{ success: true } | { success: false, error: string }>}
- */
 async function exportToHTML(comparisonResult) {
   try {
     const grouped          = transformToGroupedReport(comparisonResult);
@@ -37,13 +25,6 @@ async function exportToHTML(comparisonResult) {
   }
 }
 
-/**
- * Normalises the visualDiffs value (Map or plain object) into a flat plain object keyed by HPID.
- * Uses actualDPR from the captured entry rather than the legacy hardcoded captureScaleFactor:2,
- * which silently doubled crop coordinates when the capture DPR was 1.
- * @param {Map|object|null} visualDiffs - Raw visualDiffs from the comparison result.
- * @returns {object} Plain object mapping HPID → normalised entry, or empty object if null.
- */
 function resolveVisualManifest(visualDiffs) {
   if (!visualDiffs) { return {}; }
   const out     = Object.create(null);
@@ -86,12 +67,6 @@ function resolveVisualManifest(visualDiffs) {
   return out;
 }
 
-/**
- * Converts a Blob to a base64 data URI string.
- * Processes in 32KB chunks to avoid exceeding the call stack limit of String.fromCharCode.
- * @param {Blob} blob - Image blob from IDB visual storage.
- * @returns {Promise<string>} Data URI string with the blob's media type prefix.
- */
 async function blobToDataUri(blob) {
   const buf   = await blob.arrayBuffer();
   const bytes = new Uint8Array(buf);
@@ -103,11 +78,6 @@ async function blobToDataUri(blob) {
   return `data:${blob.type || 'image/webp'};base64,${btoa(binary)}`;
 }
 
-/**
- * Loads all unique keyframe blobs referenced in the manifest and converts them to data URIs.
- * @param {object} manifest - Normalised visual manifest from resolveVisualManifest.
- * @returns {Promise<object>} Plain object mapping keyframe ID → base64 data URI.
- */
 async function loadBlobData(manifest) {
   const ids = new Set();
   for (const entry of Object.values(manifest)) {
@@ -122,13 +92,6 @@ async function loadBlobData(manifest) {
   return out;
 }
 
-/**
- * Encodes the HTML string as a base64 data URI and triggers a chrome.downloads.download call.
- * Base64 encoding is used because data URI length limits block large files in some Chrome versions.
- * @param {string} html - Complete HTML document string.
- * @param {string} filename - Suggested filename for the download.
- * @returns {Promise<void>}
- */
 async function triggerDownload(html, filename) {
   const bytes = new TextEncoder().encode(html);
   const chunk = 0x8000;
@@ -140,7 +103,6 @@ async function triggerDownload(html, filename) {
   await chrome.downloads.download({ url, filename, saveAs: false });
 }
 
-/** Escapes a value for safe insertion into HTML attribute values and text content. */
 function esc(str) {
   return String(str ?? '')
     .replace(/&/g, '&amp;')
@@ -149,12 +111,6 @@ function esc(str) {
     .replace(/"/g, '&quot;');
 }
 
-/**
- * Returns a sticky error/warning banner HTML string when visual capture failed or was skipped.
- * Returns an empty string when status is success, completed, or devtools-blocked.
- * @param {{ status: string, reason?: string }|null} vds - Visual diff status from compare-workflow.
- * @returns {string} HTML string, or '' when no banner is needed.
- */
 function buildDiagnosticBanner(vds) {
   if (!vds || vds.status === 'success' || vds.status === 'completed' || vds.status === 'devtools-blocked') { return ''; }
   const isFailed  = vds.status === 'failed';
@@ -171,12 +127,6 @@ function buildDiagnosticBanner(vds) {
 </div>`;
 }
 
-/**
- * Returns a sticky info banner HTML string when the URL pre-flight check raised a CAUTION.
- * Returns an empty string when the warning is absent or not classified as CAUTION.
- * @param {{ classification: string, mismatchDelta?: object, estimatedFalseNegatives?: number }|null} w
- * @returns {string} HTML string, or '' when no banner is needed.
- */
 function buildPreFlightBanner(w) {
   if (!w || w.classification !== 'CAUTION') { return ''; }
   const { mismatchDelta, estimatedFalseNegatives } = w;
@@ -190,10 +140,6 @@ function buildPreFlightBanner(w) {
 </div>`;
 }
 
-/**
- * Returns the full-screen workbench modal HTML structure with pane controls and scroll containers.
- * @returns {string} Static HTML string for the visual diff workbench modal.
- */
 function buildModalHtml() {
   return `<div id="vdiff-modal" class="vdiff-modal" aria-modal="true" role="dialog" hidden>
   <div class="vdiff-modal__header">
@@ -231,12 +177,6 @@ function buildModalHtml() {
 </div>`;
 }
 
-/**
- * Returns a sticky info banner HTML string when DevTools was detected open during capture.
- * Returns an empty string when warnings is empty — capture proceeded normally.
- * @param {Array<{ role: string, originalHeight: number, bypassHeight: number }>} warnings
- * @returns {string} HTML string, or '' when warnings is empty.
- */
 function buildDevToolsBanner(warnings) {
   if (!warnings || warnings.length === 0) { return ''; }
   const details = warnings.map(w =>
@@ -248,15 +188,6 @@ function buildDevToolsBanner(warnings) {
 </div>`;
 }
 
-/**
- * Assembles the complete self-contained HTML document string from all sub-sections.
- * @param {object} grouped - Grouped report from report-transformer.
- * @param {object} raw - Original comparison result (used for URLs, timestamps, warnings).
- * @param {object} manifest - Normalised visual manifest from resolveVisualManifest.
- * @param {object} blobData - Keyframe ID → base64 data URI map from loadBlobData.
- * @param {{ status: string }|null} visualDiffStatus - Visual capture status for the banner.
- * @returns {string} Complete HTML document string.
- */
 function buildDocument(grouped, raw, manifest, blobData, visualDiffStatus) {
   const { summary } = grouped;
   const title = `${raw.baseline?.url ?? ''} vs ${raw.compare?.url ?? ''}`;
@@ -312,18 +243,9 @@ ${buildModalHtml()}
 </html>`;
 }
 
-/**
- * Builds the left sidebar HTML with match rate, severity badges, and filter buttons.
- * @param {object} s - Summary object from the grouped report.
- * @param {object} raw - Original comparison result (used for URL hostnames).
- * @returns {string} HTML string for the sidebar contents.
- */
 function buildSidebar(s, raw) {
   const bar         = Math.round(s.matchRate ?? 0);
-  // Fix #1: severityBreakdown counts apex elements (post-suppression).
-  // severityCounts counted per-property events — inflated by ~3.5×.
   const sev         = s.severityBreakdown ?? { critical: 0, high: 0, medium: 0, low: 0 };
-  // Fix #3 + #4: direction-anchored labels and correct modified count.
   const cmpHost     = (() => { try { return new URL(raw?.compare?.url ?? '').hostname; } catch { return 'Compare'; } })();
   const baseHost    = (() => { try { return new URL(raw?.baseline?.url ?? '').hostname; } catch { return 'Baseline'; } })();
   const suppInfo    = s.suppressedChildCount > 0
@@ -371,14 +293,9 @@ function buildSidebar(s, raw) {
 </div>`;
 }
 
-/** Returns the complete CSS string for the self-contained HTML report. */
 function buildCss() {
   return `
 :root{
-  /* ─── SURFACES (GitHub Primer staircase, verified canvas tokens) ─────────
-     Each step is ~5-6 LCH lightness units above the previous.
-     Base: GitHub canvas.default #0d1117 — navy-black, not pure black.
-     No pure #000 — avoids halation on astigmatic displays (Finding 5).      */
   --bg-base:#0d1117;
   --bg-surface:#161b22;
   --bg-elevated:#1c2128;
@@ -387,21 +304,11 @@ function buildCss() {
   --bg-active:rgba(255,255,255,.08);
   --bg-selected:rgba(109,40,217,.12);
 
-  /* ─── BORDERS (Vercel semi-transparent principle) ────────────────────────
-     All rgba(255,255,255,X) — sharper than equivalent hex, adapts to bg.   */
   --border-subtle:rgba(255,255,255,.07);
   --border-default:rgba(255,255,255,.12);
   --border-strong:rgba(255,255,255,.22);
   --border-focus:#7c3aed;
 
-  /* ─── FOREGROUND — 5 solid levels (GitHub Primer fg.* scale) ────────────
-     No opacity hacks — Primer accessibility overhaul eliminated all of them.
-     Every value is a solid color with a known contrast ratio on bg-base.
-     text-primary  #e6edf3 ≈ 15.1:1 on bg-base  — fg.default
-     text-secondary #8d96a0 ≈  6.2:1 on bg-base  — fg.muted
-     text-muted    #6e7681 ≈  4.4:1 on bg-base  — fg.subtle
-     text-faint    #3d444d ≈  2.9:1 on bg-base  — arrows, guides
-     text-disabled #484f58 ≈  2.6:1 on bg-surface — fg.disabled (inactive)  */
   --text-primary:#e6edf3;
   --text-secondary:#8d96a0;
   --text-tertiary:#6e7681;
@@ -409,14 +316,12 @@ function buildCss() {
   --text-faint:#3d444d;
   --text-disabled:#484f58;
 
-  /* ─── ACCENT — purple brand ──────────────────────────────────────────── */
   --accent:#7c3aed;
   --accent-light:#a78bfa;
   --accent-muted:rgba(124,58,237,.12);
   --accent-faint:rgba(109,40,217,.14);
   --accent-border:rgba(124,58,237,.35);
 
-  /* ─── SEMANTIC diff colors ───────────────────────────────────────────── */
   --red-text:#f47474;
   --red-bg:rgba(239,68,68,.09);
   --red-border:rgba(239,68,68,.22);
@@ -426,7 +331,6 @@ function buildCss() {
   --amber-text:#d29922;
   --amber-bg:rgba(210,153,34,.09);
 
-  /* ─── TREE SPECIFIC ─────────────────────────────────────────────────── */
   --tree-indent-guide:rgba(255,255,255,.05);
   --tree-row-selected-bg:rgba(109,40,217,.12);
   --tree-row-selected-border:#7c3aed;
@@ -434,8 +338,6 @@ function buildCss() {
   --tree-structural-fg:#6b7d8a;
   --tree-diff-fg:#c7d2fe;
 
-  /* ─── SEVERITY (Stripe badge formula: dark bg + soft fg + midpoint border)
-     Every fg/bg pair validated ≥4.5:1 per Stripe's WCAG auto-check system. */
   --sev-critical-bg:#300d0d;
   --sev-critical-fg:#f47474;
   --sev-critical-border:rgba(239,68,68,.28);
@@ -450,12 +352,8 @@ function buildCss() {
   --sev-low-border:rgba(121,192,255,.22);
 }
 
-/* ── Reset ───────────────────────────────────────────────────────────────── */
 *{box-sizing:border-box;margin:0;padding:0}
 
-/* ── Body — Inter-optimised stack (Finding 5 + Vercel typography) ─────────
-   letter-spacing:-0.006em is Inter's recommended density setting.
-   font-weight:400 body, per dark-mode research: bright text reads bolder.   */
 body{
   font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
   background:var(--bg-base);color:var(--text-primary);
@@ -465,7 +363,6 @@ body{
 }
 .app{display:flex;flex-direction:column;height:100vh}
 
-/* ── D1 Topbar ───────────────────────────────────────────────────────────── */
 .topbar{
   display:flex;align-items:center;gap:12px;padding:0 16px;
   background:var(--bg-surface);
@@ -473,7 +370,6 @@ body{
   box-shadow:0 1px 0 var(--border-subtle);
   flex-shrink:0;min-height:46px;
 }
-/* font-weight:800 = closest named weight to Vercel's variable-font 750 */
 .topbar-title{font-weight:800;font-size:14px;color:var(--text-primary);letter-spacing:-0.02em;white-space:nowrap}
 .topbar-urls{display:flex;flex-direction:column;gap:1px;flex:1;min-width:0;overflow:hidden}
 .topbar-url{
@@ -493,7 +389,6 @@ body{
   white-space:nowrap;flex-shrink:0;font-weight:600;letter-spacing:.01em;
   font-variant-numeric:tabular-nums;
 }
-/* Search — min/max-width for responsive range (Vercel D1 spec) */
 #search{
   background:var(--bg-elevated);border:1px solid var(--border-default);
   color:var(--text-primary);border-radius:6px;
@@ -504,7 +399,6 @@ body{
 #search:focus{border-color:var(--accent);background:var(--bg-raised)}
 #search::placeholder{color:var(--text-faint)}
 
-/* ── Layout shell ────────────────────────────────────────────────────────── */
 .layout{display:grid;grid-template-columns:36px var(--col-left,280px) 4px 1fr 4px var(--col-right,0px);grid-template-rows:1fr;flex:1;min-height:0;overflow:hidden}
 .sidebar-wrapper{position:relative;display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
 .resize-handle{background:var(--border-subtle);cursor:col-resize;transition:background .08s;z-index:5;user-select:none}
@@ -515,28 +409,22 @@ body{
 .layout.sidebar-collapsed #resize-left{pointer-events:none;opacity:0}
 .layout.detail-empty #resize-right{pointer-events:none;opacity:0}
 
-/* Activity bar */
 .activity-bar{display:flex;flex-direction:column;align-items:center;padding:8px 0;background:var(--bg-base);border-right:1px solid var(--border-subtle);gap:6px}
 .activity-btn{background:none;border:none;color:var(--text-tertiary);cursor:pointer;padding:8px 6px;border-radius:6px;line-height:1;transition:color .08s,background .08s;width:36px;height:36px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .activity-btn svg{display:block;flex-shrink:0}
 .activity-btn:hover{color:var(--text-secondary);background:var(--bg-hover)}
 .activity-btn.active{color:var(--accent-light);background:var(--accent-muted)}
 
-/* ── D2 Sidebar — Stat Section ───────────────────────────────────────────── */
 .sidebar-section{margin-bottom:20px}
-/* Hero match-rate number — Linear pattern: massive, tabular, letter-tight */
 .stat-headline{
   font-size:36px;font-weight:800;color:var(--text-primary);
   letter-spacing:-1.5px;line-height:1;font-variant-numeric:tabular-nums;
 }
 .stat-label{font-size:11px;color:var(--text-muted);margin-bottom:5px;font-weight:500;letter-spacing:.02em}
-/* Thin 3px progress bar — Linear pattern */
 .progress-bar{height:3px;background:var(--bg-raised);border-radius:2px;overflow:hidden;margin-top:8px}
-/* Gradient fill — Linear's teal-to-purple gradient bar */
 .progress-fill{height:100%;background:linear-gradient(90deg,var(--accent),#06b6d4);border-radius:2px}
 .stat-row{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px;color:var(--text-secondary);font-variant-numeric:tabular-nums}
 
-/* ── D3 Severity Badges ──────────────────────────────────────────────────── */
 .badge{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:20px;border-radius:5px;font-size:11px;font-weight:700;padding:0 5px;border:1px solid transparent;font-variant-numeric:tabular-nums}
 .badge-critical{background:var(--sev-critical-bg);color:var(--sev-critical-fg);border-color:var(--sev-critical-border)}
 .badge-high{background:var(--sev-high-bg);color:var(--sev-high-fg);border-color:var(--sev-high-border)}
@@ -548,7 +436,6 @@ body{
 .icon.mod{color:var(--accent-light)}
 .filter-buttons{display:flex;flex-wrap:wrap;gap:4px}
 
-/* ── D4 Filter Buttons — Linear / Vercel style ───────────────────────────── */
 .filter-btn{
   background:transparent;border:1px solid var(--border-default);border-radius:5px;
   color:var(--text-muted);font-size:11px;font-weight:500;padding:3px 9px;cursor:pointer;
@@ -559,11 +446,8 @@ body{
 .icon{width:16px;display:inline-block;text-align:center}
 .icon.add{color:#3fb950}.icon.rem{color:var(--sev-critical-fg)}.icon.amb{color:var(--amber-text)}
 
-/* ── Center panel + D6 Tree Toolbar ─────────────────────────────────────── */
 .center-panel{display:flex;flex-direction:column;overflow:hidden;min-width:0;min-height:0}
-/* 4px-grid compliant: height 36px, padding 0 12px */
 .tree-toolbar{display:flex;align-items:center;gap:8px;padding:0 12px;height:36px;background:var(--bg-surface);border-bottom:1px solid var(--border-subtle);flex-shrink:0}
-/* Vercel small action button style: transparent bg, border, fast transition */
 .toolbar-btn{
   background:transparent;border:1px solid var(--border-default);border-radius:5px;
   color:var(--text-secondary);font-size:11px;height:26px;padding:0 10px;cursor:pointer;
@@ -577,25 +461,19 @@ body{
 @keyframes spin{to{transform:rotate(360deg)}}
 .panel-detail{background:var(--bg-surface);border-left:1px solid var(--border-subtle);overflow-y:auto;overflow-x:hidden;min-width:0;min-height:0;position:relative}
 
-/* Empty state */
 .detail-empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100%;gap:10px;padding:40px 20px;text-align:center}
 .detail-empty-icon{font-size:32px;opacity:.3}
 .detail-empty-text{font-size:14px;color:var(--text-tertiary);font-weight:600}
 .detail-empty-sub{font-size:11px;color:var(--text-disabled);line-height:1.6}
 
-/* Summary panel */
 #summary-panel{display:none;flex:1;overflow-y:auto;padding:12px;background:var(--bg-surface);min-height:0}
 .sidebar-wrapper.summary-active #diff-panel{display:none}
 .sidebar-wrapper.summary-active #summary-panel{display:flex;flex-direction:column;flex:1;min-height:0}
 
-/* ── D10 Summary Panel — Impact Score + Root Cause Cards ─────────────────── */
 .exec-summary{display:flex;flex-direction:column;gap:14px}
-/* border-radius:8px per D10 spec (was 10px) */
 .exec-zone{background:var(--bg-base);border:1px solid var(--border-subtle);border-radius:8px;padding:14px}
-/* ALL-CAPS header — letter-spacing:0.08em (Stripe confirmed) */
 .exec-zone-title{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);font-weight:700;margin-bottom:12px}
 .impact-score-ring{display:flex;align-items:center;gap:16px}
-/* Large hero number — Linear KPI widget pattern, tabular for stability */
 .impact-score-number{font-size:52px;font-weight:900;line-height:1;letter-spacing:-2px;font-variant-numeric:tabular-nums}
 .impact-score-number.score-great{color:#3fb950}
 .impact-score-number.score-good{color:#56d364}
@@ -611,7 +489,6 @@ body{
 .impact-progress{height:4px;background:var(--bg-elevated);border-radius:2px;overflow:hidden;margin-top:12px}
 .impact-progress-fill{height:100%;border-radius:2px;transition:width .6s ease}
 .root-cause-list{display:flex;flex-direction:column;gap:6px}
-/* Root cause cards — Linear issue row: compact, fast hover (80ms) */
 .root-cause-card{
   display:flex;align-items:flex-start;gap:10px;padding:8px 10px;
   background:var(--bg-base);border:1px solid var(--border-subtle);border-radius:6px;
@@ -624,14 +501,12 @@ body{
 .root-cause-dot.sev-medium{background:var(--sev-medium-fg)}
 .root-cause-dot.sev-low{background:var(--sev-low-fg)}
 .root-cause-body{flex:1;min-width:0}
-/* Monospace key with full Geist Mono stack (Vercel) */
 .root-cause-key{font-size:12px;font-family:ui-monospace,'Geist Mono','Cascadia Code','Fira Code','JetBrains Mono',monospace;color:var(--accent-light);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
 .root-cause-sub{font-size:11px;color:var(--text-muted);line-height:1.4;margin-top:3px}
 .root-cause-arrow{font-size:14px;color:var(--text-disabled);flex-shrink:0;align-self:center;transition:color .08s}
 .root-cause-card:hover .root-cause-arrow{color:var(--accent-light)}
 .root-cause-empty{font-size:12px;color:var(--text-tertiary);text-align:center;padding:20px 0}
 
-/* Distribution bar */
 .dist-bar-outer{height:20px;border-radius:5px;overflow:hidden;display:flex;margin-bottom:10px}
 .dist-segment{height:100%;transition:flex .4s ease;min-width:0;position:relative}
 .dist-segment[data-cat=layout]{background:#3b82f6}
@@ -644,11 +519,9 @@ body{
 .dist-legend-dot{width:9px;height:9px;border-radius:2px;flex-shrink:0}
 .dist-count{color:var(--text-tertiary);font-size:10px;margin-left:auto;font-variant-numeric:tabular-nums}
 
-/* ── D7 Detail Panel Header ──────────────────────────────────────────────── */
 .detail-header{padding:12px 16px;border-bottom:1px solid var(--border-subtle);flex-shrink:0;background:var(--bg-surface)}
 .detail-scroll{display:block}
 .detail-body{padding:14px 16px}
-/* Narrative badge — font-size 10px (9px uppercase is illegible per WCAG) */
 .detail-narrative-badge{display:inline-flex;align-items:center;font-size:10px;font-weight:700;letter-spacing:.08em;padding:2px 7px;border-radius:4px;margin-bottom:10px;text-transform:uppercase}
 .nb-insertion{background:#0f2a1a;color:#3fb950;border:1px solid #145522}
 .nb-removal{background:#300d0d;color:#f47474;border:1px solid #5e1c1c}
@@ -658,7 +531,6 @@ body{
 .nb-structural{background:#161b22;color:var(--text-muted);border:1px solid var(--border-default)}
 .nb-content{background:#0c2825;color:#34d399;border:1px solid #065f46}
 .nb-pseudo{background:#141030;color:#a5b4fc;border:1px solid #2e2470}
-/* detail-tag uses var(--text-primary) not hardcoded #fff — avoids halation */
 .detail-tag{font-size:14px;font-weight:700;color:var(--text-primary);font-family:ui-monospace,'Geist Mono','Cascadia Code','Fira Code',monospace;word-break:break-all;line-height:1.4;margin-top:6px}
 .detail-breadcrumb{font-size:11px;color:var(--text-muted);margin-top:4px;word-break:break-all;line-height:1.5}
 .detail-selectors{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
@@ -666,47 +538,36 @@ body{
 .detail-instances{font-size:11px;color:var(--green-text);margin-top:6px;padding:4px 8px;background:rgba(63,185,80,.06);border-radius:4px;border-left:2px solid rgba(63,185,80,.3)}
 .detail-demotion{font-size:11px;color:#5eead4;margin-top:6px;padding:6px 8px;background:#134e4a22;border-radius:4px;border-left:2px solid #0d9488}
 .detail-demotion strong{color:#99f6e4}
-/* sel-btn — Vercel style: bg-elevated, border, monospace, token colors */
 .sel-btn{background:var(--bg-elevated);border:1px solid var(--border-default);border-radius:4px;color:var(--text-secondary);font-size:11px;padding:3px 8px;cursor:pointer;font-family:ui-monospace,'Geist Mono','Cascadia Code',monospace;transition:background .08s,border-color .08s}
 .sel-btn:hover{background:var(--bg-raised);border-color:var(--border-strong)}.sel-sep{color:var(--border-strong);padding:0 2px;font-size:11px;align-self:center}
 .detail-category{margin-bottom:14px}
 
-/* ── D9 Category Headers ─────────────────────────────────────────────────── */
-/* font-size:10px, letter-spacing:0.08em — Stripe section header pattern */
 .cat-title{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:6px;padding-bottom:5px;border-bottom:1px solid var(--border-subtle);font-weight:700}
 
-/* ── D8 Diff Table — GitHub Primer pattern ───────────────────────────────── */
-/* 110px property column — maximises value columns (D8 spec) */
 .diff-row{display:grid;grid-template-columns:110px 1fr 14px 1fr;gap:4px;align-items:baseline;padding:5px 0;font-size:12px;border-bottom:1px solid var(--border-subtle)}
 .diff-row:last-child{border-bottom:none}
-/* tabular-nums on property col — CSS values contain numbers */
 .diff-prop{
   color:var(--text-muted);font-family:ui-monospace,'Geist Mono','Cascadia Code','Fira Code','JetBrains Mono',monospace;
   font-size:11px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   font-variant-numeric:tabular-nums;
 }
-/* Red pill — bg + border + text trio (Stripe/Primer pattern) */
 .diff-base{
   color:var(--red-text);font-family:ui-monospace,'Geist Mono','Cascadia Code','Fira Code','JetBrains Mono',monospace;
   word-break:break-all;font-size:11px;background:var(--red-bg);border:1px solid var(--red-border);
   padding:1px 5px;border-radius:3px;font-variant-numeric:tabular-nums;
 }
-/* Green pill */
 .diff-compare{
   color:var(--green-text);font-family:ui-monospace,'Geist Mono','Cascadia Code','Fira Code','JetBrains Mono',monospace;
   word-break:break-all;font-size:11px;background:var(--green-bg);border:1px solid var(--green-border);
   padding:1px 5px;border-radius:3px;font-variant-numeric:tabular-nums;
 }
 .diff-compare.demoted{color:#5eead4}
-/* Arrow visually recedes — font-size:10px */
 .diff-arrow{color:var(--text-faint);text-align:center;font-size:10px}
 
-/* Misc detail elements */
 .sev-pip{display:inline-block;width:6px;height:6px;border-radius:50%;margin-left:4px;vertical-align:middle}
 .sev-pip.critical{background:var(--sev-critical-fg)}.sev-pip.high{background:var(--sev-high-fg)}.sev-pip.medium{background:var(--sev-medium-fg)}.sev-pip.low{background:var(--sev-low-fg)}
 .swatch{display:inline-block;width:11px;height:11px;border-radius:2px;border:1px solid rgba(255,255,255,.2);vertical-align:middle;margin-right:3px}
 
-/* ── D12 Breadcrumb Nav — Linear monospace pill pattern ─────────────────── */
 .detail-breadcrumb-nav{display:flex;flex-wrap:wrap;align-items:center;gap:2px;margin-top:10px}
 .crumb-item{font-size:11px;font-family:ui-monospace,'Geist Mono','Cascadia Code',monospace;color:var(--text-muted);padding:1px 5px;border-radius:3px;white-space:nowrap}
 .crumb-diff{color:var(--accent-light);cursor:pointer;border:1px solid var(--accent-border);background:var(--accent-faint)}
@@ -715,7 +576,6 @@ body{
 .crumb-ellipsis{color:var(--text-disabled)}
 .crumb-sep{color:var(--text-faint);font-size:10px;padding:0 3px;user-select:none}
 
-/* Prose descriptions — line-height:1.7 (Finding 5) */
 .structural-desc{font-size:12px;color:var(--text-secondary);line-height:1.7;padding:12px;background:var(--bg-hover);border-radius:6px;margin:14px 0;border-left:3px solid var(--border-default)}
 .structural-expand-btn{width:100%;justify-content:center;margin-top:4px;padding:6px}
 .mutation-desc{font-size:12px;color:var(--text-secondary);line-height:1.7;padding:12px;background:var(--bg-hover);border-radius:6px;margin:14px 0}
@@ -726,11 +586,9 @@ body{
 .candidate-table th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);padding:4px 8px;border-bottom:1px solid var(--border-subtle)}
 .candidate-table td{color:var(--text-secondary);padding:5px 8px;border-bottom:1px solid var(--border-subtle);font-family:ui-monospace,'Geist Mono',monospace;font-variant-numeric:tabular-nums}
 
-/* ── D11 Cascade Expander — GitHub collapsible pattern ───────────────────── */
 .cascade-expander{margin-top:12px;border:1px solid var(--border-subtle);border-radius:6px;overflow:hidden}
 .cascade-header{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg-elevated);cursor:pointer;font-size:12px;color:var(--accent-light);font-weight:600;user-select:none;transition:background .08s}
 .cascade-header:hover{background:var(--bg-raised)}
-/* Chevron rotation on open — 150ms ease (D11 spec) */
 .cascade-chevron{font-size:9px;transition:transform .15s ease}
 .cascade-body{padding:6px 10px;border-top:1px solid var(--border-subtle)}
 .cascade-child-row{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid var(--border-subtle);font-size:11px}
@@ -739,24 +597,19 @@ body{
 .cascade-child-type{color:#818cf8;font-size:10px;font-weight:700;background:#1e1b4b;border-radius:3px;padding:1px 5px;letter-spacing:.04em;white-space:nowrap}
 .cascade-child-props{color:var(--text-tertiary);font-family:ui-monospace,'Geist Mono',monospace;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:110px}
 
-/* ── Minimap — tabular-nums on all position values ───────────────────────── */
 .minimap-rail-wrap{width:10px;flex-shrink:0;background:var(--bg-base);border:1px solid var(--border-subtle);border-radius:3px;position:relative;overflow:hidden}
 .minimap-dot{position:absolute;left:50%;transform:translate(-50%,-50%);width:6px;height:6px;border-radius:50%;background:var(--sev-critical-fg);box-shadow:0 0 4px rgba(239,68,68,.5);transition:top .2s}
 .minimap-container{display:flex;gap:8px;padding:10px 16px 8px;border-bottom:1px solid var(--border-subtle);flex-shrink:0;align-items:stretch;min-height:52px}
 .minimap-meta{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:3px}
-/* tabular-nums for px position values (Vercel spec D8) */
 .minimap-pos{font-size:11px;color:var(--text-tertiary);font-variant-numeric:tabular-nums}
 .minimap-pos strong{color:var(--text-secondary);font-variant-numeric:tabular-nums}
 
-/* ── D13 Visual Diff Section ─────────────────────────────────────────────── */
 .vdiff-inline{margin:0 16px 14px;border:1px solid var(--border-subtle);border-radius:8px;overflow:hidden;flex-shrink:0}
 .vdiff-inline-header{display:flex;align-items:center;justify-content:space-between;padding:7px 10px;background:var(--bg-elevated);border-bottom:1px solid var(--border-subtle)}
 .vdiff-inline-label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--accent-light);font-weight:700}
-/* vdiff-open-btn migrated to accent-faint system — consistent with filter-btn */
 .vdiff-open-btn{background:var(--accent-faint);border:1px solid var(--accent-border);border-radius:5px;color:var(--accent-light);font-size:11px;font-weight:600;padding:4px 10px;cursor:pointer;transition:background .08s,border-color .08s}
 .vdiff-open-btn:hover{background:rgba(124,58,237,.22);border-color:var(--accent)}
 .vdiff-thumb-grid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border-subtle)}
-/* Deep near-black bg for screenshot panels — maximum contrast (Vercel pattern) */
 .vdiff-thumb-col{background:#080a10;display:flex;flex-direction:column}
 .vdiff-pane-label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;padding:6px 10px;font-weight:700;flex-shrink:0}
 .vdiff-pane-label.label-baseline{color:#60a5fa}
@@ -770,7 +623,6 @@ body{
 .vdiff-thumb-svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible;z-index:2}
 .vdiff-missing{display:flex;align-items:center;justify-content:center;height:80px;color:var(--text-disabled);font-size:11px}
 
-/* Modal */
 .vdiff-modal{position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.88);display:flex;flex-direction:column;backdrop-filter:blur(4px)}
 .vdiff-modal[hidden]{display:none}
 .vdiff-modal__header{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--bg-surface);border-bottom:1px solid var(--border-subtle);flex-shrink:0}
@@ -800,7 +652,6 @@ body{
 .vdiff-ghost{position:absolute;inset:0;z-index:5;pointer-events:none}
 .vdiff-ghost-img{width:100%;height:auto;opacity:.5}
 
-/* ── D14 Tooltip — 2-layer shadow (Vercel layered shadow rule) ───────────── */
 .vdiff-tooltip{
   position:fixed;z-index:10010;background:var(--bg-elevated);
   border:1px solid var(--accent-border);border-radius:8px;
@@ -815,36 +666,28 @@ body{
 .tt-arr{color:var(--text-faint);text-align:center;font-size:10px}
 .tt-cmp{color:var(--green-text);font-family:ui-monospace,'Geist Mono','Cascadia Code',monospace;word-break:break-all;font-variant-numeric:tabular-nums}
 
-/* ── D5 Tree Panel ───────────────────────────────────────────────────────── */
 .tree-root{padding:4px 0}
 .tree-node{display:flex;align-items:center;min-height:28px;padding:0 8px 0 0;border-bottom:1px solid var(--border-subtle);cursor:default;user-select:none;transition:background .08s;position:relative}
 .tree-node.tree-has-diff{cursor:pointer}
 .tree-node.tree-has-diff:hover{background:var(--tree-row-hover-bg)}
 .tree-node.tree-structural{cursor:pointer}
 .tree-node.tree-structural:hover{background:var(--tree-row-hover-bg)}
-/* Structural: dedicated solid color, NO opacity — Primer accessibility pattern */
 .tree-node.tree-structural .tree-label{color:var(--tree-structural-fg)}
 .tree-node.tree-structural .tree-chevron{color:var(--tree-structural-fg)}
-/* Selected: bg tint + 2px left accent border — Stripe/Linear pattern */
 .tree-node.tree-selected{background:var(--tree-row-selected-bg)}
 .tree-node.tree-selected::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--tree-row-selected-border);border-radius:0 1px 1px 0}
-/* Indent guides — VS Code pattern: 1px line centered at 50% of segment width */
 .tree-indent{width:16px;flex-shrink:0;position:relative;align-self:stretch;display:flex;align-items:center}
 .tree-indent::before{content:'';position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--tree-indent-guide)}
 .tree-indent-segment{width:16px;flex-shrink:0;position:relative;align-self:stretch;display:flex;align-items:center}
 .tree-indent-segment::before{content:'';position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--tree-indent-guide)}
 .tree-chevron-wrap{width:20px;flex-shrink:0;display:flex;align-items:center;justify-content:center}
-/* Chevron: 8px icon, 150ms rotation, 20×20 hit target */
 .tree-chevron{font-size:8px;color:var(--text-muted);cursor:pointer;width:16px;height:16px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background .08s,color .08s,transform .15s;flex-shrink:0}
 .tree-chevron:hover{background:var(--bg-active);color:var(--text-secondary)}
 .tree-chevron.open{transform:rotate(90deg)}
 .tree-chevron-spacer{width:16px;flex-shrink:0}
-/* Tree label: fixed 28px line-height for icon alignment (Linear density principle) */
 .tree-label{font-size:12px;color:var(--text-secondary);font-family:ui-monospace,'Geist Mono','Cascadia Code','Fira Code',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;padding:0 6px;line-height:28px}
-/* Diff nodes: weight change + color (Linear: hierarchy via weight, not color alone) */
 .tree-has-diff .tree-label{color:var(--tree-diff-fg);font-weight:600;text-shadow:0 0 12px rgba(199,210,254,.3)}
 .tree-structural .tree-label{color:var(--tree-structural-fg);font-weight:400}
-/* Badges: font-size 10px, weight 600 — uppercase removed (9px uppercase fails readability) */
 .tree-badge{font-size:10px;font-weight:600;padding:1px 6px;border-radius:4px;flex-shrink:0;white-space:nowrap;letter-spacing:.01em;border:1px solid transparent;margin-right:4px}
 .tree-badge.nb-insertion{background:#0f2a1a;color:#3fb950;border-color:#145522}
 .tree-badge.nb-removal{background:#300d0d;color:#f47474;border-color:#5e1c1c}
@@ -854,16 +697,13 @@ body{
 .tree-badge.nb-content{background:#0c2825;color:#34d399;border-color:#065f46}
 .tree-badge.nb-pseudo{background:#141030;color:#a5b4fc;border-color:#2e2470}
 .tree-badge.nb-structural{background:var(--bg-elevated);color:var(--text-muted);border-color:var(--border-default)}
-/* Diff count pill: accent-faint system, tabular-nums */
 .tree-diff-count{background:var(--accent-faint);color:var(--accent-light);border:1px solid var(--accent-border);border-radius:4px;padding:0 5px;font-size:10px;font-weight:600;flex-shrink:0;margin-right:4px;font-variant-numeric:tabular-nums}
 .tree-instances{font-size:10px;color:var(--green-text);flex-shrink:0;background:var(--green-bg);border-radius:3px;padding:1px 5px;margin-right:4px;font-weight:600;font-variant-numeric:tabular-nums}
 .tree-apex-badge{font-size:9px;color:var(--amber-text);flex-shrink:0;background:var(--amber-bg);border:1px solid rgba(210,153,34,.3);border-radius:3px;padding:1px 4px;margin-right:4px;letter-spacing:.04em}
-/* Visual dot: opacity acceptable here — purely decorative non-text indicator */
 .tree-visual-dot{width:5px;height:5px;border-radius:50%;background:var(--accent-light);flex-shrink:0;margin-right:6px;opacity:.6}
 .tree-children.collapsed{display:none}
 .tree-empty{color:var(--text-tertiary);text-align:center;padding:40px 0;font-size:13px}
 
-/* ── Utility classes ─────────────────────────────────────────────────────── */
 .u-text-tertiary{color:var(--text-tertiary)}
 .u-text-secondary{color:var(--text-secondary)}
 .u-label-upper{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted)}
@@ -872,7 +712,6 @@ body{
 .u-no-diffs{color:var(--text-tertiary);text-align:center;padding:20px}
 .u-pct-sup{font-size:28px;color:var(--text-tertiary);font-variant-numeric:tabular-nums}
 
-/* ── D16 Focus States — WCAG 2.1 SC 2.4.11 (required by Vercel guidelines) ── */
 .tree-node:focus-visible,
 .filter-btn:focus-visible,
 .toolbar-btn:focus-visible,
@@ -885,7 +724,6 @@ body{
   outline-offset:1px;
 }
 
-/* ── D15 Scrollbars — 4px, transparent track, token thumb ───────────────── */
 .sidebar::-webkit-scrollbar,.tree-panel::-webkit-scrollbar,.panel-detail::-webkit-scrollbar,#summary-panel::-webkit-scrollbar{width:4px}
 .sidebar::-webkit-scrollbar-track,.tree-panel::-webkit-scrollbar-track,.panel-detail::-webkit-scrollbar-track,#summary-panel::-webkit-scrollbar-track{background:transparent}
 .sidebar::-webkit-scrollbar-thumb,.tree-panel::-webkit-scrollbar-thumb,.panel-detail::-webkit-scrollbar-thumb,#summary-panel::-webkit-scrollbar-thumb{background:var(--border-default);border-radius:4px}
@@ -899,15 +737,6 @@ body{
 .vdiff-pane--compare.vdiff-kf-mismatch>.vdiff-pane__label{border-bottom:2px solid #f59e0b;}`;
 }
 
-/**
- * Serialises all report data as JSON literals and returns the complete inline <script> string.
- * The embedded script runs in the exported HTML file's browser context, not in the extension.
- * @param {object} grouped - Grouped report data for the tree and detail panel.
- * @param {object} manifest - Normalised visual manifest (HPID → screenshot metadata).
- * @param {object} blobData - Keyframe ID → base64 data URI map.
- * @param {object} raw - Original comparison result (used for URLs and warnings).
- * @returns {string} Self-contained IIFE script string.
- */
 function buildJs(grouped, manifest, blobData, raw) {
   const data         = JSON.stringify(grouped);
   const manifestJson = JSON.stringify(manifest ?? {});
@@ -947,8 +776,8 @@ var _syncCtrl     = null;
 var _zoom         = 1;
 var _resizeObs    = null;
 var _activeEntry  = null;
-var _inlineThumbObs  = null;   // ResizeObserver for inline thumbnail grid
-var _inlineThumbData = [];     // [{img, svgEl, wrapper, rect, diffs, dpr, flags}] for re-render
+  var _inlineThumbObs  = null;
+  var _inlineThumbData = [];
 var _selectedNode = null;
 var _maskSeq      = 0;
 
@@ -1259,11 +1088,6 @@ function computeCropParams(img, rect, containerWidth, dpr){
   var rh=rect.height||rect.h||1;
   var vpW=img.naturalWidth/dpr;
   var vpH=img.naturalHeight/dpr;
-  // Cap rh to the portion of the element that fits within the screenshot.
-  // Elements taller than the viewport (e.g. 5905px page-wrapper in a 632px viewport)
-  // produce hH = rh × scaleX that far exceeds displayH when scaleX hits the 0.25 floor,
-  // rendering a full-strip highlight with no visible content.  Clamping rh to the
-  // visible slice makes the scale calculation use the actual visible height instead.
   rh = Math.min(rh, Math.max(1, vpH - Math.max(0, ry)));
   var scaleX=Math.max(Math.min(containerWidth*0.78/rw, 140/Math.max(rh,1)), 0.25);
   var scaleY=scaleX;
@@ -1276,17 +1100,11 @@ function computeCropParams(img, rect, containerWidth, dpr){
   return {paddedX:paddedX,paddedY:paddedY,paddedW:paddedW,paddedH:paddedH,scaleX:scaleX,scaleY:scaleY,displayW:paddedW*scaleX,displayH:paddedH*scaleY,vpW:vpW,vpH:vpH,rx:rx,ry:ry,rw:rw,rh:rh};
 }
 
-// applyThumb — single crop+highlight pass so both operations use the IDENTICAL
-// computeCropParams result.  Previously applyCrop and drawInlineHighlight each
-// called computeCropParams independently; if the container reflowed between the
-// two calls the SVG coordinate system diverged from the CSS transform, causing
-// misaligned highlight boxes.
 function applyThumb(img, svgEl, container, rect, diffs, dpr, flags){
   if(!img||!img.naturalWidth||!rect||!container) return;
   var cw=container.clientWidth||container.offsetWidth||200;
   var p=computeCropParams(img,rect,cw,dpr||2);
 
-  // ── 1. Crop the image ──────────────────────────────────────────────────────
   img.style.width=(p.vpW*p.scaleX)+'px';
   img.style.height=(p.vpH*p.scaleY)+'px';
   img.style.transform='translate('+(-p.paddedX*p.scaleX)+'px,'+(-p.paddedY*p.scaleY)+'px)';
@@ -1295,7 +1113,6 @@ function applyThumb(img, svgEl, container, rect, diffs, dpr, flags){
   container.style.height=p.displayH+'px';
   var actualH=container.clientHeight||p.displayH;
 
-  // ── 2. Draw the SVG highlight using the same p ─────────────────────────────
   if(!svgEl) return;
   svgEl.innerHTML='';
   var sx=p.scaleX, sy=p.scaleY;
@@ -1327,7 +1144,6 @@ function applyThumb(img, svgEl, container, rect, diffs, dpr, flags){
   hl.dataset.diffs=JSON.stringify(diffs||[]);
   hl.classList.add('hl-rect');
   svgEl.appendChild(hl);
-  // ── 3. Annotation labels for diagnostics ──────────────────────────────────
   if(flags&&flags.rectClipped){
     var lbl2=svgNS('text');
     setAttrs(lbl2,{x:hL,y:Math.min(displayH-2,hT+hH+10),'font-size':'9','fill':'#60a5fa','font-family':'sans-serif','pointer-events':'none'});
@@ -1336,7 +1152,6 @@ function applyThumb(img, svgEl, container, rect, diffs, dpr, flags){
   }
 }
 
-// Kept for any external call sites — delegates to applyThumb.
 function applyCrop(img, rect, dpr){
   var container=img&&img.parentElement; if(!container) return;
   var cw=container.clientWidth||container.offsetWidth||200;
@@ -1349,7 +1164,6 @@ function applyCrop(img, rect, dpr){
   container.style.height=p.displayH+'px';
 }
 
-// drawInlineHighlight kept for any external call sites.
 function drawInlineHighlight(svgEl, container, img, rect, diffs, dpr){
   if(!img||!img.naturalWidth||!rect||!svgEl||!container) return;
   applyThumb(img,svgEl,container,rect,diffs,dpr);
@@ -1403,7 +1217,6 @@ function drawModalHighlights(svgEl, imgEl, rect, diffs, dpr, flags){
   hl.dataset.diffs=JSON.stringify(diffs||[]);
   hl.classList.add('hl-rect');
   svgEl.appendChild(hl);
-  // Annotation labels — plain <text> elements, no new filter/mask IDs.
   if(flags&&flags.rectClipped){
     var lbl2=svgNS('text');
     setAttrs(lbl2,{x:dx,y:Math.min(layoutH-4,dy+dh+14),'font-size':'11','fill':'#60a5fa','font-family':'sans-serif','pointer-events':'none','font-weight':'600'});
@@ -1452,16 +1265,13 @@ function attachVdiffInlineImages(hpid){
     var rect;
     try{ rect=JSON.parse(img.dataset.rect||'null'); } catch(e){ rect=null; }
     var wrapper=img.parentElement;
-    // data-role is on the .vdiff-thumb-wrap element ("baseline" or "compare")
     var role=(wrapper&&wrapper.dataset&&wrapper.dataset.role)||'baseline';
     var dpr=role==='compare'?(entry.compareActualDPR||2):(entry.baselineActualDPR||2);
-    // Snapshot diffs at closure time so a later teardown cannot mutate the reference.
     var diffs=entry.diffs||[];
     var flags=role==='compare'
       ?{rectClipped:!!entry.compareRectClipped}
       :{rectClipped:!!entry.baselineRectClipped};
     var svgEl=wrapper&&wrapper.querySelector('.vdiff-thumb-svg');
-    // Register in thumb data array for ResizeObserver re-render (before onload).
     _inlineThumbData.push({img:img,svgEl:svgEl,wrapper:wrapper,rect:rect,diffs:diffs,dpr:dpr,flags:flags});
     if(wrapper) wrapper.classList.add('loading');
     img.onload=function(){
@@ -1471,7 +1281,6 @@ function attachVdiffInlineImages(hpid){
       };
       var w=wrapper?wrapper.clientWidth||wrapper.offsetWidth:0;
       if(!w){
-        // Container not yet laid out; wait two paint cycles for grid reflow.
         requestAnimationFrame(function(){
           requestAnimationFrame(doApply);
         });
@@ -1489,9 +1298,9 @@ function attachVdiffInlineImages(hpid){
     var _lastGridW=0;
     _inlineThumbObs=new ResizeObserver(function(entries){
       var w=Math.round(entries[0].contentRect.width);
-      if(w===_lastGridW) return;  // no real change
+      if(w===_lastGridW) return;
       _lastGridW=w;
-      if(_rafPending) return;       // coalesce: one rAF per paint frame max
+      if(_rafPending) return;
       _rafPending=true;
       requestAnimationFrame(function(){
         _rafPending=false;
@@ -1626,7 +1435,7 @@ function renderDiffDetail(item, hpid, severity){
   attachCrumbHandlers(detailEl);
   if(layout){ if(!parseInt(layout.style.getPropertyValue('--col-right'))) layout.style.setProperty('--col-right','420px'); layout.classList.remove('detail-empty'); }
   attachCopyHandlers();
-  void layout.getBoundingClientRect(); // force synchronous reflow so --col-right grid column is committed
+  void layout.getBoundingClientRect();
   attachVdiffInlineImages(hpid);
 }
 
@@ -1701,8 +1510,6 @@ function redrawAll(){
     if(!img||!img.naturalWidth) return;
     drawModalHighlights(svg,img,rect,e.diffs,dpr,flags);
   });
-  // Re-apply kf-mismatch class — zoom/pan calls redrawAll via ResizeObserver
-  // without re-running openDiffModal, so the border highlight must be maintained here.
   var bKfM2 = (e.baselineKeyframeId||'').match(/kf_(\d+)$/);
   var cKfM2 = (e.compareKeyframeId||'').match(/kf_(\d+)$/);
   var kfMis2 = bKfM2 && cKfM2 && bKfM2[1] !== cKfM2[1];
@@ -1738,11 +1545,6 @@ function openDiffModal(hpid){
   modal.querySelector('[data-action="sync"] .sync-icon-on').style.display='';
   modal.querySelector('[data-action="sync"] .sync-icon-off').style.display='none';
 
-  // ── Show the modal BEFORE setting image sources ────────────────────────────
-  // Browsers may fire img.onload synchronously for cached images — if the modal
-  // still has [hidden] at that point, offsetWidth=0 and drawModalHighlights
-  // returns early, leaving both panes unlit.  Revealing the modal first
-  // guarantees layout dimensions are available whenever onload fires.
   modal.removeAttribute('hidden');
   document.body.style.overflow='hidden';
 
@@ -1762,9 +1564,6 @@ function openDiffModal(hpid){
   var pA=modal.querySelector('[data-pane="baseline"]'), pB=modal.querySelector('[data-pane="compare"]');
   _syncCtrl=initSyncScroll(pA,pB);
 
-  // Cross-keyframe indicator — fires when baseline and compare elements landed in
-  // different scroll keyframes, meaning the page layouts differ enough that the
-  // element sits at a different document position in one page vs the other.
   var bKfM = (entry.baselineKeyframeId||'').match(/kf_(\d+)$/);
   var cKfM = (entry.compareKeyframeId||'').match(/kf_(\d+)$/);
   var kfMismatch = bKfM && cKfM && bKfM[1] !== cKfM[1];
@@ -1792,9 +1591,6 @@ function openDiffModal(hpid){
     _resizeObs=new ResizeObserver(function(){ requestAnimationFrame(redrawAll); });
     _resizeObs.observe(modal.querySelector('.vdiff-modal__panes'));
   }
-  // Guaranteed fallback redraw: ResizeObserver on a fixed-inset element may not
-  // fire if the pane size hasn't changed between openings.  A single rAF after
-  // the modal is visible ensures highlights always appear on open.
   requestAnimationFrame(redrawAll);
 }
 

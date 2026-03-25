@@ -1,14 +1,3 @@
-/**
- * Orchestrates the full element extraction pipeline: traversal → style/geometry pass →
- * visibility filter → record assembly → selector generation → output packaging.
- *
- * Execution context: content script.
- * Invariant: DOM references (Element objects) are nulled out immediately after each record
- * is built to prevent the content-script heap from ballooning while awaiting selector generation.
- *
- * Direct callers: content.js (via chrome.runtime message handler)
- */
-
 import { get }                                  from '../../config/defaults.js';
 import logger                                   from '../../infrastructure/logger.js';
 import { performanceMonitor }                   from '../../infrastructure/performance-monitor.js';
@@ -23,15 +12,6 @@ import { getNeighbours, getClassHierarchy }     from './dom-enrichment.js';
 
 import { yieldToEventLoop } from '../comparison/async-utils.js';
 
-/**
- * Reads geometry and computed styles for every visit in one synchronous sweep.
- * Batching all `getBoundingClientRect` and `getComputedStyle` calls together minimises
- * forced layout reflows — interleaving them with DOM writes would trigger one reflow per element.
- *
- * @param {Array<{ element: Element }>} visits - Ordered traversal records from dom-traversal.
- * @returns {Array<{ rect: DOMRect, computedStyle: CSSStyleDeclaration|null, isConnected: boolean, scrollX: number, scrollY: number }>}
- *   Parallel array to `visits`; disconnected elements get a zeroed rect and null style.
- */
 function executePass1(visits) {
   performance.mark('pass1-start');
 
@@ -65,14 +45,6 @@ function executePass1(visits) {
   return readings;
 }
 
-/**
- * Drops disconnected and invisible elements from the visit/reading parallel arrays.
- * Skipped when `extraction.skipInvisible` is false so comparison can include off-screen elements.
- *
- * @param {object[]} visits - Traversal records.
- * @param {object[]} readings - Parallel geometry/style readings from executePass1.
- * @returns {{ filteredVisits: object[], filteredReadings: object[] }} Paired filtered arrays.
- */
 function applyVisibilityFilter(visits, readings) {
   if (!get('extraction.skipInvisible')) {
     return { filteredVisits: visits, filteredReadings: readings };
@@ -92,16 +64,6 @@ function applyVisibilityFilter(visits, readings) {
   return { filteredVisits, filteredReadings };
 }
 
-/**
- * Converts a DOMRect to a scroll-adjusted, rounded absolute bounding box.
- * DOMRect coordinates are viewport-relative; adding scroll offsets makes them page-absolute
- * so cross-capture comparisons are stable regardless of scroll position.
- *
- * @param {DOMRect|null} rect - Raw bounding rect.
- * @param {number} scrollX - Horizontal scroll offset at time of capture.
- * @param {number} scrollY - Vertical scroll offset at time of capture.
- * @returns {{ x, y, width, height, top, left }|null} Page-absolute rounded rect, or null.
- */
 function buildBoundingRect(rect, scrollX, scrollY) {
   if (!rect) {return null;}
   return {
@@ -114,14 +76,6 @@ function buildBoundingRect(rect, scrollX, scrollY) {
   };
 }
 
-/**
- * Extracts direct text-node content only (not descendant element text) and truncates
- * to `maxLength`. Returns null for purely structural elements with no direct text.
- *
- * @param {Element} element - Target element.
- * @param {number} maxLength - Maximum characters before truncation with ellipsis.
- * @returns {string|null} Trimmed direct text content, or null if empty.
- */
 function getTextContent(element, maxLength) {
   let text = '';
   for (const node of element.childNodes) {
@@ -134,26 +88,12 @@ function getTextContent(element, maxLength) {
   return text.length > maxLength ? `${text.substring(0, maxLength)}...` : text;
 }
 
-/**
- * Returns the element's class string, handling SVG elements where `className` is an SVGAnimatedString.
- *
- * @param {Element} element - Target element.
- * @returns {string|null} Space-separated class string, or null if no classes are present.
- */
 function getClassName(element) {
   if (!element.className) {return null;}
   if (typeof element.className === 'string') {return element.className || null;}
   return element.className.baseVal || null;
 }
 
-/**
- * Counts how many elements in the visit set share the same sorted class-name signature.
- * Used downstream to flag high-occurrence class groups that are likely list items — helping
- * the matcher handle dynamic list reordering.
- *
- * @param {Array<{ element: Element }>} visits - All filtered visit records.
- * @returns {Map<string, number>} Map of sorted-class-key → occurrence count.
- */
 function buildClassOccurrenceMap(visits) {
   const counts = new Map();
   for (const { element } of visits) {
@@ -164,30 +104,12 @@ function buildClassOccurrenceMap(visits) {
   return counts;
 }
 
-/**
- * Looks up the occurrence count for a single element's sorted class key.
- * Returns 0 for classless elements (signals "not a list item").
- *
- * @param {Element} element - Target element.
- * @param {Map<string, number>} classOccurrenceMap - Pre-built map from buildClassOccurrenceMap.
- * @returns {number} Number of elements with the same class signature.
- */
 function getClassOccurrenceCount(element, classOccurrenceMap) {
   const raw = getClassName(element) ?? '';
   const key = raw.split(/\s+/).filter(Boolean).sort().join(' ');
   return key ? (classOccurrenceMap.get(key) || 1) : 0;
 }
 
-/**
- * Assembles the full element record object from traversal + geometry + config flags.
- * Optional fields (styles, attributes, rect, etc.) are added only when their corresponding
- * schema flag is enabled to keep record payloads as small as possible.
- *
- * @param {{ element: Element, depth: number, hpidPath: number[], absoluteHpidPath: number[] }} visit - Traversal record.
- * @param {{ rect: DOMRect, computedStyle: CSSStyleDeclaration|null, scrollX: number, scrollY: number }} reading - Geometry/style snapshot.
- * @param {{ classOccurrenceMap: Map<string,number>, schema: object }} ctx - Shared context for this extraction run.
- * @returns {object} Assembled element record (cssSelector and xpath are null at this stage — filled in by selector pass).
- */
 function buildElementRecord(visit, reading, ctx) {
   const { element, depth, hpidPath, absoluteHpidPath } = visit;
   const { rect, computedStyle, scrollX, scrollY }      = reading;
@@ -219,13 +141,6 @@ function buildElementRecord(visit, reading, ctx) {
   return record;
 }
 
-/**
- * Returns a batch size scaled to total element count to balance throughput vs.
- * event-loop responsiveness. Smaller batches on larger pages prevent long task warnings.
- *
- * @param {number} totalElements - Total number of elements to process.
- * @returns {number} Recommended batch size.
- */
 function computeAdaptiveBatchSize(totalElements) {
   if (totalElements <= 200)  {return 40;}
   if (totalElements <= 1000) {return 25;}
@@ -233,16 +148,6 @@ function computeAdaptiveBatchSize(totalElements) {
   return 10;
 }
 
-/**
- * Processes visits in adaptive batches: builds records, generates selectors per batch,
- * then yields to the event loop between batches so the page remains responsive.
- * Element references are nulled immediately after use to allow GC during long extractions.
- *
- * @param {object[]} visits - Filtered traversal records.
- * @param {object[]} readings - Parallel geometry/style readings.
- * @param {Map<string, number>} classOccurrenceMap - Class frequency map for occurrence counts.
- * @returns {Promise<object[]>} Fully assembled element records with selectors filled in.
- */
 async function executeUnifiedPass(visits, readings, classOccurrenceMap) {
   performance.mark('unified-pass-start');
 
@@ -283,8 +188,6 @@ async function executeUnifiedPass(visits, readings, classOccurrenceMap) {
         visits[j].element = null;
       }
 
-      // Hard wall: break out of the inner loop if wall-clock time exceeded,
-      // even if the target batch size has not been reached yet.
       if (performance.now() - batchStart >= hardCapMs || i >= batchEndTarget) {
         break;
       }
@@ -326,14 +229,6 @@ async function executeUnifiedPass(visits, readings, classOccurrenceMap) {
   return results;
 }
 
-/**
- * Top-level extraction entry point. Waits for page readiness, runs the full pipeline,
- * and returns a structured extraction result with metadata and element records.
- *
- * @param {{ class?: string, id?: string, tag?: string }|null} [filters] - Optional extraction filters from the popup.
- * @returns {Promise<{ url: string, title: string, timestamp: string, totalElements: number, elements: object[], duration: number, captureQuality: string, filters: object|null }>}
- * @throws Re-throws any error from the pipeline after logging it.
- */
 async function extract(filters) {
   const perfHandle      = performanceMonitor.start('extraction-total');
   const startTime       = performance.now();

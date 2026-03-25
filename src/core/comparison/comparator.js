@@ -1,10 +1,3 @@
-/**
- * Orchestrates the full comparison pipeline: element matching → property diffing → result assembly.
- * Runs in the MV3 service worker context.
- * Invariant: yields progress frames before the final result frame; callers must drain the generator.
- * Called by: compare-workflow.js → compareReports().
- */
-
 import { ElementMatcher } from './matcher.js';
 import { StaticComparisonMode, DynamicComparisonMode } from './comparison-modes.js';
 import { progressFrame, resultFrame } from './async-utils.js';
@@ -12,7 +5,6 @@ import { progressFrame, resultFrame } from './async-utils.js';
 const MATCHING_PCT_WEIGHT    = 0.5;
 const MATCHING_PHASE_CEILING = 50;
 
-/** Returns what percentage of elements were matched (0–100), treating zero-element sets as 0%. */
 function calculateMatchRate(matched, unmatchedBaseline, unmatchedCompare) {
   const denominator = matched + unmatchedBaseline + unmatchedCompare;
   if (denominator === 0) {
@@ -21,7 +13,6 @@ function calculateMatchRate(matched, unmatchedBaseline, unmatchedCompare) {
   return Math.round((matched / denominator) * 100);
 }
 
-/** Strips a full report down to the lightweight identity fields stored in the comparison record. */
 function buildReportMeta(report) {
   return {
     id:            report.id,
@@ -32,7 +23,6 @@ function buildReportMeta(report) {
   };
 }
 
-/** Slims unmatched element objects to only the fields needed for display and debugging. */
 function buildUnmatchedSummary(elements) {
   return elements.map(el => ({
     id:          el.id,
@@ -49,7 +39,6 @@ function buildUnmatchedSummary(elements) {
   }));
 }
 
-/** Aggregates matcher output into the summary counts and match-rate percentage stored on the result. */
 function buildMatchingMetadata(matchingResult) {
   const totalMatched       = matchingResult.matches.length;
   const ambiguousCount     = (matchingResult.ambiguous ?? []).length;
@@ -64,19 +53,10 @@ function buildMatchingMetadata(matchingResult) {
   };
 }
 
-/**
- * Coordinates ElementMatcher and a comparison mode; yields progress then a single result frame.
- * Does not own IDB persistence or visual capture — those happen in compare-workflow.js after this.
- */
 class Comparator {
   #matcher;
   #modes;
 
-  /**
-   * @param {object} [opts]
-   * @param {ElementMatcher} [opts.matcher] - Override for testing; defaults to a new ElementMatcher.
-   * @param {object} [opts.modes] - Map of mode-name → ComparisonMode instance; defaults to static + dynamic.
-   */
   constructor({ matcher, modes } = {}) {
     this.#matcher = matcher ?? new ElementMatcher();
     this.#modes   = modes ?? {
@@ -85,14 +65,6 @@ class Comparator {
     };
   }
 
-  /**
-   * Runs matching then property diffing, streaming progress frames followed by one result frame.
-   * Falls back to static mode when `mode` is not recognised.
-   * @param {object} baselineReport - Full report object with `.elements` array.
-   * @param {object} compareReport  - Full report object with `.elements` array.
-   * @param {'static'|'dynamic'} [mode='static'] - Comparison strategy to apply.
-   * @yields {{ type: 'progress', label: string, pct: number } | { type: 'result', payload: object }}
-   */
   async* compare(baselineReport, compareReport, mode = 'static') {
     const startTime    = performance.now();
     let matchingResult = null;
@@ -116,7 +88,7 @@ class Comparator {
     const diffTotal       = matchingResult.matches.length;
     let   comparisonResult = null;
 
-    const diffingGen = comparisonMode.compare(
+    const diffingGen = comparisonMode.compareChunked(
       matchingResult.matches,
       matchingResult.ambiguous ?? []
     );

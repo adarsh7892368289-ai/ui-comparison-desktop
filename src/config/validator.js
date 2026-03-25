@@ -1,14 +1,6 @@
-/**
- * Startup config validator. Runs four passes against the active config and either
- * throws or logs errors depending on throwOnError. Called by background.js at SW
- * startup — a throw here halts handler registration and prevents the SW from
- * serving requests with a broken config.
- * Callers: background.js (validateConfig at startup).
- */
 import { get } from './defaults.js';
 import logger from '../infrastructure/logger.js';
 
-/** Every config path that must exist and be non-null at startup. */
 const REQUIRED_PATHS = [
   'schema.includeStyles',
   'schema.includeAttributes',
@@ -106,11 +98,6 @@ const REQUIRED_PATHS = [
   'export.csv.encoding'
 ];
 
-/**
- * Subset of paths with expected primitive or array types. Only checked when the
- * path exists — missing-path errors are already caught by checkRequiredPaths, so
- * the catch in checkTypeExpectations is intentionally empty.
- */
 const TYPE_EXPECTATIONS = [
   { path: 'schema.includeStyles',          type: 'boolean' },
   { path: 'schema.includeAttributes',      type: 'boolean' },
@@ -155,10 +142,6 @@ const TYPE_EXPECTATIONS = [
   { path: 'attributes.frameworkPatterns',   type: 'array' }
 ];
 
-/**
- * Numeric paths with expected min/max bounds. Values outside these ranges indicate
- * a misconfigured override that would cause silent misbehaviour (e.g. batchSize:0).
- */
 const SANITY_CHECKS = [
   { path: 'schema.record.textContent.maxLength',               min: 50,  max: 10_000 },
   { path: 'schema.enrichment.neighbours.maxParentClasses',     min: 1,   max: 20     },
@@ -182,10 +165,6 @@ const SANITY_CHECKS = [
   { path: 'logging.slowOperationThreshold',     min: 50,   max: 30000  }
 ];
 
-/**
- * Validates the shape of each matching strategy entry. The strategies array has
- * a richer schema than a simple type check can cover, so it gets its own pass.
- */
 function validateStrategies(errors) {
   try {
     const strategies = get('comparison.matching.strategies');
@@ -209,7 +188,6 @@ function validateStrategies(errors) {
   }
 }
 
-/** Pushes an error for every REQUIRED_PATHS entry that is missing or null/undefined. */
 function checkRequiredPaths(errors) {
   for (const path of REQUIRED_PATHS) {
     try {
@@ -223,7 +201,6 @@ function checkRequiredPaths(errors) {
   }
 }
 
-/** Pushes an error for every TYPE_EXPECTATIONS entry whose value is the wrong type. */
 function checkTypeExpectations(errors) {
   for (const { path, type } of TYPE_EXPECTATIONS) {
     try {
@@ -237,7 +214,6 @@ function checkTypeExpectations(errors) {
   }
 }
 
-/** Pushes an error for every SANITY_CHECKS entry whose numeric value is outside [min, max]. */
 function checkSanityRanges(errors) {
   for (const { path, min, max } of SANITY_CHECKS) {
     try {
@@ -250,15 +226,6 @@ function checkSanityRanges(errors) {
   }
 }
 
-/**
- * Runs all four validation passes and either throws a combined error or logs and
- * returns the result. throwOnError:true (the default) is used by background.js to
- * halt SW startup on a bad config — silent continuation would cause cryptic
- * per-request failures from misconfigured paths.
- *
- * @param {{throwOnError?: boolean}} [options]
- * @returns {{valid: boolean, errors: string[]}}
- */
 function validateConfig({ throwOnError = true } = {}) {
   const errors = [];
 

@@ -1,9 +1,3 @@
-/**
- * Four-phase element matching pipeline that pairs baseline elements with compare elements
- * before property diffing. Runs in the MV3 service worker context.
- * Invariant: every baseline element ends up in exactly one of: matches, unmatchedBaseline, ambiguous.
- * Called by: comparator.js -> Comparator.compare().
- */
 import logger                                from '../../infrastructure/logger.js';
 import { get }                               from '../../config/defaults.js';
 import { yieldToEventLoop, YIELD_CHUNK_SIZE, progressFrame, resultFrame } from './async-utils.js';
@@ -14,14 +8,10 @@ const MatchType = Object.freeze({
   AMBIGUOUS:          'ambiguous',
   ADDED:              'added',
   REMOVED:            'removed',
-  UNMATCHED_BASELINE: 'unmatched-baseline', // kept for output contract compatibility
+  UNMATCHED_BASELINE: 'unmatched-baseline',
   UNMATCHED_COMPARE:  'unmatched-compare'
 });
 
-/**
- * Returns the first test-attribute match key found on an element, or null.
- * Key is formatted as `attrName::value` so values from different attributes can never collide.
- */
 function getTestAttrKey(el, anchorAttributes) {
   for (const attr of anchorAttributes) {
     const val = el.attributes?.[attr];
@@ -30,25 +20,17 @@ function getTestAttrKey(el, anchorAttributes) {
   return null;
 }
 
-/**
- * Returns the last `depth` dot-separated segments of an HPID as a string key.
- * Used by Phase 2: when a wrapper ancestor is inserted the absolute HPID changes but the
- * last N segments stay the same, allowing the element to be matched by its subtree position.
- * @param {number} depth - Number of trailing segments to retain.
- */
 function hpidSuffixKey(hpid, depth) {
   if (!hpid) { return null; }
   const parts = hpid.split('.');
   return parts.length <= depth ? hpid : parts.slice(-depth).join('.');
 }
 
-/** Splits a dot-separated HPID string into an integer segment array. */
 function parseHpidSegments(hpid) {
   if (!hpid) { return []; }
   return hpid.split('.').map(Number);
 }
 
-/** Returns true when two integer segment arrays are equal in length and values. */
 function segmentsEqual(a, b) {
   if (a.length !== b.length) { return false; }
   for (let i = 0; i < a.length; i++) {
@@ -57,11 +39,6 @@ function segmentsEqual(a, b) {
   return true;
 }
 
-/**
- * Builds a Map from keyFn(el) -> index[] over the given compare indices.
- * Stores arrays (not single values) so callers can detect ambiguous keys
- * without a separate pass.
- */
 function buildMultiMap(items, availableIdxs, keyFn) {
   const map = new Map();
   for (const i of availableIdxs) {
@@ -73,12 +50,6 @@ function buildMultiMap(items, availableIdxs, keyFn) {
   return map;
 }
 
-/**
- * Resolves a multi-map lookup to a verdict.
- * Two or more available candidates produce `ambiguous` rather than `definitive` because
- * picking arbitrarily would silently create false diffs on an unchanged element.
- * @returns {{ verdict: 'definitive'|'ambiguous'|'below_threshold'|'no_match', index?: number, confidence?: number, candidates?: object[] }}
- */
 function resolveFromMultiMap(indices, confidence, usedCompare, minMatchThreshold) {
   if (!indices) { return { verdict: 'no_match' }; }
   const available = indices.filter(i => !usedCompare.has(i));
@@ -98,7 +69,6 @@ function resolveFromMultiMap(indices, confidence, usedCompare, minMatchThreshold
   return { verdict: 'no_match' };
 }
 
-/** Constructs a definitive match record from pre-resolved baseline and compare indices. */
 function makeDefinitiveMatch({ bi, ci, conf, strat, matchType, baseline, compareElements }) {
   return {
     baselineIndex:       bi,
@@ -114,7 +84,6 @@ function makeDefinitiveMatch({ bi, ci, conf, strat, matchType, baseline, compare
   };
 }
 
-/** Constructs an ambiguous match record for a baseline element that matched multiple compare candidates. */
 function makeAmbiguousMatch(bi, conf, strat, candidates, baseline) {
   return {
     baselineIndex:       bi,
@@ -130,10 +99,6 @@ function makeAmbiguousMatch(bi, conf, strat, candidates, baseline) {
   };
 }
 
-/**
- * Returns true when two elements are in-sequence: same tagName AND identical HPID segments.
- * Both conditions must hold simultaneously — tag alone is too ambiguous, HPID alone misses replacements.
- */
 function passesIdentityTriad(bEl, cEl) {
   if (bEl.tagName !== cEl.tagName) { return false; }
   const bSegs = parseHpidSegments(bEl.hpid);
@@ -141,22 +106,12 @@ function passesIdentityTriad(bEl, cEl) {
   return segmentsEqual(bSegs, cSegs);
 }
 
-/**
- * Returns true when two elements share an HPID but have different tagNames.
- * Treated as removal + addition rather than a match because diffing mismatched
- * tag types (e.g. <div> vs <button>) produces meaningless property diffs.
- */
 function isReplacement(bEl, cEl) {
   const bSegs = parseHpidSegments(bEl.hpid);
   const cSegs = parseHpidSegments(cEl.hpid);
   return segmentsEqual(bSegs, cSegs) && bEl.tagName !== cEl.tagName;
 }
 
-/**
- * Phase 1 linear walk: matches elements in sequence and uses a look-ahead window
- * to resync after insertions or deletions.
- * @returns {{ pairs, added, removed, orphanBaseline, orphanCompare }} All as index lists.
- */
 function sequenceAlign(baseline, compare, usedBaseline, usedCompare, config) {
   const { lookAheadWindow, inSequenceConf } = config;
 
@@ -170,14 +125,12 @@ function sequenceAlign(baseline, compare, usedBaseline, usedCompare, config) {
   let ci = 0;
 
   while (bi < baseline.length && ci < compare.length) {
-    // Skip elements already claimed by Phase 0.
     if (usedBaseline.has(bi)) { bi++; continue; }
     if (usedCompare.has(ci))  { ci++; continue; }
 
     const bEl = baseline[bi];
     const cEl = compare[ci];
 
-    // Same HPID, different tag: mismatched-tag diffs are noise, so treat as removal + addition.
     if (isReplacement(bEl, cEl)) {
       removed.push(bi);
       added.push(ci);
@@ -195,7 +148,6 @@ function sequenceAlign(baseline, compare, usedBaseline, usedCompare, config) {
       continue;
     }
 
-    // Mismatch: scan ahead in compare first (elements may have been inserted before the match).
     let foundInCompare = -1;
     for (let k = 1; k <= lookAheadWindow; k++) {
       const cLook = ci + k;
@@ -216,7 +168,6 @@ function sequenceAlign(baseline, compare, usedBaseline, usedCompare, config) {
       continue;
     }
 
-    // Then scan ahead in baseline (elements may have been removed before the match).
     let foundInBaseline = -1;
     for (let k = 1; k <= lookAheadWindow; k++) {
       const bLook = bi + k;
@@ -237,7 +188,6 @@ function sequenceAlign(baseline, compare, usedBaseline, usedCompare, config) {
       continue;
     }
 
-    // Neither look-ahead found a match within the window; advance both and pass to Phase 2.
     orphanBaseline.push(bi);
     orphanCompare.push(ci);
     usedBaseline.add(bi);
@@ -258,10 +208,6 @@ function sequenceAlign(baseline, compare, usedBaseline, usedCompare, config) {
   return { pairs, added, removed, orphanBaseline, orphanCompare };
 }
 
-/**
- * Builds a suffix index from the last `suffixDepth` HPID segments + tagName.
- * Shallow HPIDs (depth < minDepth) are excluded to prevent excessive collisions.
- */
 function buildSuffixIndex(compareElements, availableIdxs, suffixDepth) {
   const index    = new Map();
   const minDepth = Math.max(2, Math.floor(suffixDepth / 2));
@@ -277,11 +223,6 @@ function buildSuffixIndex(compareElements, availableIdxs, suffixDepth) {
   return index;
 }
 
-/**
- * Phase 2: matches Phase 1 orphans by HPID suffix + tagName.
- * Ambiguous hits (multiple candidates) are left as orphans for Phase 3 rather than
- * guessing, because a wrong suffix match produces worse output than no match.
- */
 function suffixRealignPass(
   baseline,
   compareElements,
@@ -318,7 +259,6 @@ function suffixRealignPass(
   return { pairs, stillOrphanBaseline };
 }
 
-/** Returns a classifier function that matches elements by compound test-attribute key. */
 function buildTestAttributeClassifier(cmpIdxs, usedCompare, baseline, compareElements, matchConfig, strategy) {
   const { anchorAttributes, minMatchThreshold } = matchConfig;
   const map = buildMultiMap(compareElements, cmpIdxs, el => getTestAttrKey(el, anchorAttributes));
@@ -337,7 +277,6 @@ function buildTestAttributeClassifier(cmpIdxs, usedCompare, baseline, compareEle
   };
 }
 
-/** Returns a classifier function that matches elements by absolute HPID. */
 function buildAbsoluteHpidClassifier(cmpIdxs, usedCompare, baseline, compareElements, matchConfig, strategy) {
   const { minMatchThreshold } = matchConfig;
   const map = buildMultiMap(compareElements, cmpIdxs, el => el.absoluteHpid ?? null);
@@ -356,7 +295,6 @@ function buildAbsoluteHpidClassifier(cmpIdxs, usedCompare, baseline, compareElem
   };
 }
 
-/** Returns a classifier function that matches elements by DOM id attribute. */
 function buildIdClassifier(cmpIdxs, usedCompare, baseline, compareElements, matchConfig, strategy) {
   const { minMatchThreshold } = matchConfig;
   const map = buildMultiMap(compareElements, cmpIdxs, el => el.elementId || null);
@@ -375,7 +313,6 @@ function buildIdClassifier(cmpIdxs, usedCompare, baseline, compareElements, matc
   };
 }
 
-/** Returns a classifier function that matches elements by generated CSS selector. */
 function buildCssSelectorClassifier(cmpIdxs, usedCompare, baseline, compareElements, matchConfig, strategy) {
   const { minMatchThreshold } = matchConfig;
   const map = buildMultiMap(compareElements, cmpIdxs, el => el.cssSelector ?? null);
@@ -394,7 +331,6 @@ function buildCssSelectorClassifier(cmpIdxs, usedCompare, baseline, compareEleme
   };
 }
 
-/** Returns a classifier function that matches elements by generated XPath. */
 function buildXpathClassifier(cmpIdxs, usedCompare, baseline, compareElements, matchConfig, strategy) {
   const { minMatchThreshold } = matchConfig;
   const map = buildMultiMap(compareElements, cmpIdxs, el => el.xpath ?? null);
@@ -413,10 +349,6 @@ function buildXpathClassifier(cmpIdxs, usedCompare, baseline, compareElements, m
   };
 }
 
-/**
- * Builds a spatial grid keyed by `cellX:cellY:tagName` for O(1) neighbourhood lookup.
- * Elements without a valid rect are excluded — they cannot be matched by position.
- */
 function buildPositionGrid(compareElements, availableIdxs, cellSize) {
   const grid = new Map();
   for (const i of availableIdxs) {
@@ -431,11 +363,6 @@ function buildPositionGrid(compareElements, availableIdxs, cellSize) {
   return grid;
 }
 
-/**
- * Finds the nearest unused compare element in the 3x3 cell neighbourhood around (bx, by).
- * Confidence is scaled to max 30% of inverse-distance — position is the least reliable strategy.
- * Returns null when nothing usable is within one cell-size.
- */
 function pickFromGrid(bx, by, tag, grid, cellSize, usedCompare) {
   const cx     = Math.floor(bx / cellSize);
   const cy     = Math.floor(by / cellSize);
@@ -458,7 +385,6 @@ function pickFromGrid(bx, by, tag, grid, cellSize, usedCompare) {
   return { index: bestIdx, confidence: Math.max(0.1, 1 - bestDist / cellSize) * 0.30 };
 }
 
-/** Returns a classifier function that matches elements by nearest spatial position. */
 function buildPositionClassifier(cmpIdxs, usedCompare, baseline, compareElements, cellSize, minConf, strategy) {
   const grid      = buildPositionGrid(compareElements, cmpIdxs, cellSize);
   const usedLocal = new Set();
@@ -490,11 +416,6 @@ const LEGACY_CLASSIFIER_BUILDERS = Object.freeze({
     buildPositionClassifier(cmpIdxs, usedCompare, baseline, cmpEls, cellSize, minConf, strategy)
 });
 
-/**
- * Runs a classify function over `indices` in YIELD_CHUNK_SIZE batches, yielding one progress
- * frame per batch so the SW event loop is not starved during large element sets.
- * Yields a single result frame last containing `{ matches, ambiguous, orphans }`.
- */
 async function* runChunkedPass(indices, classifyFn, progressCtx) {
   const { label, startPct, endPct } = progressCtx;
   const total     = indices.length;
@@ -518,13 +439,6 @@ async function* runChunkedPass(indices, classifyFn, progressCtx) {
   yield resultFrame({ matches, ambiguous, orphans });
 }
 
-/**
- * Runs the four-phase matching pipeline on two element arrays, yielding progress frames
- * followed by a single result frame.
- * Does not own property diffing, severity scoring, or IDB persistence.
- * Invariant: all config values are read once at construction — callers must not mutate
- * config defaults between construction and the first matchElements call.
- */
 class ElementMatcher {
   #minConf;
   #minMatchThreshold;
@@ -537,7 +451,6 @@ class ElementMatcher {
   #suffixConf;
   #sequenceAlignEnabled;
 
-  /** Reads all matching strategy parameters from config once; defaults apply when keys are absent. */
   constructor() {
     this.#minConf              = get('comparison.matching.confidenceThreshold', 0.5);
     this.#minMatchThreshold    = get('comparison.matching.minMatchThreshold', 0.70);
@@ -551,13 +464,6 @@ class ElementMatcher {
     this.#sequenceAlignEnabled = get('comparison.matching.sequenceAlignment.enabled', true);
   }
 
-  /**
-   * Runs Phases 0-3 and yields progress frames then one result frame.
-   * Falls back to full legacy pool matching when sequenceAlignment is disabled.
-   * @param {object[]} baseline        - Extracted elements from the baseline capture.
-   * @param {object[]} compareElements - Extracted elements from the compare capture.
-   * @yields {{ type: 'progress', label: string, pct: number } | { type: 'result', payload: { matches, ambiguous, unmatchedBaseline, unmatchedCompare } }}
-   */
   async* matchElements(baseline, compareElements) {
     logger.info('Sequence-aware matching start', {
       baseline: baseline.length,
@@ -622,7 +528,6 @@ class ElementMatcher {
         }));
       }
 
-      // Mark added/removed so Phases 2-3 never re-examine them.
       for (const ci of alignResult.added)  { usedCompare.add(ci); }
       for (const bi of alignResult.removed) { usedBaseline.add(bi); }
 
@@ -695,7 +600,6 @@ class ElementMatcher {
         allAmbiguous.flatMap(e => (e.ambiguousCandidates ?? []).map(c => c.compareIndex))
       );
 
-      // Phase 1 REMOVED + legacy orphans are both unmatched baseline elements.
       const finalUnmatchedBaselineIdxs = new Set([...alignResult.removed, ...mutableBaseOrphans]);
       const finalUnmatchedCompareIdxs  = new Set([
         ...alignResult.added,
@@ -723,7 +627,6 @@ class ElementMatcher {
       yield resultFrame({ matches: allMatches, ambiguous: allAmbiguous, unmatchedBaseline, unmatchedCompare });
 
     } else {
-      // Sequence alignment disabled: run full legacy pool matching only.
       const allBaseIdxs = Array.from({ length: baseline.length },        (_, i) => i).filter(i => !usedBaseline.has(i));
       const allCmpIdxs  = Array.from({ length: compareElements.length }, (_, i) => i).filter(i => !usedCompare.has(i));
       const legacyStrategies = get('comparison.matching.strategies')

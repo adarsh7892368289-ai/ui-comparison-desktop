@@ -1,49 +1,39 @@
-# Dependencies
 node_modules/
 *.log
 
-# Electron
 out/
 dist/
 release/
-node_modules/.bin
 electron/
 
-# Build outputs
 build/
-dist/
 !.gitkeep
 
-# IDE
 .vscode/settings.json
 .idea/
 *.swp
 *.swo
 
-# OS
 .DS_Store
 Thumbs.db
 
-# Logs
 logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Runtime data
 pids
 *.pid
 *.pid.lock
 
-# Coverage
-coverage/
+electron-builder-cache/
 
-# Electron Builder cache
-electron-builder-cache
-
-# Playwright / Puppeteer
 .nyc_output
 coverage/
 *.tsbuildinfo
 test-results/
 playwright-report/
+blob-report/
+playwright/.cache/
+.env
+.env.*

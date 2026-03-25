@@ -1,10 +1,3 @@
-/**
- * Orchestrates CSS value normalization: shorthand expansion, color/unit/font conversion,
- * and two-tier LRU caching. Exports a singleton for use by the extraction pipeline.
- * Runs in the content-script context; no async I/O.
- * Invariant: every public method returns the original value on failure — never throws to callers.
- * Called by: extractor.js after per-element style collection.
- */
 import { get } from '../../config/defaults.js';
 import { NormalizationCache } from './cache.js';
 import { normalizeColor } from './color-normalizer.js';
@@ -12,7 +5,6 @@ import { normalizeUnit, isContextDependent } from './unit-normalizer.js';
 import { normalizeFont } from './font-normalizer.js';
 import { expandShorthands } from './shorthand-expander.js';
 
-// Property sets determine which normalizer each CSS property is routed to.
 const COLOR_PROPERTIES = new Set([
   'color', 'background-color', 'border-color',
   'border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color',
@@ -32,30 +24,15 @@ const SIZE_PROPERTIES = new Set([
   'outline-width', 'outline-offset', 'text-indent'
 ]);
 
-/**
- * Routes CSS properties to the correct normalizer and caches results.
- * Does NOT own property collection or DOM access — only value transformation.
- * Invariant: callers must not mutate the `styles` object passed to `normalize`.
- */
 class NormalizerEngine {
-  /** @type {NormalizationCache|null} Null when caching is disabled in config. */
   #cache;
 
-  /** Reads cache config once at construction; cache on/off cannot be toggled at runtime. */
   constructor() {
     const cacheEnabled = get('normalization.cache.enabled');
     const maxEntries = get('normalization.cache.maxEntries');
     this.#cache = cacheEnabled ? new NormalizationCache(maxEntries) : null;
   }
 
-  /**
-   * Expands shorthand properties then normalises every value in the resulting map.
-   * Returns the original `styles` object unchanged on any error.
-   *
-   * @param {Record<string, string>} styles - Raw computed-style map from the content script.
-   * @param {object|null} contextSnapshot - Viewport/font context required for relative units.
-   * @returns {Record<string, string>} New object with normalised values; never throws.
-   */
   normalize(styles, contextSnapshot = null) {
     if (!styles || typeof styles !== 'object') {
       return styles;
@@ -72,15 +49,6 @@ class NormalizerEngine {
     }
   }
 
-  /**
-   * Normalises a single CSS property value by routing it to the right normalizer.
-   * Properties not in COLOR_PROPERTIES, SIZE_PROPERTIES, or `font-family` pass through unchanged.
-   *
-   * @param {string} property - CSS property name (e.g. `'color'`, `'font-size'`).
-   * @param {string|*} value - Raw CSS value string.
-   * @param {object|null} contextSnapshot - Required for relative-unit size properties.
-   * @returns {string} Normalised value, or the original on failure.
-   */
   normalizeProperty(property, value, contextSnapshot = null) {
     if (!value || typeof value !== 'string') {
       return value;
@@ -106,17 +74,6 @@ class NormalizerEngine {
     }
   }
 
-  /**
-   * Cache read-through helper. Calls `fn` only on a cache miss and stores the result.
-   * When cache is disabled, calls `fn` directly every time.
-   *
-   * @param {string} property
-   * @param {string} value
-   * @param {boolean} ctxDependent - Routes to the relative-unit tier when true.
-   * @param {object|null} context
-   * @param {() => string} fn - Must not catch its own errors.
-   * @returns {string}
-   */
   #cached(property, value, ctxDependent, context, fn) {
     if (!this.#cache) {
       return fn();
@@ -130,20 +87,17 @@ class NormalizerEngine {
     return result;
   }
 
-  /** Returns hit-rate and utilisation metrics, or `{ cacheEnabled: false }` when disabled. */
   getCacheStats() {
     return this.#cache
       ? { cacheEnabled: true, ...this.#cache.getStats() }
       : { cacheEnabled: false };
   }
 
-  /** Flushes both cache tiers without resetting config. Safe to call at any time. */
   clearCache() {
     this.#cache?.clear();
   }
 }
 
-// Shared singleton — instantiated once so the LRU cache persists across all extraction calls.
 const normalizerEngine = new NormalizerEngine();
 
 export { NormalizerEngine, normalizerEngine };

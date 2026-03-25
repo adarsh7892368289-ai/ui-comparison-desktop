@@ -1,0 +1,42 @@
+{
+  "name": "ui-comparison-desktop",
+  "version": "1.0.0",
+  "description": "Cross-browser visual regression desktop app — port of UI Comparison Chrome Extension",
+  "main": "dist/main/index.js",
+  "private": true,
+
+  "scripts": {
+    "start":           "concurrently \"npm run watch:main\" \"npm run watch:renderer\" \"electron .\"",
+    "watch:main":      "webpack --config webpack.main.config.js --watch",
+    "watch:renderer":  "webpack --config webpack.renderer.config.js --watch",
+    "build":           "webpack --config webpack.main.config.js && webpack --config webpack.renderer.config.js",
+    "lint":            "eslint .",
+    "format":          "prettier --write .",
+    "dist":            "npm run build && electron-builder",
+    "dist:win":        "npm run build && electron-builder --win",
+    "dist:mac":        "npm run build && electron-builder --mac",
+    "install:browsers":"playwright install chromium firefox webkit",
+    "postinstall":     "electron-builder install-app-deps"
+  },
+
+  "dependencies": {
+    "electron":       "^33.0.0",
+    "playwright":     "^1.48.0",
+    "better-sqlite3": "^9.4.3",
+    "electron-updater":"^6.3.0",
+    "electron-log":   "^5.1.2"
+  },
+
+  "devDependencies": {
+    "electron-builder":   "^24.13.3",
+    "webpack":            "^5.96.0",
+    "webpack-cli":        "^5.1.4",
+    "babel-loader":       "^9.2.1",
+    "@babel/core":        "^7.24.0",
+    "@babel/preset-env":  "^7.24.0",
+    "concurrently":       "^8.2.2",
+    "cross-env":          "^7.0.3",
+    "eslint":             "^8.57.0",
+    "prettier":           "^3.2.5"
+  }
+}

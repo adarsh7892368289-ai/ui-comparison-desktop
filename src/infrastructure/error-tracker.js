@@ -1,12 +1,5 @@
-/**
- * In-memory error aggregator for the extension. Runs in the MV3 service worker.
- * Deduplicates errors by code+message so repeated failures increment a counter
- * rather than flood the log. Oldest entry is evicted when the 100-entry cap is reached.
- * Callers: idb-repository.js, and any module that calls errorTracker.track() directly.
- */
 import logger from './logger.js';
 
-/** Stable string constants used as error codes throughout the extension. */
 const ERROR_CODES = {
   EXTRACTION_TIMEOUT: 'EXTRACTION_TIMEOUT',
   EXTRACTION_ELEMENT_DETACHED: 'EXTRACTION_ELEMENT_DETACHED',
@@ -25,12 +18,6 @@ const ERROR_CODES = {
   UNKNOWN_ERROR: 'UNKNOWN_ERROR'
 };
 
-/**
- * Collects and deduplicates runtime errors in a capped in-memory Map.
- * Does not persist errors across service worker restarts.
- * Invariant: `logger.error` fires only on the first occurrence of each unique
- * code+message pair — repeat calls increment a counter silently.
- */
 class ErrorTracker {
   constructor() {
     this.errors = new Map();
@@ -38,21 +25,12 @@ class ErrorTracker {
     this.initialized = false;
   }
 
-  /** Idempotent — safe to call multiple times; subsequent calls return `this` immediately. */
   init() {
     if (this.initialized) {return this;}
     this.initialized = true;
     return this;
   }
 
-  /**
-   * Records an error, deduplicating by `code:message` key. Repeated errors update
-   * the count and `lastSeen` timestamp rather than creating new entries.
-   * The Map delete-then-set keeps the entry at the tail so the oldest entry
-   * (Map insertion order) is always the one evicted when the cap is hit.
-   *
-   * @param {{code: string, message: string, context?: Object}} error
-   */
   track(error) {
     const key = `${error.code}:${error.message}`;
     

@@ -1,17 +1,3 @@
-/**
- * Single source of truth for all runtime configuration. Runs in all three contexts.
- * Failure mode contained here: get() throws when a path is missing and no fallback
- * is provided — callers that supply a fallback never throw.
- * Callers: every module that reads config via get(). background.js and tests call init().
- */
-
-/**
- * Master config object. Two non-obvious conventions used throughout:
- * - comparison.modes.static.compareProperties: null is a sentinel meaning
- *   "compare all tracked CSS properties" in the comparator.
- * - Arrays are leaf values in mergeDeep — overriding cssProperties replaces
- *   the whole array, not appends to it.
- */
 const rawConfig = {
 
   schema: {
@@ -319,7 +305,6 @@ const rawConfig = {
   }
 };
 
-/** Recursively freezes an object and all its nested object values. */
 function deepFreeze(obj) {
   Object.freeze(obj);
   for (const prop of Object.getOwnPropertyNames(obj)) {
@@ -331,14 +316,8 @@ function deepFreeze(obj) {
   return obj;
 }
 
-// Cloned from rawConfig before freezing so init() can re-derive from the unfrozen source.
 let config = deepFreeze(JSON.parse(JSON.stringify(rawConfig)));
 
-/**
- * Deep-merges source into target. Arrays are treated as leaf values and replaced
- * wholesale — there is no element-level array merge. This is intentional: callers
- * override an entire array (e.g. cssProperties) rather than patching individual items.
- */
 function mergeDeep(target, source) {
   for (const key of Object.keys(source)) {
     if (
@@ -354,14 +333,6 @@ function mergeDeep(target, source) {
   }
 }
 
-/**
- * Re-initialises the active config from rawConfig with the given overrides merged in.
- * Must be called before the first get() in any test context that needs non-default values.
- * Re-clones from rawConfig on every call so previous init() calls do not accumulate.
- *
- * @param {Object} [overrides={}]
- * @returns {Readonly<Object>} The new frozen config object.
- */
 function init(overrides = {}) {
   const merged = JSON.parse(JSON.stringify(rawConfig));
   mergeDeep(merged, overrides);
@@ -369,16 +340,6 @@ function init(overrides = {}) {
   return config;
 }
 
-/**
- * Reads a value from the active config by dot-separated path.
- * Returns fallback when the path resolves to undefined (if fallback is provided).
- * Throws when the path is missing or an intermediate segment is null/undefined and
- * no fallback is provided — use a fallback for any optional config path.
- *
- * @param {string} path - Dot-separated key path, e.g. 'extraction.batchSize'.
- * @param {*} [fallback] - Returned instead of throwing when the path is not found.
- * @returns {*}
- */
 function get(path, fallback) {
   const segments = path.split('.');
   let current    = config;

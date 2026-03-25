@@ -1,27 +1,11 @@
-/**
- * Generates a stable XPath selector for a DOM element by trying tiered strategies in order.
- * Falls back to a positional absolute path when no semantic strategy succeeds.
- * Runs in the content-script context.
- * Invariant: always resolves — never rejects or returns null.
- * Called by: selector-engine.js via `generateXPath(element)`.
- */
 import { get } from '../../../config/defaults.js';
 import logger from '../../../infrastructure/logger.js';
 import { getUniversalTag, isStableId } from '../selector-utils.js';
 import { getAllStrategies, TIER_ROBUSTNESS } from './strategies.js';
 import { countXPathMatches, ensureUniqueness, isUniqueXPath, escapeXPath } from './validator.js';
 
-// Test-automation attributes checked when anchoring a non-unique XPath to an ancestor.
 const TEST_ATTRS = ['data-testid', 'data-test', 'data-qa', 'data-cy', 'data-automation-id'];
 
-/**
- * Entry point: tries four tier bands (1–5, 6–10, 11–15, 16–21) in order.
- * Each band races in parallel; the first successful tier stops the search.
- * Uses `getUniversalTag` so SVG/MathML elements get namespace-safe XPath axes.
- *
- * @param {Element} element
- * @returns {Promise<{xpath: string, confidence: number, strategy: string}>} Never rejects.
- */
 async function generateXPath(element) {
   if (!element || !element.tagName) {return _buildFallback(element);}
 
@@ -59,15 +43,6 @@ async function generateXPath(element) {
   return _buildFallback(element);
 }
 
-/**
- * Races all strategies in a tier group and returns the lowest-tier success.
- *
- * @param {Element} element
- * @param {string} tag
- * @param {Array<{tier: number, fn: Function, name: string}>} strategies
- * @param {number} perStrategyTimeout
- * @returns {Promise<object|null>}
- */
 async function _tryGroup(element, tag, strategies, perStrategyTimeout) {
   const settled = await Promise.allSettled(
     strategies.map(({ tier, fn, name }) =>
@@ -84,21 +59,6 @@ async function _tryGroup(element, tag, strategies, perStrategyTimeout) {
   return successes[0];
 }
 
-/**
- * Runs one strategy inside a timeout guard. For each candidate XPath:
- * 1. If unique — accept as-is.
- * 2. If non-unique — try scoping under a stable ancestor.
- * 3. If still non-unique — append a positional disambiguator via `ensureUniqueness`.
- * Resolves null on timeout, error, or exhausted candidates.
- *
- * @param {Element} element
- * @param {string} tag
- * @param {number} tier
- * @param {Function} fn - Strategy function returning candidate XPaths.
- * @param {string} name
- * @param {number} timeout
- * @returns {Promise<object|null>}
- */
 function _runStrategy(element, tag, tier, fn, name, timeout) {
   return new Promise((resolve) => {
     const timer = setTimeout(() => resolve(null), timeout);
@@ -125,7 +85,6 @@ function _runStrategy(element, tag, tier, fn, name, timeout) {
           return;
         }
 
-        // Candidate matches multiple nodes — try anchoring to a stable ancestor first.
         const narrowed = _narrowByAncestor(candidate.xpath, element);
         if (narrowed) {
           const narrowedCount = countXPathMatches(narrowed);
@@ -162,14 +121,6 @@ function _runStrategy(element, tag, tier, fn, name, timeout) {
   });
 }
 
-/**
- * Extracts the predicate portion of an XPath and rebuilds it scoped under a stable
- * ancestor's ID or test attribute, reducing false matches in repeated DOM patterns.
- *
- * @param {string} xpath - The original non-unique XPath.
- * @param {Element} element
- * @returns {string|null} Scoped XPath or null if no stable ancestor found.
- */
 function _narrowByAncestor(xpath, element) {
   const elementTag = getUniversalTag(element);
   const predicate = _extractPredicate(xpath);
@@ -199,13 +150,6 @@ function _narrowByAncestor(xpath, element) {
   return null;
 }
 
-/**
- * Extracts the predicate (e.g. `[@aria-label="Submit"]`) from the last step of an XPath.
- * Returns null when the expression doesn't match the expected `//tag[predicate]` shape.
- *
- * @param {string} xpath
- * @returns {string|null}
- */
 function _extractPredicate(xpath) {
   const match = xpath.match(/\/\/[a-zA-Z*][a-zA-Z0-9_:-]*(\[[\s\S]*\])?$/);
   if (!match) {return null;}
@@ -215,12 +159,6 @@ function _extractPredicate(xpath) {
   return segment.slice(tagMatch[0].length);
 }
 
-/**
- * Returns a low-confidence positional fallback — used when all semantic strategies fail.
- *
- * @param {Element} element
- * @returns {{xpath: string, confidence: number, strategy: string}}
- */
 function _buildFallback(element) {
   return {
     xpath:      _buildPositionPath(element),
@@ -229,13 +167,6 @@ function _buildFallback(element) {
   };
 }
 
-/**
- * Builds an absolute positional XPath by walking from the element to the root,
- * using stable IDs as early-exit anchors to keep the path as short as possible.
- *
- * @param {Element} element
- * @returns {string} Absolute XPath, e.g. `/html/body/div[2]/span`.
- */
 function _buildPositionPath(element) {
   if (!element || element.nodeType !== Node.ELEMENT_NODE) {return '/html';}
 

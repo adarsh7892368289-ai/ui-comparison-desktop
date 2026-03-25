@@ -1,23 +1,10 @@
-/**
- * Serialises a comparison result to a structured JSON file and triggers a download.
- * Runs in the popup context.
- * Invariant: never throws — failures are returned as {success:false}.
- * Called by: export-workflow.js → exportComparisonToJson().
- */
 import { get }             from '../../../config/defaults.js';
 import logger               from '../../../infrastructure/logger.js';
 import { safeTimestamp }    from '../shared/csv-utils.js';
 import { triggerDownload }  from '../shared/download-trigger.js';
 
-/** Number of ID characters included in the filename to make it human-identifiable. */
 const ID_PREVIEW_LENGTH = 8;
 
-/**
- * Builds the JSON payload object. Keeps only the fields needed for interoperability —
- * internal runtime fields (e.g. isInherited, suppressedChildren) are excluded.
- * @param {object} result - Fully-resolved comparison result from compare-workflow.
- * @returns {object} Serialisable payload object with exportVersion and core comparison fields.
- */
 function buildComparisonJsonPayload(result) {
   return {
     exportVersion: '1.0',
@@ -51,11 +38,6 @@ function buildComparisonJsonPayload(result) {
   };
 }
 
-/**
- * Builds the payload, serialises to pretty-printed JSON, and triggers a download. Never throws.
- * @param {object} result - Fully-resolved comparison result from compare-workflow.
- * @returns {{ success: true, filename: string } | { success: false, error: string }}
- */
 function exportComparisonToJson(result) {
   try {
     const payload  = buildComparisonJsonPayload(result);
