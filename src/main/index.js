@@ -4,8 +4,8 @@ const { app, BrowserWindow, protocol, nativeTheme } = require('electron');
 const path = require('path');
 const log  = require('electron-log');
 
-const { registerIpcHandlers, setBlobCache } = require('./ipc-handlers');
-const { registerProtocolHandler, blobCache } = require('./protocol-handler');
+const { registerIpcHandlers, setBlobCache, setStorage } = require('./ipc-handlers');
+const { registerProtocolHandler, blobCache }            = require('./protocol-handler');
 
 app.commandLine.appendSwitch('--disable-web-security', false);
 app.enableSandbox();
@@ -14,15 +14,16 @@ protocol.registerSchemesAsPrivileged([
   {
     scheme: 'app',
     privileges: {
-      standard:       true,
-      secure:         true,
+      standard:        true,
+      secure:          true,
       supportFetchAPI: true,
-      corsEnabled:    true,
+      corsEnabled:     true,
     },
   },
 ]);
 
 let mainWindow = null;
+let _handlersRegistered = false;
 
 app.on('ready', () => {
   log.initialize({ preload: true });
@@ -32,28 +33,32 @@ app.on('ready', () => {
 
   mainWindow = createMainWindow();
 
-  registerIpcHandlers(mainWindow);
-  setBlobCache(blobCache);
+  if (!_handlersRegistered) {
+    registerIpcHandlers(mainWindow);
+    setBlobCache(blobCache);
+
+    _handlersRegistered = true;
+  }
 
   mainWindow.on('closed', () => { mainWindow = null; });
 });
 
 function createMainWindow() {
   const win = new BrowserWindow({
-    width:  1280,
-    height: 900,
+    width:     1280,
+    height:    900,
     minWidth:  900,
     minHeight: 600,
     show: false,
 
     webPreferences: {
-      nodeIntegration: false,
+      nodeIntegration:  false,
       contextIsolation: true,
-      sandbox: true,
-      preload: path.join(__dirname, 'preload.js'),
-      webSecurity: true,
+      sandbox:          true,
+      preload:          path.join(__dirname, 'preload.js'),
+      webSecurity:      true,
     },
-    title: 'UI Comparison',
+    title:           'UI Comparison',
     backgroundColor: '#1a1a2e',
   });
 
@@ -77,11 +82,9 @@ app.on('window-all-closed', () => {
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     mainWindow = createMainWindow();
-    registerIpcHandlers(mainWindow);
   }
 });
 
-const { shutdownPlaywright } = require('./playwright-manager');
 app.on('before-quit', async () => {
   log.info('App quitting — shutting down Playwright');
   await shutdownPlaywright();

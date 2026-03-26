@@ -125,12 +125,12 @@ function _addSummarySheet(wb, result, XLSX) {
   const ws = XLSX.utils.aoa_to_sheet(data);
   ws['!cols'] = [{ wch: 28 }, { wch: 55 }];
 
-  ['A1', 'B1'].forEach(addr => { if (ws[addr]) {ws[addr].s = _headerCellStyle(headerColor);} });
+  ['A1', 'B1'].forEach(addr => { if (ws[addr]) { ws[addr].s = _headerCellStyle(headerColor); } });
 
   const severityRows = { 28: 'critical', 29: 'high', 30: 'medium', 31: 'low' };
   Object.entries(severityRows).forEach(([rowIdx, severity]) => {
     const valueAddr = XLSX.utils.encode_cell({ r: parseInt(rowIdx, 10) - 1, c: 1 });
-    if (ws[valueAddr]) {ws[valueAddr].s = _severityCellStyle(severity);}
+    if (ws[valueAddr]) { ws[valueAddr].s = _severityCellStyle(severity); }
   });
 
   XLSX.utils.book_append_sheet(wb, ws, 'Summary');
@@ -227,7 +227,7 @@ function _addUnmatchedSheet(wb, result, XLSX) {
     for (let r = 1; r <= range.e.r; r++) {
       const statusAddr = XLSX.utils.encode_cell({ r, c: 0 });
       const cell = ws[statusAddr];
-      if (!cell) {continue;}
+      if (!cell) { continue; }
       const color = cell.v.includes('Baseline') ? 'FFE0E0' : 'E0FFE0';
       cell.s = { fill: { patternType: 'solid', fgColor: { rgb: color } }, font: { bold: true } };
     }
@@ -284,7 +284,7 @@ function _addSeveritySheet(wb, result, XLSX) {
     for (const entry of styleQueue) {
       for (let c = 0; c < 5; c++) {
         const addr = XLSX.utils.encode_cell({ r: entry.row, c });
-        if (!ws[addr]) {continue;}
+        if (!ws[addr]) { continue; }
         ws[addr].s = entry.type === 'section'
           ? _severityCellStyle(entry.severity)
           : _headerCellStyle(headerColor);

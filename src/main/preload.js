@@ -2,8 +2,12 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
-function makeRemover(channel) {
-  return (listener) => ipcRenderer.removeListener(channel, listener);
+function makePushBridge(channel) {
+  return (callback) => {
+    const listener = (_, data) => callback(data);
+    ipcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
+  };
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -11,36 +15,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startComparison: (params) =>
     ipcRenderer.invoke('START_COMPARISON', params),
 
-  onComparisonProgress: (callback) => {
-    const listener = (_, data) => callback(data);
-    ipcRenderer.on('COMPARISON_PROGRESS', listener);
-    return listener;
-  },
-  removeComparisonProgress: makeRemover('COMPARISON_PROGRESS'),
-
-  onComparisonComplete: (callback) => {
-    const listener = (_, data) => callback(data);
-    ipcRenderer.on('COMPARISON_COMPLETE', listener);
-    return listener;
-  },
-  removeComparisonComplete: makeRemover('COMPARISON_COMPLETE'),
-
-  onComparisonError: (callback) => {
-    const listener = (_, data) => callback(data);
-    ipcRenderer.on('COMPARISON_ERROR', listener);
-    return listener;
-  },
-  removeComparisonError: makeRemover('COMPARISON_ERROR'),
+  onComparisonProgress: makePushBridge('COMPARISON_PROGRESS'),
 
   extractElements: (params) =>
     ipcRenderer.invoke('EXTRACT_ELEMENTS', params),
 
-  onExtractionProgress: (callback) => {
-    const listener = (_, data) => callback(data);
-    ipcRenderer.on('EXTRACTION_PROGRESS', listener);
-    return listener;
-  },
-  removeExtractionProgress: makeRemover('EXTRACTION_PROGRESS'),
+  onExtractionProgress: makePushBridge('EXTRACTION_PROGRESS'),
+
+  loadReports: () =>
+    ipcRenderer.invoke('LOAD_REPORTS'),
+
+  deleteReport: (id) =>
+    ipcRenderer.invoke('DELETE_REPORT', id),
+
+  getCachedComparison: (baselineId, compareId, mode) =>
+    ipcRenderer.invoke('GET_CACHED_COMPARISON', { baselineId, compareId, mode }),
 
   exportHTML: (params) =>
     ipcRenderer.invoke('EXPORT_HTML', params),

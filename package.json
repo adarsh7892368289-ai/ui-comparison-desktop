@@ -22,7 +22,7 @@
   "dependencies": {
     "electron":       "^33.0.0",
     "playwright":     "^1.48.0",
-    "better-sqlite3": "^9.4.3",
+    "better-sqlite3": "^12.8.0", 
     "electron-updater":"^6.3.0",
     "electron-log":   "^5.1.2"
   },

@@ -6,6 +6,8 @@ const crypto = require('crypto');
 const log    = require('electron-log');
 
 const { groupIntoKeyframes } = require('../core/comparison/keyframe-grouper.js');
+const { Comparator }         = require('../core/comparison/comparator.js');
+const { assessUrlCompatibility } = require('../application/url-compatibility.js');
 
 const CAPTURE_SCALE_FACTOR         = 2;
 const CAPTURE_QUALITY              = 85;
@@ -19,7 +21,6 @@ const SCROLL_VERIFY_RETRY_MS       = 400;
 const DEVTOOLS_HEIGHT_THRESHOLD_PX = 200;
 const BROWSER_CHROME_HEIGHT_PX     = 88;
 const CDP_COMMAND_TIMEOUT_MS       = 5_000;
-const CDP_CAPTURE_TIMEOUT_MS       = 15_000;
 const WEBP_MIME                    = 'image/webp';
 const PNG_MIME                     = 'image/png';
 
@@ -87,7 +88,7 @@ async function detachSession(sessionHandle) {
   _sessionMap.delete(sessionHandle.page);
 
   if (sessionHandle.cdpSession) {
-    await sessionHandle.cdpSession.detach().catch(() => {});
+    await sessionHandle.cdpSession.detach().catch(() => { /* ignore */ });
     log.debug('[PM] CDP session detached');
   }
 }
@@ -195,11 +196,11 @@ async function unfreezePage(sessionHandle) {
     if (window.__vdiff_raf_orig) { window.requestAnimationFrame = window.__vdiff_raf_orig; }
     if (window.__vdiff_set_orig) { window.setTimeout            = window.__vdiff_set_orig; }
     if (window.__vdiff_int_orig) { window.setInterval           = window.__vdiff_int_orig; }
-  }).catch(() => {});
+  }).catch(() => { /* ignore */ });
 
   await sessionHandle.page.evaluate(({ styleId }) => {
     document.getElementById(styleId)?.remove();
-  }, { styleId: FREEZE_STYLE_ID }).catch(() => {});
+  }, { styleId: FREEZE_STYLE_ID }).catch(() => { /* ignore */ });
 
   sessionHandle.frozen = false;
 }
@@ -623,11 +624,11 @@ function buildSelectorPairs(elements, role) {
 
 async function safeRestorePage(sessionHandle) {
   const sh = sessionHandle;
-  await executeInPage(sh, inPageUnlockScrollbar).catch(() => {});
-  await executeInPage(sh, inPageRestoreFixed, SUPPRESS_ATTR).catch(() => {});
-  await executeInPage(sh, inPageRestoreAnimations, FREEZE_STYLE_ID).catch(() => {});
-  await executeInPage(sh, inPageScrollAndSettle, [0, SCROLL_SETTLE_TIMEOUT_MS]).catch(() => {});
-  await sendCDP(sh, 'Emulation.clearDeviceMetricsOverride').catch(() => {});
+  await executeInPage(sh, inPageUnlockScrollbar).catch(() => { /* ignore */ });
+  await executeInPage(sh, inPageRestoreFixed, SUPPRESS_ATTR).catch(() => { /* ignore */ });
+  await executeInPage(sh, inPageRestoreAnimations, FREEZE_STYLE_ID).catch(() => { /* ignore */ });
+  await executeInPage(sh, inPageScrollAndSettle, [0, SCROLL_SETTLE_TIMEOUT_MS]).catch(() => { /* ignore */ });
+  await sendCDP(sh, 'Emulation.clearDeviceMetricsOverride').catch(() => { /* ignore */ });
 }
 
 async function captureKeyframe(sessionHandle, keyframe, kfSelectorPairs, sessionId, index, total, roleStart, actualDPR, documentHeight) {
@@ -836,7 +837,7 @@ async function runTabCapture(page, selectorPairs, sessionId, role, blobCache) {
 
   } finally {
     if (sessionHandle) {
-      await safeRestorePage(sessionHandle).catch(() => {});
+      await safeRestorePage(sessionHandle).catch(() => { /* ignore */ });
       await detachSession(sessionHandle);
       log.info(`VDIFF [${role}] detach DONE`);
     }
@@ -959,8 +960,8 @@ async function runExtraction({ url, browserType, filters, onProgress }) {
     return elements;
 
   } finally {
-    await page.close().catch(() => {});
-    await context.close().catch(() => {});
+    await page.close().catch(() => { /* ignore */ });
+    await context.close().catch(() => { /* ignore */ });
   }
 }
 
@@ -976,15 +977,11 @@ async function runComparison({
 }) {
   log.info('[PM] runComparison start', { baselineId, compareId, mode });
 
-  const { Comparator }             = require('../core/comparison/comparator.js');
-  const { assertVersionCompatibility } = require('../application/compare-workflow.js');
-  const { assessUrlCompatibility } = require('../application/url-compatibility.js');
-
   const send = (label, pct) => onProgress?.(label, pct);
 
   send('Pre-flight checks…', 5);
   const urlResult = assessUrlCompatibility(baselineUrl, compareUrl);
-  if (urlResult.status === 'INCOMPATIBLE') {
+  if (urlResult.classification === 'INCOMPATIBLE') {
     throw Object.assign(new Error('URLs are incompatible for comparison'), {
       name: 'PreFlightError', code: 'INCOMPATIBLE_URLS', compatResult: urlResult,
     });
@@ -1104,9 +1101,9 @@ async function runComparison({
     return slimResult;
 
   } finally {
-    await baselinePage?.close().catch(() => {});
-    await comparePage?.close().catch(() => {});
-    await context.close().catch(() => {});
+    await baselinePage?.close().catch(() => { /* ignore */ });
+    await comparePage?.close().catch(() => { /* ignore */ });
+    await context.close().catch(() => { /* ignore */ });
   }
 }
 

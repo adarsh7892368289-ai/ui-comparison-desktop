@@ -210,6 +210,7 @@ function checkTypeExpectations(errors) {
         errors.push(`[Config] "${path}" expected ${type}, got ${actual}`);
       }
     } catch {
+      // Ignore paths that do not exist or cannot be resolved
     }
   }
 }
@@ -222,6 +223,7 @@ function checkSanityRanges(errors) {
         errors.push(`[Config] "${path}" value ${value} is outside expected range [${min}, ${max}]`);
       }
     } catch {
+      // Ignore paths that do not exist or cannot be resolved
     }
   }
 }

@@ -7,13 +7,16 @@ const log  = require('electron-log');
 
 const playwrightManager = require('./playwright-manager');
 
-let _mainWindow  = null;
-let _blobCache   = null;
+let _mainWindow = null;
+let _blobCache  = null;
+
+let _storage = null;
 
 function registerIpcHandlers(mainWindow) {
   _mainWindow = mainWindow;
   _registerComparisonHandlers();
   _registerExtractionHandlers();
+  _registerStorageHandlers();
   _registerFileHandlers();
   _registerBlobHandlers();
   _registerMetaHandlers();
@@ -23,16 +26,22 @@ function setBlobCache(cache) {
   _blobCache = cache;
 }
 
+function setStorage(storage) {
+  _storage = storage;
+}
+
+function _pushToWindow(channel, payload) {
+  if (_mainWindow?.webContents && !_mainWindow.webContents.isDestroyed()) {
+    _mainWindow.webContents.send(channel, payload);
+  }
+}
+
 function _registerComparisonHandlers() {
   ipcMain.handle('START_COMPARISON', async (event, params) => {
     const { baselineId, compareId, mode, baselineUrl, compareUrl, includeScreenshots } = params;
     log.info('START_COMPARISON', { baselineId, compareId, mode });
 
-    const sendProgress = (label, pct) => {
-      if (_mainWindow?.webContents?.isDestroyed() === false) {
-        _mainWindow.webContents.send('COMPARISON_PROGRESS', { label, pct });
-      }
-    };
+    const sendProgress = (label, pct) => _pushToWindow('COMPARISON_PROGRESS', { label, pct });
 
     try {
       sendProgress('Loading reports…', 5);
@@ -47,13 +56,11 @@ function _registerComparisonHandlers() {
         blobCache: _blobCache,
       });
 
-      _mainWindow?.webContents?.send('COMPARISON_COMPLETE', { result });
       return { success: true, result };
 
     } catch (error) {
       const msg = error?.message || String(error);
       log.error('START_COMPARISON failed', { error: msg });
-      _mainWindow?.webContents?.send('COMPARISON_ERROR', { error: msg });
       throw error;
     }
   });
@@ -64,11 +71,7 @@ function _registerExtractionHandlers() {
     const { url, browserType, filters } = params;
     log.info('EXTRACT_ELEMENTS', { url, browserType });
 
-    const sendProgress = (label, pct) => {
-      if (_mainWindow?.webContents?.isDestroyed() === false) {
-        _mainWindow.webContents.send('EXTRACTION_PROGRESS', { label, pct });
-      }
-    };
+    const sendProgress = (label, pct) => _pushToWindow('EXTRACTION_PROGRESS', { label, pct });
 
     try {
       const report = await playwrightManager.runExtraction({
@@ -82,6 +85,47 @@ function _registerExtractionHandlers() {
       const msg = error?.message || String(error);
       log.error('EXTRACT_ELEMENTS failed', { error: msg });
       return { success: false, error: msg };
+    }
+  });
+}
+
+function _registerStorageHandlers() {
+  ipcMain.handle('LOAD_REPORTS', async () => {
+    if (!_storage) {
+      log.warn('LOAD_REPORTS: no storage adapter — returning []');
+      return [];
+    }
+    try {
+      return await _storage.loadReports();
+    } catch (err) {
+      log.error('LOAD_REPORTS failed', { error: err.message });
+      return [];
+    }
+  });
+
+  ipcMain.handle('DELETE_REPORT', async (event, id) => {
+    if (!_storage) {
+      log.warn('DELETE_REPORT: no storage adapter');
+      return { success: false, error: 'Storage not initialised' };
+    }
+    try {
+      return await _storage.deleteReport(id);
+    } catch (err) {
+      log.error('DELETE_REPORT failed', { id, error: err.message });
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('GET_CACHED_COMPARISON', async (event, { baselineId, compareId, mode }) => {
+    if (!_storage) {
+      log.warn('GET_CACHED_COMPARISON: no storage adapter');
+      return null;
+    }
+    try {
+      return await _storage.loadComparisonByPair(baselineId, compareId, mode);
+    } catch (err) {
+      log.error('GET_CACHED_COMPARISON failed', { error: err.message });
+      return null;
     }
   });
 }
@@ -197,4 +241,4 @@ function _registerMetaHandlers() {
   ipcMain.handle('GET_VERSION', () => app.getVersion());
 }
 
-module.exports = { registerIpcHandlers, setBlobCache };
+module.exports = { registerIpcHandlers, setBlobCache, setStorage };

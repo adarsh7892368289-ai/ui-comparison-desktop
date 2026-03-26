@@ -115,11 +115,11 @@ function upgradeToV6(db) {
 }
 
 function runUpgrade(db, upgradeTx, oldVersion) {
-  if (oldVersion < 1) {buildReportStores(db);}
-  if (oldVersion < 2) {buildComparisonStores(db);}
-  if (oldVersion < 4) {buildAuxStores(db);}
-  if (oldVersion < 5) {upgradeToV5(upgradeTx);}
-  if (oldVersion < 6) {upgradeToV6(db);}
+  if (oldVersion < 1) { buildReportStores(db); }
+  if (oldVersion < 2) { buildComparisonStores(db); }
+  if (oldVersion < 4) { buildAuxStores(db); }
+  if (oldVersion < 5) { upgradeToV5(upgradeTx); }
+  if (oldVersion < 6) { upgradeToV6(db); }
 }
 
 class IDBRepository {
@@ -685,9 +685,9 @@ class IDBRepository {
       const stores  = [STORE_VISUAL_BLOBS, STORE_VISUAL_KEYFRAMES, STORE_VISUAL_ELEMENT_RECTS];
       const writeTx = db.transaction(stores, 'readwrite');
 
-      for (const k of blobKeys) {writeTx.objectStore(STORE_VISUAL_BLOBS).delete(k);}
-      for (const k of kfKeys)   {writeTx.objectStore(STORE_VISUAL_KEYFRAMES).delete(k);}
-      for (const k of rectKeys) {writeTx.objectStore(STORE_VISUAL_ELEMENT_RECTS).delete(k);}
+      for (const k of blobKeys) { writeTx.objectStore(STORE_VISUAL_BLOBS).delete(k); }
+      for (const k of kfKeys)   { writeTx.objectStore(STORE_VISUAL_KEYFRAMES).delete(k); }
+      for (const k of rectKeys) { writeTx.objectStore(STORE_VISUAL_ELEMENT_RECTS).delete(k); }
 
       await transactionToPromise(writeTx);
       return { success: true };

@@ -1,3 +1,4 @@
+/* global chrome, btoa */
 import logger from '../../../infrastructure/logger.js';
 import storage from '../../../infrastructure/idb-repository.js';
 import { transformToGroupedReport } from '../shared/report-transformer.js';
@@ -81,13 +82,13 @@ async function blobToDataUri(blob) {
 async function loadBlobData(manifest) {
   const ids = new Set();
   for (const entry of Object.values(manifest)) {
-    if (entry.baselineKeyframeId) {ids.add(entry.baselineKeyframeId);}
-    if (entry.compareKeyframeId)  {ids.add(entry.compareKeyframeId);}
+    if (entry.baselineKeyframeId) { ids.add(entry.baselineKeyframeId); }
+    if (entry.compareKeyframeId)  { ids.add(entry.compareKeyframeId); }
   }
   const out = Object.create(null);
   for (const id of ids) {
     const blob = await storage.loadVisualBlob(id);
-    if (blob) {out[id] = await blobToDataUri(blob);}
+    if (blob) { out[id] = await blobToDataUri(blob); }
   }
   return out;
 }
@@ -131,8 +132,8 @@ function buildPreFlightBanner(w) {
   if (!w || w.classification !== 'CAUTION') { return ''; }
   const { mismatchDelta, estimatedFalseNegatives } = w;
   const parts = [];
-  if (mismatchDelta?.hash)        {parts.push(`SPA hash mismatch: <code>${esc(mismatchDelta.hash.baseline)}</code> vs <code>${esc(mismatchDelta.hash.compare)}</code>`);}
-  if (mismatchDelta?.queryParams) {parts.push(`Query differences: ${mismatchDelta.queryParams.map(p => esc(p.key)).join(', ')}`);}
+  if (mismatchDelta?.hash)        { parts.push(`SPA hash mismatch: <code>${esc(mismatchDelta.hash.baseline)}</code> vs <code>${esc(mismatchDelta.hash.compare)}</code>`); }
+  if (mismatchDelta?.queryParams) { parts.push(`Query differences: ${mismatchDelta.queryParams.map(p => esc(p.key)).join(', ')}`); }
   const fn = estimatedFalseNegatives !== null ? ` ~${estimatedFalseNegatives} false negatives estimated.` : '';
   return `<div style="position:sticky;top:0;z-index:9998;background:#1e3a5f;border-bottom:3px solid #3b82f6;padding:10px 16px;display:flex;align-items:flex-start;gap:10px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;">
   <span style="font-weight:800;color:#93c5fd;white-space:nowrap;">\u26a0 Page State Mismatch</span>

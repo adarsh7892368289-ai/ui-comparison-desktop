@@ -1,3 +1,4 @@
+/* global chrome */
 import logger from './logger.js';
 
 export const TabAdapter = {

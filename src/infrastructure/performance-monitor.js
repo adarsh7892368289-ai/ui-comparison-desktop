@@ -5,7 +5,7 @@ class PerformanceMonitor {
   }
 
   start(operation) {
-    if (!this.enabled) {return;}
+    if (!this.enabled) { return; }
     
     if (!this.metrics[operation]) {
       this.metrics[operation] = {
@@ -25,7 +25,7 @@ class PerformanceMonitor {
   }
 
   end(handle) {
-    if (!this.enabled || !handle) {return null;}
+    if (!this.enabled || !handle) { return null; }
 
     const duration = performance.now() - handle.startTime;
     const metric = this.metrics[handle.operation];
@@ -63,7 +63,7 @@ class PerformanceMonitor {
 
   getStats(operation) {
     const metric = this.metrics[operation];
-    if (!metric || metric.count === 0) {return null;}
+    if (!metric || metric.count === 0) { return null; }
     
     const avg = metric.totalTime / metric.count;
     const variance = metric.samples.reduce((sum, val) => sum + Math.pow(val - avg, 2), 0) / metric.samples.length;
@@ -92,7 +92,7 @@ class PerformanceMonitor {
   }
 
   _percentile(samples, p) {
-    if (samples.length === 0) {return 0;}
+    if (samples.length === 0) { return 0; }
     const sorted = [...samples].sort((a, b) => a - b);
     const index = Math.ceil(sorted.length * p) - 1;
     return Math.round(sorted[Math.max(0, index)]);

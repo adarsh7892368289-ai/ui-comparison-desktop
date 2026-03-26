@@ -37,3 +37,7 @@ blob-report/
 playwright/.cache/
 .env
 .env.*
+
+# Project structure docs
+project structure.txt
+project-structure.txt

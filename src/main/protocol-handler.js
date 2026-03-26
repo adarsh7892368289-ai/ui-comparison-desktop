@@ -6,53 +6,48 @@ const log  = require('electron-log');
 
 const blobCache = new Map();
 
-function resolveStaticPath(pathname) {
-  const clean = pathname.replace(/^\/\.\//, '/').replace(/^\//, '');
-  return path.join(__dirname, '../renderer', clean || 'index.html');
-}
+const DIST_ROOT = path.resolve(__dirname, '../renderer');
 
 function registerProtocolHandler() {
-  protocol.handle('app', async (request) => {
-    const url      = new URL(request.url);
-    const pathname = url.pathname;
+  protocol.handle('app', (request) => {
+    try {
+      const url = new URL(request.url);
 
-    if (pathname.startsWith('/blob/') || pathname.startsWith('/./blob/')) {
-      const blobId = pathname.replace(/^\/(\.\/)?blob\//, '');
-      const entry  = blobCache.get(blobId);
+      if (url.pathname.startsWith('/blob/')) {
+        const blobId = decodeURIComponent(url.pathname.slice('/blob/'.length));
+        const entry  = blobCache.get(blobId);
 
-      if (!entry) {
-        log.warn('Protocol handler: blob not found in cache', { blobId });
-        return new Response('Blob not found', {
-          status: 404,
-          headers: { 'Content-Type': 'text/plain' },
+        if (!entry) {
+          log.warn('[Protocol] Blob not found in cache', { blobId });
+          return new Response('Blob not found', { status: 404 });
+        }
+
+        return new Response(entry.buffer, {
+          status: 200,
+          headers: {
+            'Content-Type':  entry.mimeType ?? 'image/webp',
+            'Cache-Control': 'no-store',
+          },
         });
       }
 
-      return new Response(entry.buffer, {
-        status:  200,
-        headers: {
-          'Content-Type':  entry.mimeType,
-          'Cache-Control': 'private, max-age=3600',
-          'Content-Length': String(entry.buffer.length),
-        },
-      });
-    }
+      const relativePath = url.pathname === '/' ? 'index.html' : url.pathname;
+      const absolutePath = path.join(DIST_ROOT, relativePath);
 
-    const filePath   = resolveStaticPath(pathname);
-    const fileUrl    = `file://${filePath.replace(/\\/g, '/')}`;
+      if (!absolutePath.startsWith(DIST_ROOT)) {
+        log.warn('[Protocol] Path traversal attempt blocked', { relativePath });
+        return new Response('Forbidden', { status: 403 });
+      }
 
-    try {
-      return await net.fetch(fileUrl);
+      return net.fetch(`file://${absolutePath}`);
+
     } catch (err) {
-      log.error('Protocol handler: static file not found', { pathname, filePath, error: err.message });
-      return new Response(`File not found: ${pathname}`, {
-        status:  404,
-        headers: { 'Content-Type': 'text/plain' },
-      });
+      log.error('[Protocol] Handler threw', { error: err.message, url: request.url });
+      return new Response('Internal error', { status: 500 });
     }
   });
 
-  log.info('Protocol handler registered for app:// scheme');
+  log.info('[Protocol] app:// scheme handler registered', { distRoot: DIST_ROOT });
 }
 
 module.exports = { registerProtocolHandler, blobCache };
