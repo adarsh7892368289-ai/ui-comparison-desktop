@@ -1,12 +1,15 @@
 'use strict';
 
 const initialState = {
-  phase:       'idle',
-  reports:     [],
-  comparison:  null,
-  progress:    { label: '', pct: 0 },
-  error:       null,
-  exportState: null,
+  phase:             'idle',
+  reports:           [],
+  comparison:        null,
+  progress:          { label: '', pct: 0 },
+  error:             null,
+  exportState:       null,
+  selectedBaseline:  null,
+  selectedCompare:   null,
+  compareMode:       'dynamic',
 };
 
 let _state       = { ...initialState };
@@ -78,6 +81,18 @@ function reduce(state, type, payload) {
         phase:    'extracting',
         progress: { label: payload.label, pct: payload.pct },
       };
+
+    case 'BASELINE_SELECTED':
+      return { ...state, selectedBaseline: payload.id || null };
+
+    case 'COMPARE_SELECTED':
+      return { ...state, selectedCompare: payload.id || null };
+
+    case 'MODE_CHANGED':
+      return { ...state, compareMode: payload.mode };
+
+    case 'RESET_COMPARISON':
+      return { ...state, comparison: null, phase: 'idle', error: null };
 
     case 'EXPORT_STARTED':
       return { ...state, exportState: 'pending' };

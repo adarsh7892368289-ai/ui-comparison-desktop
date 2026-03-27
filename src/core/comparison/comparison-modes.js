@@ -214,6 +214,7 @@ class BaseComparisonMode {
     });
   }
 
+  /** @protected — call compare(), not this method directly; subclasses supply filter and modeName. */
   async* compareChunked(matches, ambiguous, filter, modeName) {
     const total       = matches.length;
     const diffResults = [];

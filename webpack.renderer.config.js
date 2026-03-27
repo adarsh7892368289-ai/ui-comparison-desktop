@@ -14,7 +14,7 @@ class CopyIndexHtmlPlugin {
 
 module.exports = {
   mode:   process.env.NODE_ENV === 'production' ? 'production' : 'development',
-  target: 'electron-renderer',
+  target: 'web',
 
   entry: {
     app: './src/renderer/app.js',
@@ -58,6 +58,8 @@ module.exports = {
       '@core':   path.resolve(__dirname, 'src/core'),
       '@config': path.resolve(__dirname, 'src/config'),
       '@infra':  path.resolve(__dirname, 'src/infrastructure'),
+'electron-log': require.resolve('electron-log/renderer'),
+      'electron': path.resolve(__dirname, 'src/renderer/stubs/electron.js'),
     },
   },
 

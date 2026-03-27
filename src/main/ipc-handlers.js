@@ -10,13 +10,10 @@ const playwrightManager = require('./playwright-manager');
 let _mainWindow = null;
 let _blobCache  = null;
 
-let _storage = null;
-
 function registerIpcHandlers(mainWindow) {
   _mainWindow = mainWindow;
   _registerComparisonHandlers();
   _registerExtractionHandlers();
-  _registerStorageHandlers();
   _registerFileHandlers();
   _registerBlobHandlers();
   _registerMetaHandlers();
@@ -26,10 +23,6 @@ function setBlobCache(cache) {
   _blobCache = cache;
 }
 
-function setStorage(storage) {
-  _storage = storage;
-}
-
 function _pushToWindow(channel, payload) {
   if (_mainWindow?.webContents && !_mainWindow.webContents.isDestroyed()) {
     _mainWindow.webContents.send(channel, payload);
@@ -37,20 +30,23 @@ function _pushToWindow(channel, payload) {
 }
 
 function _registerComparisonHandlers() {
+  // Params now include baselineElements/compareElements: renderer loads elements
+  // from IDB before this call; main process receives plain objects and runs comparison.
   ipcMain.handle('START_COMPARISON', async (event, params) => {
-    const { baselineId, compareId, mode, baselineUrl, compareUrl, includeScreenshots } = params;
-    log.info('START_COMPARISON', { baselineId, compareId, mode });
+    const { baselineId, compareId, mode, baselineUrl, compareUrl, baselineElements, compareElements, includeScreenshots } = params;
+    log.info('START_COMPARISON', { baselineId, compareId, mode, baselineCount: baselineElements?.length, compareCount: compareElements?.length });
 
     const sendProgress = (label, pct) => _pushToWindow('COMPARISON_PROGRESS', { label, pct });
 
     try {
-      sendProgress('Loading reports…', 5);
       const result = await playwrightManager.runComparison({
         baselineId,
         compareId,
         mode,
         baselineUrl,
         compareUrl,
+        baselineElements,
+        compareElements,
         includeScreenshots: includeScreenshots ?? true,
         onProgress: sendProgress,
         blobCache: _blobCache,
@@ -61,7 +57,7 @@ function _registerComparisonHandlers() {
     } catch (error) {
       const msg = error?.message || String(error);
       log.error('START_COMPARISON failed', { error: msg });
-      throw error;
+      return { success: false, error: msg };
     }
   });
 }
@@ -85,47 +81,6 @@ function _registerExtractionHandlers() {
       const msg = error?.message || String(error);
       log.error('EXTRACT_ELEMENTS failed', { error: msg });
       return { success: false, error: msg };
-    }
-  });
-}
-
-function _registerStorageHandlers() {
-  ipcMain.handle('LOAD_REPORTS', async () => {
-    if (!_storage) {
-      log.warn('LOAD_REPORTS: no storage adapter — returning []');
-      return [];
-    }
-    try {
-      return await _storage.loadReports();
-    } catch (err) {
-      log.error('LOAD_REPORTS failed', { error: err.message });
-      return [];
-    }
-  });
-
-  ipcMain.handle('DELETE_REPORT', async (event, id) => {
-    if (!_storage) {
-      log.warn('DELETE_REPORT: no storage adapter');
-      return { success: false, error: 'Storage not initialised' };
-    }
-    try {
-      return await _storage.deleteReport(id);
-    } catch (err) {
-      log.error('DELETE_REPORT failed', { id, error: err.message });
-      return { success: false, error: err.message };
-    }
-  });
-
-  ipcMain.handle('GET_CACHED_COMPARISON', async (event, { baselineId, compareId, mode }) => {
-    if (!_storage) {
-      log.warn('GET_CACHED_COMPARISON: no storage adapter');
-      return null;
-    }
-    try {
-      return await _storage.loadComparisonByPair(baselineId, compareId, mode);
-    } catch (err) {
-      log.error('GET_CACHED_COMPARISON failed', { error: err.message });
-      return null;
     }
   });
 }
@@ -241,4 +196,4 @@ function _registerMetaHandlers() {
   ipcMain.handle('GET_VERSION', () => app.getVersion());
 }
 
-module.exports = { registerIpcHandlers, setBlobCache, setStorage };
+module.exports = { registerIpcHandlers, setBlobCache };

@@ -8,6 +8,7 @@ const log    = require('electron-log');
 const { groupIntoKeyframes } = require('../core/comparison/keyframe-grouper.js');
 const { Comparator }         = require('../core/comparison/comparator.js');
 const { assessUrlCompatibility } = require('../application/url-compatibility.js');
+const { getPageExtractorFn } = require('../core/extraction/page-extractor.js');
 
 const CAPTURE_SCALE_FACTOR         = 2;
 const CAPTURE_QUALITY              = 85;
@@ -53,7 +54,7 @@ async function shutdownPlaywright() {
   log.info('[PM] All browsers closed');
 }
 
-const _sessionMap = new Map();
+const _sessionMap = new WeakMap();
 
 async function attachSession(page) {
   const browserTypeName = page.context().browser().browserType().name();
@@ -232,15 +233,6 @@ async function executeInPage(sessionHandle, fn, args) {
 
 async function recoverFrozenSessions() {
   let recovered = 0;
-  for (const [page, sessionHandle] of _sessionMap) {
-    if (sessionHandle.frozen) {
-      log.warn('[PM] Startup recovery: unfreezing frozen session', { url: page.url() });
-      await unfreezePage(sessionHandle).catch(err =>
-        log.error('[PM] Recovery unfreeze failed', { url: page.url(), err: err.message })
-      );
-      recovered++;
-    }
-  }
   if (recovered > 0) {
     log.warn('[PM] Startup recovery complete', { frozenSessionsRecovered: recovered });
   }
@@ -935,29 +927,14 @@ async function runExtraction({ url, browserType, filters, onProgress }) {
 
     await page.waitForTimeout(500);
 
-    onProgress?.('Injecting extraction pipeline…', 35);
-
-    const bundlePath = path.join(__dirname, '../../dist/content-bundle.js');
-    await page.addScriptTag({ path: bundlePath });
-
     onProgress?.('Extracting elements…', 50);
 
-    const elements = await page.evaluate(
-      async ({ filters }) => {
-        if (typeof window.__vdiffExtract !== 'function') {
-          throw new Error(
-            'Extraction bundle not loaded — ensure dist/content-bundle.js is built ' +
-            'with the desktop entry point that exposes window.__vdiffExtract()'
-          );
-        }
-        return window.__vdiffExtract(filters);
-      },
-      { filters }
-    );
+    const extractorFn = getPageExtractorFn();
+    const report = await page.evaluate(extractorFn, { options: { filters }, sessionId: null });
 
     onProgress?.('Extraction complete', 100);
-    log.info('[PM] runExtraction done', { url, elementCount: elements?.length ?? 0 });
-    return elements;
+    log.info('[PM] runExtraction done', { url, elementCount: report?.totalElements ?? 0 });
+    return report;
 
   } finally {
     await page.close().catch(() => { /* ignore */ });
@@ -971,11 +948,13 @@ async function runComparison({
   mode,
   baselineUrl,
   compareUrl,
+  baselineElements,
+  compareElements,
   includeScreenshots,
   onProgress,
   blobCache,
 }) {
-  log.info('[PM] runComparison start', { baselineId, compareId, mode });
+  log.info('[PM] runComparison start', { baselineId, compareId, mode, baselineCount: baselineElements?.length, compareCount: compareElements?.length });
 
   const send = (label, pct) => onProgress?.(label, pct);
 
@@ -987,77 +966,57 @@ async function runComparison({
     });
   }
 
-  send('Extracting baseline…', 10);
-  const browser  = await getBrowser('chromium');
-  const context  = await browser.newContext({ serviceWorkers: 'block' });
+  if (!baselineElements?.length) {
+    throw new Error('Baseline elements array is empty — renderer failed to load from IDB');
+  }
+  if (!compareElements?.length) {
+    throw new Error('Compare elements array is empty — renderer failed to load from IDB');
+  }
 
-  let baselinePage, comparePage;
-  try {
-    const [bPage, cPage] = await Promise.all([
-      context.newPage(),
-      context.newPage(),
-    ]);
-    baselinePage = bPage;
-    comparePage  = cPage;
+  send('Running comparison…', 20);
+  const comparator = new Comparator();
+  const generator  = comparator.compare(
+    { elements: baselineElements, url: baselineUrl, id: baselineId },
+    { elements: compareElements,  url: compareUrl,  id: compareId  },
+    mode
+  );
 
-    send('Loading baseline…', 15);
-    await baselinePage.goto(baselineUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-
-    send('Loading compare…', 22);
-    await comparePage.goto(compareUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-
-    await Promise.all([
-      baselinePage.waitForTimeout(500),
-      comparePage.waitForTimeout(500),
-    ]);
-
-    send('Extracting elements…', 30);
-    const bundlePath = path.join(__dirname, '../../dist/content-bundle.js');
-
-    await Promise.all([
-      baselinePage.addScriptTag({ path: bundlePath }),
-      comparePage.addScriptTag({ path: bundlePath }),
-    ]);
-
-    const [baselineElements, compareElements] = await Promise.all([
-      baselinePage.evaluate(async () => window.__vdiffExtract?.()),
-      comparePage.evaluate(async () => window.__vdiffExtract?.()),
-    ]);
-
-    if (!baselineElements?.length) {
-      throw new Error('Baseline extraction returned 0 elements');
+  let comparisonResult = null;
+  for await (const frame of generator) {
+    if (frame.type === 'progress') {
+      send(`Matching: ${frame.label}…`, 20 + Math.round((frame.pct / 100) * 55));
     }
-    if (!compareElements?.length) {
-      throw new Error('Compare extraction returned 0 elements');
+    if (frame.type === 'result') {
+      comparisonResult = frame.payload;
     }
+  }
 
-    send('Running comparison…', 50);
+  if (!comparisonResult) {
+    throw new Error('Comparator returned no result frame');
+  }
 
-    const comparator = new Comparator();
-    const generator  = comparator.compare(
-      { elements: baselineElements, url: baselineUrl, id: baselineId },
-      { elements: compareElements,  url: compareUrl,  id: compareId  },
-      mode
-    );
+  send('Comparison complete', 80);
 
-    let comparisonResult = null;
-    for await (const frame of generator) {
-      if (frame.type === 'progress') {
-        send(`Matching: ${frame.label}…`, 50 + Math.round((frame.pct / 100) * 35));
-      }
-      if (frame.type === 'result') {
-        comparisonResult = frame;
-      }
-    }
+  let visualData = null;
+  if (includeScreenshots !== false) {
+    // Navigate to pages only for screenshot capture — element data already supplied by renderer
+    send('Loading pages for screenshots…', 82);
+    const browser  = await getBrowser('chromium');
+    const context  = await browser.newContext({ serviceWorkers: 'block' });
+    let baselinePage, comparePage;
+    try {
+      [baselinePage, comparePage] = await Promise.all([
+        context.newPage(),
+        context.newPage(),
+      ]);
 
-    if (!comparisonResult) {
-      throw new Error('Comparator returned no result frame');
-    }
+      await baselinePage.goto(baselineUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      await comparePage.goto(compareUrl,   { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      await Promise.all([
+        baselinePage.waitForTimeout(500),
+        comparePage.waitForTimeout(500),
+      ]);
 
-    send('Comparison complete', 85);
-
-    let visualData = null;
-    if (includeScreenshots !== false) {
       send('Capturing screenshots…', 87);
       const visualResult = await captureVisualDiffs(
         comparisonResult,
@@ -1067,10 +1026,10 @@ async function runComparison({
 
       if (visualResult.status === 'completed') {
         visualData = {
-          sessionId:      visualResult.sessionId,
-          diffs:          Object.fromEntries(visualResult.diffs),
-          keyframes:      visualResult.keyframes,
-          rectRecords:    visualResult.rectRecords,
+          sessionId:        visualResult.sessionId,
+          diffs:            Object.fromEntries(visualResult.diffs),
+          keyframes:        visualResult.keyframes,
+          rectRecords:      visualResult.rectRecords,
           devToolsWarnings: visualResult.devToolsWarnings,
         };
       } else {
@@ -1078,33 +1037,34 @@ async function runComparison({
           status: visualResult.status, reason: visualResult.reason,
         });
       }
+    } finally {
+      await baselinePage?.close().catch(() => { /* ignore */ });
+      await comparePage?.close().catch(() => { /* ignore */ });
+      await context.close().catch(() => { /* ignore */ });
     }
-
-    send('Finalising…', 96);
-
-    const slimResult = {
-      baselineId,
-      compareId,
-      mode,
-      urlCompatibility: urlResult,
-      comparison:  comparisonResult.comparison,
-      summary:     comparisonResult.summary,
-      visualData,
-      completedAt: new Date().toISOString(),
-    };
-
-    send('Done', 100);
-    log.info('[PM] runComparison complete', {
-      mode, modified: comparisonResult.summary?.severityCounts,
-    });
-
-    return slimResult;
-
-  } finally {
-    await baselinePage?.close().catch(() => { /* ignore */ });
-    await comparePage?.close().catch(() => { /* ignore */ });
-    await context.close().catch(() => { /* ignore */ });
   }
+
+  send('Finalising…', 96);
+
+  const slimResult = {
+    baselineId,
+    compareId,
+    mode,
+    urlCompatibility: urlResult,
+    matching:          comparisonResult.matching,
+    comparison:        comparisonResult.comparison,
+    unmatchedElements: comparisonResult.unmatchedElements,
+    duration:          comparisonResult.duration,
+    visualData,
+    completedAt: new Date().toISOString(),
+  };
+
+  send('Done', 100);
+  log.info('[PM] runComparison complete', {
+    mode, modified: comparisonResult.summary?.severityCounts,
+  });
+
+  return slimResult;
 }
 
 module.exports = {

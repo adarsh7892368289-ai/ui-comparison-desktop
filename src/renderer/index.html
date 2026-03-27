@@ -1,26 +1,243 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-
-  <meta http-equiv="Content-Security-Policy"
-    content="
-      default-src 'self';
-      script-src 'self';
-      style-src 'self' 'unsafe-inline';
-      img-src 'self' data: app: blob:;
-      connect-src 'none';
-      font-src 'self' data:;
-    "
-  />
-
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>UI Comparison</title>
-
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-bg: #1a1a2e; --color-surface: #16213e; --color-surface-2: #0f3460;
+      --color-border: rgba(255,255,255,0.08); --color-text: #e2e8f0;
+      --color-text-muted: #94a3b8; --color-brand: #7c6af7; --color-brand-h: #9b8df9;
+      --color-danger: #ef4444; --color-success: #22c55e; --color-warning: #f59e0b;
+      --radius: 6px; --radius-lg: 10px;
+    }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--color-bg); color: var(--color-text); font-size: 13px; line-height: 1.5; min-height: 100vh; }
+    .app-root { max-width: 860px; margin: 0 auto; }
+    .app-header { display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-bottom: 1px solid var(--color-border); }
+    .header-brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; }
+    .tab-bar { display: flex; padding: 0 20px; border-bottom: 1px solid var(--color-border); }
+    .tab { padding: 10px 16px; background: none; border: none; border-bottom: 2px solid transparent; color: var(--color-text-muted); cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: color .15s, border-color .15s; }
+    .tab:hover { color: var(--color-text); }
+    .tab.active { color: var(--color-brand); border-bottom-color: var(--color-brand); }
+    .panel { display: none; padding: 20px; }
+    .panel.active { display: block; }
+    .card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: 16px; margin-bottom: 12px; }
+    .form-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+    .form-field:last-child { margin-bottom: 0; }
+    .label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--color-text-muted); }
+    .input, .select { background: var(--color-bg); border: 1px solid var(--color-border); border-radius: var(--radius); color: var(--color-text); padding: 8px 10px; font-size: 13px; width: 100%; outline: none; transition: border-color .15s; }
+    .input:focus, .select:focus { border-color: var(--color-brand); }
+    .input::placeholder { color: var(--color-text-muted); }
+    .btn-primary { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; padding: 10px 16px; background: var(--color-brand); color: #fff; border: none; border-radius: var(--radius); font-size: 13px; font-weight: 600; cursor: pointer; transition: background .15s, opacity .15s; margin-bottom: 12px; }
+    .btn-primary:hover:not(:disabled) { background: var(--color-brand-h); }
+    .btn-primary:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-ghost { background: none; border: 1px solid var(--color-border); color: var(--color-text-muted); border-radius: var(--radius); padding: 6px 12px; font-size: 12px; cursor: pointer; transition: color .15s, border-color .15s; }
+    .btn-ghost:hover { color: var(--color-text); border-color: rgba(255,255,255,.2); }
+    .btn-danger { background: none; border: 1px solid rgba(239,68,68,.3); color: var(--color-danger); border-radius: var(--radius); padding: 4px 10px; font-size: 12px; cursor: pointer; }
+    .btn-danger:hover { background: rgba(239,68,68,.1); }
+    .progress-wrap { display: none; flex-direction: column; gap: 6px; padding: 10px 0; }
+    .progress-wrap.visible { display: flex; }
+    .progress-track { height: 4px; background: var(--color-surface-2); border-radius: 2px; overflow: hidden; }
+    .progress-fill { height: 100%; background: var(--color-brand); border-radius: 2px; transition: width .3s ease; width: 0%; }
+    .progress-label { font-size: 11px; color: var(--color-text-muted); }
+    .report-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 6px; display: flex; align-items: center; gap: 10px; }
+    .report-card-body { flex: 1; min-width: 0; }
+    .report-card-meta { font-size: 11px; color: var(--color-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .report-card-host { font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .report-card-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+    .report-index { display: inline-block; font-size: 10px; font-weight: 700; color: var(--color-brand); background: rgba(124,106,247,.12); border-radius: 3px; padding: 1px 5px; margin-right: 6px; }
+    .vs-divider { display: flex; align-items: center; margin: 8px 0; gap: 8px; }
+    .vs-divider::before, .vs-divider::after { content: ''; flex: 1; height: 1px; background: var(--color-border); }
+    .vs-label { font-size: 10px; font-weight: 700; color: var(--color-text-muted); letter-spacing: .08em; }
+    .segmented-control { display: flex; gap: 4px; background: var(--color-bg); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 3px; }
+    .seg-option { flex: 1; }
+    .seg-option input[type="radio"] { display: none; }
+    .seg-label { display: flex; align-items: center; justify-content: center; padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; color: var(--color-text-muted); transition: background .15s, color .15s; }
+    .seg-option input:checked + .seg-label { background: var(--color-surface-2); color: var(--color-text); }
+    .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; cursor: pointer; }
+    .toggle-row__label { font-size: 13px; font-weight: 500; }
+    .toggle-row__hint { font-size: 11px; color: var(--color-text-muted); margin-top: 2px; }
+    .visual-toggle__track { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
+    .visual-toggle__track input { opacity: 0; width: 0; height: 0; position: absolute; }
+    .visual-toggle__thumb { position: absolute; inset: 0; background: var(--color-surface-2); border-radius: 10px; transition: background .2s; }
+    .visual-toggle__thumb::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; background: #fff; border-radius: 50%; transition: transform .2s; }
+    .visual-toggle__track input:checked + .visual-toggle__thumb { background: var(--color-brand); }
+    .visual-toggle__track input:checked + .visual-toggle__thumb::after { transform: translateX(16px); }
+    .error-msg { color: var(--color-danger); font-size: 12px; min-height: 18px; padding: 4px 0; }
+    .result-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: 16px; margin-top: 12px; }
+    .result-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 16px; }
+    .rate-value { font-size: 32px; font-weight: 700; line-height: 1; }
+    .rate-label { font-size: 11px; color: var(--color-text-muted); margin-top: 2px; }
+    .rate-ok { color: var(--color-success); } .rate-high { color: var(--color-warning); } .rate-critical { color: var(--color-danger); }
+    .result-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+    .result-mode-badge { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; background: rgba(124,106,247,.15); color: var(--color-brand); padding: 2px 8px; border-radius: 3px; }
+    .result-duration { font-size: 11px; color: var(--color-text-muted); }
+    .section-hdr { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--color-text-muted); margin-bottom: 8px; }
+    .match-breakdown-row { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; margin-bottom: 10px; }
+    .mbr-item { background: var(--color-bg); border-radius: var(--radius); padding: 8px; text-align: center; }
+    .mbr-val { font-size: 20px; font-weight: 700; }
+    .mbr-lbl { font-size: 10px; color: var(--color-text-muted); margin-top: 2px; }
+    .mbr-matched .mbr-val { color: var(--color-success); } .mbr-modified .mbr-val { color: var(--color-warning); }
+    .mbr-unchanged .mbr-val { color: var(--color-text-muted); } .mbr-unmatched .mbr-val { color: var(--color-danger); }
+    .match-bar-wrap { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--color-bg); margin-bottom: 16px; }
+    .match-bar-seg { height: 100%; transition: width .5s ease; }
+    .match-bar-unchanged { background: var(--color-text-muted); } .match-bar-modified { background: var(--color-warning); }
+    .match-bar-added { background: var(--color-success); } .match-bar-removed { background: var(--color-danger); }
+    .sev-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+    .badge { display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 3px; min-width: 58px; text-align: center; }
+    .badge-critical { background: rgba(239,68,68,.15); color: #ef4444; } .badge-high { background: rgba(249,115,22,.15); color: #f97316; }
+    .badge-medium { background: rgba(234,179,8,.15); color: #eab308; } .badge-low { background: rgba(34,197,94,.15); color: #22c55e; }
+    .badge-added { background: rgba(34,197,94,.15); color: var(--color-success); } .badge-removed { background: rgba(239,68,68,.15); color: var(--color-danger); }
+    .sev-bar-wrap { flex: 1; height: 6px; background: var(--color-bg); border-radius: 3px; overflow: hidden; }
+    .sev-bar-fill { height: 100%; border-radius: 3px; transition: width .5s ease; }
+    .sev-critical { background: #ef4444; } .sev-high { background: #f97316; } .sev-medium { background: #eab308; } .sev-low { background: #22c55e; }
+    .sev-count { font-size: 12px; font-weight: 600; min-width: 24px; text-align: right; }
+    details.el-section { margin-bottom: 8px; }
+    .el-section-summary { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 6px 0; font-size: 12px; color: var(--color-text-muted); list-style: none; }
+    .el-row { display: flex; align-items: flex-start; gap: 8px; padding: 5px 0; border-top: 1px solid var(--color-border); font-size: 12px; }
+    .el-info { flex: 1; min-width: 0; }
+    .el-label { font-weight: 500; }
+    .el-sel { display: block; font-family: monospace; font-size: 10px; color: var(--color-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .result-actions { display: flex; align-items: center; gap: 10px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--color-border); }
+    .no-diffs { text-align: center; padding: 16px; color: var(--color-success); font-weight: 600; }
+    .ambiguous-note { font-size: 11px; color: var(--color-warning); padding: 4px 0; }
+    hr.card-sep { border: none; border-top: 1px solid var(--color-border); margin: 12px 0; }
+    .toast-container { position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 1000; }
+    .toast { padding: 10px 14px; border-radius: var(--radius); font-size: 12px; max-width: 320px; display: flex; align-items: center; justify-content: space-between; gap: 10px; opacity: 0; transform: translateY(8px); transition: opacity .2s, transform .2s; }
+    .toast.visible { opacity: 1; transform: translateY(0); }
+    .toast-success { background: rgba(34,197,94,.15); border: 1px solid rgba(34,197,94,.3); color: #86efac; }
+    .toast-error { background: rgba(239,68,68,.15); border: 1px solid rgba(239,68,68,.3); color: #fca5a5; }
+    .toast-info { background: rgba(124,106,247,.15); border: 1px solid rgba(124,106,247,.3); color: #c4b5fd; }
+    .toast-close { background: none; border: none; cursor: pointer; color: inherit; opacity: .6; font-size: 14px; line-height: 1; padding: 0; flex-shrink: 0; }
+    .section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--color-text-muted); margin-bottom: 10px; }
+  </style>
 </head>
 <body>
-  <div id="app"></div>
 
-  <script src="./app.js"></script>
+  <div id="toast-container" class="toast-container"></div>
+
+  <div class="app-root">
+
+    <header class="app-header">
+      <div class="header-brand">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-brand)" stroke-width="2.5" aria-hidden="true">
+          <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
+        </svg>
+        UI Comparison
+      </div>
+    </header>
+
+    <nav class="tab-bar" role="tablist">
+      <button class="tab active" role="tab" aria-selected="true" data-tab="extract" id="tab-extract">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" aria-hidden="true">
+          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+        </svg>
+        Extract
+      </button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="compare" id="tab-compare">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" aria-hidden="true">
+          <path d="M8 6l4-4 4 4M16 18l-4 4-4-4M12 2v20"/>
+        </svg>
+        Compare
+      </button>
+    </nav>
+
+    <section id="panel-extract" class="panel active" role="tabpanel" aria-labelledby="tab-extract">
+      <div class="card">
+        <div class="form-field">
+          <label class="label" for="url-input">Page URL</label>
+          <input class="input" id="url-input" type="url" placeholder="https://example.com" autocomplete="off">
+        </div>
+        <div class="form-field" style="margin-bottom:0">
+          <label class="label" for="filter-class">Class filter <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
+          <input class="input" id="filter-class" type="text" placeholder="e.g. btn">
+        </div>
+      </div>
+
+      <button class="btn-primary" id="extract-btn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" aria-hidden="true">
+          <path d="M4 8V4h4M20 8V4h-4M4 16v4h4M20 16v4h-4"/>
+        </svg>
+        Extract Elements
+      </button>
+
+      <div id="extract-progress" class="progress-wrap" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div class="progress-track"><div class="progress-fill" id="extract-progress-bar"></div></div>
+        <span class="progress-label" id="extract-progress-label">Scanning…</span>
+      </div>
+
+      <div id="extract-error" class="error-msg"></div>
+
+      <div class="section-title" style="margin-top:16px">Saved Reports</div>
+      <div id="report-list" role="list" aria-label="Saved reports"></div>
+    </section>
+
+    <section id="panel-compare" class="panel" role="tabpanel" aria-labelledby="tab-compare" hidden>
+      <div class="card">
+        <div class="form-field">
+          <label class="label" for="baseline-report">Baseline</label>
+          <select class="select" id="baseline-report" aria-label="Select baseline report">
+            <option value="">Select report…</option>
+          </select>
+        </div>
+
+        <div class="vs-divider"><span class="vs-label">VS</span></div>
+
+        <div class="form-field">
+          <label class="label" for="compare-report">Compare</label>
+          <select class="select" id="compare-report" aria-label="Select compare report">
+            <option value="">Select report…</option>
+          </select>
+        </div>
+
+        <hr class="card-sep">
+
+        <div class="form-field">
+          <label class="label">Mode</label>
+          <div class="segmented-control" role="group" aria-label="Comparison mode">
+            <label class="seg-option">
+              <input type="radio" name="compare-mode" value="dynamic" checked>
+              <span class="seg-label">Dynamic</span>
+            </label>
+            <label class="seg-option">
+              <input type="radio" name="compare-mode" value="static">
+              <span class="seg-label">Static</span>
+            </label>
+          </div>
+        </div>
+
+        <label class="toggle-row" for="visual-diff-toggle">
+          <div class="toggle-row__text">
+            <div class="toggle-row__label">Visual Diff</div>
+            <div class="toggle-row__hint">Side-by-side screenshot capture</div>
+          </div>
+          <div class="visual-toggle__track">
+            <input type="checkbox" id="visual-diff-toggle" checked>
+            <span class="visual-toggle__thumb" aria-hidden="true"></span>
+          </div>
+        </label>
+      </div>
+
+      <button class="btn-primary" id="compare-btn" disabled>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" aria-hidden="true">
+          <path d="M8 6l4-4 4 4M16 18l-4 4-4-4M12 2v20"/>
+        </svg>
+        Compare Reports
+      </button>
+
+      <div id="compare-progress" class="progress-wrap" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div class="progress-track"><div class="progress-fill" id="compare-progress-bar"></div></div>
+        <span class="progress-label" id="compare-progress-label">Matching elements…</span>
+      </div>
+
+      <div id="compare-error" class="error-msg"></div>
+      <div id="compare-results"></div>
+    </section>
+
+  </div>
+
+  <script type="module" src="./app.js"></script>
 </body>
 </html>

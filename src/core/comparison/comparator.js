@@ -88,7 +88,7 @@ class Comparator {
     const diffTotal       = matchingResult.matches.length;
     let   comparisonResult = null;
 
-    const diffingGen = comparisonMode.compareChunked(
+    const diffingGen = comparisonMode.compare(
       matchingResult.matches,
       matchingResult.ambiguous ?? []
     );

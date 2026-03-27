@@ -4,8 +4,14 @@ const { app, BrowserWindow, protocol, nativeTheme } = require('electron');
 const path = require('path');
 const log  = require('electron-log');
 
-const { registerIpcHandlers, setBlobCache, setStorage } = require('./ipc-handlers');
-const { registerProtocolHandler, blobCache }            = require('./protocol-handler');
+const { registerIpcHandlers, setBlobCache } = require('./ipc-handlers');
+const { registerProtocolHandler, blobCache } = require('./protocol-handler');
+const { shutdownPlaywright }                 = require('./playwright-manager');
+
+// Config and validator run in main process via webpack-bundled ESM→CJS output
+const { init: configInit, get: configGet } = require('../config/defaults');
+const { validateConfig }                   = require('../config/validator');
+
 
 app.commandLine.appendSwitch('--disable-web-security', false);
 app.enableSandbox();
@@ -27,7 +33,26 @@ let _handlersRegistered = false;
 
 app.on('ready', () => {
   log.initialize({ preload: true });
-  log.info('App ready — initialising window and handlers');
+  log.info('App ready — initialising config, window and handlers');
+
+  // 0.4: config.init() before registerIpcHandlers() — any handler that constructs a
+  // Comparator or ComparisonMode reads config at construction time; an uninitialized
+  // config object returns stale defaults or throws, silently corrupting comparison parameters
+  configInit();
+
+  // validateConfig(throwOnError:true) at boot — on throw, quit immediately rather than
+  // running with a broken config that produces wrong comparison results silently;
+  // throwOnError:false is correct only in non-critical paths (e.g. a settings UI that
+  // wants to surface errors to the user without crashing the app)
+  try {
+    validateConfig({ throwOnError: true });
+  } catch (configErr) {
+    log.error('[BOOT] Config validation failed — quitting', { error: configErr.message });
+    app.quit();
+    return;
+  }
+
+  log.info('[BOOT] config tolerances:', configGet('comparison.tolerances'));
 
   registerProtocolHandler();
 
@@ -87,7 +112,9 @@ app.on('activate', () => {
 
 app.on('before-quit', async () => {
   log.info('App quitting — shutting down Playwright');
-  await shutdownPlaywright();
+  await shutdownPlaywright().catch(err =>
+    log.warn('Playwright shutdown error during quit', { err: err.message })
+  );
 });
 
 process.on('uncaughtException', (err) => {

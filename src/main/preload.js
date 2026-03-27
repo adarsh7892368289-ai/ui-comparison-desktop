@@ -22,15 +22,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   onExtractionProgress: makePushBridge('EXTRACTION_PROGRESS'),
 
-  loadReports: () =>
-    ipcRenderer.invoke('LOAD_REPORTS'),
-
-  deleteReport: (id) =>
-    ipcRenderer.invoke('DELETE_REPORT', id),
-
-  getCachedComparison: (baselineId, compareId, mode) =>
-    ipcRenderer.invoke('GET_CACHED_COMPARISON', { baselineId, compareId, mode }),
-
   exportHTML: (params) =>
     ipcRenderer.invoke('EXPORT_HTML', params),
 
