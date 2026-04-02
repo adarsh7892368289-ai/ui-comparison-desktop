@@ -25,7 +25,7 @@ function parseIdExpression(raw) {
   const trimmed = raw.trim();
   if (!trimmed) {return null;}
 
-  const ids = trimmed.split(',').map(i => i.trim()).filter(Boolean);
+  const ids = trimmed.split(/\s+/).filter(Boolean);
   if (ids.length === 0) {return null;}
 
   return ids.map(id => `#${CSS.escape(id.replace(/^#/u, ''))}`).join(',');
@@ -35,7 +35,7 @@ function parseTagExpression(raw) {
   const trimmed = raw.trim();
   if (!trimmed) {return null;}
 
-  const tags = trimmed.split(/[\s,]+/).map(t => t.trim().toLowerCase()).filter(Boolean);
+  const tags = trimmed.split(/\s+/).map(t => t.trim().toLowerCase()).filter(Boolean);
   if (tags.length === 0) {return null;}
 
   return tags.join(',');
@@ -87,11 +87,7 @@ function resolveFilteredRoots(filters) {
 
   const roots = pruneToTopLevelRoots(candidates);
 
-  logger.debug('Filter roots resolved', {
-    selector,
-    candidates: candidates.length,
-    roots:      roots.length
-  });
+  logger.info('FILTER DEBUG selector=\\"' + selector + '\\" candidates=' + candidates.length + ' roots=' + roots.length);
 
   return roots;
 }

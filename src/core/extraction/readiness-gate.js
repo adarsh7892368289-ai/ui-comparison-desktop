@@ -128,6 +128,7 @@ function waitForReadiness() {
 
     function checkAndSettle() {
       if (!isDocumentReady()) {
+        stabilityTimer = setTimeout(checkAndSettle, stabilityWindowMs);
         return;
       }
       const quality = noiseOnlyCount === 0 ? CAPTURE_QUALITY.OPTIMAL : CAPTURE_QUALITY.STABLE;

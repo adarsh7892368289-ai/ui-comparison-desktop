@@ -1,18 +1,10 @@
-
+import * as XLSX       from 'xlsx';
 import { get }        from '../../../config/defaults.js';
 import { rowsToCsv }  from '../shared/csv-utils.js';
 
 const UTF8_BOM          = '\uFEFF';
 const CSV_TEXT_MAX      = 200;
 const HEADER_FONT_COLOR = 'FFFFFF';
-
-function getXLSX() {
-  const { XLSX } = globalThis;
-  if (!XLSX) {
-    throw new Error('XLSX library not loaded. Ensure libs/xlsx.full.min.js is included before popup.js.');
-  }
-  return XLSX;
-}
 
 function _headerCellStyle(headerColor) {
   return {
@@ -144,7 +136,6 @@ function buildAllExtractedReportsJson(reports) {
 
 function buildExtractedReportExcel(report) {
   try {
-    const XLSX          = getXLSX();
     const cssProperties = get('extraction.cssProperties', []);
     const headerColor   = get('export.excel.headerColor');
     const wb            = XLSX.utils.book_new();
@@ -191,10 +182,8 @@ function buildExtractedReportExcel(report) {
     _applyFreezePane(elemWs);
     XLSX.utils.book_append_sheet(wb, elemWs, 'Elements');
 
-    const filename = `report-${report.id}.xlsx`;
-    XLSX.writeFile(wb, filename, { cellStyles: true });
-
-    return { success: true, filename };
+    const raw = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true });
+    return { success: true, data: raw instanceof Uint8Array ? raw : new Uint8Array(raw) };
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -202,7 +191,6 @@ function buildExtractedReportExcel(report) {
 
 function buildAllExtractedReportsExcel(reports) {
   try {
-    const XLSX          = getXLSX();
     const cssProperties = get('extraction.cssProperties', []);
     const headerColor   = get('export.excel.headerColor');
     const wb            = XLSX.utils.book_new();
@@ -255,10 +243,8 @@ function buildAllExtractedReportsExcel(reports) {
       XLSX.utils.book_append_sheet(wb, ws, sheetName);
     });
 
-    const filename = 'all-reports.xlsx';
-    XLSX.writeFile(wb, filename, { cellStyles: true });
-
-    return { success: true, filename };
+    const raw = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true });
+    return { success: true, data: raw instanceof Uint8Array ? raw : new Uint8Array(raw) };
   } catch (error) {
     return { success: false, error: error.message };
   }

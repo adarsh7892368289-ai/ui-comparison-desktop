@@ -1,9 +1,11 @@
 'use strict';
 
-const { ipcMain, dialog, app } = require('electron');
-const path = require('path');
-const fs   = require('fs');
-const log  = require('electron-log');
+const { ipcMain, dialog, app, BrowserWindow } = require('electron');
+const path   = require('path');
+const fs     = require('fs');
+const os     = require('os');
+const crypto = require('crypto');
+const log    = require('electron-log');
 
 const playwrightManager = require('./playwright-manager');
 
@@ -64,8 +66,10 @@ function _registerComparisonHandlers() {
 
 function _registerExtractionHandlers() {
   ipcMain.handle('EXTRACT_ELEMENTS', async (event, params) => {
-    const { url, browserType, filters } = params;
-    log.info('EXTRACT_ELEMENTS', { url, browserType });
+    const { url, options } = params;
+    const filters = options?.filters;
+    const browserType = options?.browserType;
+    log.info('EXTRACT_ELEMENTS', { url, filters });
 
     const sendProgress = (label, pct) => _pushToWindow('EXTRACTION_PROGRESS', { label, pct });
 
@@ -108,7 +112,7 @@ function _registerFileHandlers() {
   });
 
   ipcMain.handle('EXPORT_FILE', async (event, { data, filename, format }) => {
-    const extensionMap = { excel: 'xlsx', csv: 'csv', json: 'json' };
+    const extensionMap = { xlsx: 'xlsx', excel: 'xlsx', csv: 'csv', json: 'json' };
     const ext  = extensionMap[format] ?? format;
     const name = filename ?? `export.${ext}`;
 
@@ -123,14 +127,43 @@ function _registerFileHandlers() {
     }
 
     try {
-      const content = (format === 'excel')
-        ? Buffer.from(data, 'base64')
-        : data;
+      let content;
+      if (data instanceof Uint8Array) {
+        // Normalise sub-buffer views — byteOffset > 0 aliases wrong bytes if passed as-is
+        content = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+      } else if (data instanceof ArrayBuffer) {
+        content = Buffer.from(data);
+      } else if (Array.isArray(data)) {
+        content = Buffer.from(data);
+      } else {
+        // String — csv / json path
+        content = data;
+      }
       await fs.promises.writeFile(filePath, content);
       log.info('File exported', { filePath, format });
       return { success: true, filePath };
     } catch (err) {
       log.error('EXPORT_FILE write failed', { error: err.message });
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('OPEN_REPORT', async (event, { htmlContent }) => {
+    const tempPath = path.join(os.tmpdir(), `ui-comparison-report-${crypto.randomUUID()}.html`);
+    try {
+      await fs.promises.writeFile(tempPath, htmlContent, 'utf8');
+      const win = new BrowserWindow({
+        width:          1400,
+        height:         900,
+        webPreferences: { contextIsolation: true, nodeIntegration: false },
+      });
+      win.on('closed', () => fs.unlink(tempPath, () => {}));
+      await win.loadFile(tempPath);
+      win.setTitle('UI Comparison Report');
+      log.info('OPEN_REPORT: BrowserWindow opened', { tempPath });
+      return { success: true };
+    } catch (err) {
+      log.error('OPEN_REPORT failed', { error: err.message });
       return { success: false, error: err.message };
     }
   });

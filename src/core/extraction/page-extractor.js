@@ -344,13 +344,11 @@ function getPageExtractorFn() {
         }
         return selectors.length > 0 ? selectors.join(',') : null;
       }
-      function parseId(raw) {
-        const ids = raw.trim().split(',').map(i => i.trim()).filter(Boolean);
+      function parseId(raw) {const ids = raw.trim().split(/\s+/).filter(Boolean);
         if (!ids.length) { return null; }
         return ids.map(id => `#${CSS.escape(id.replace(/^#/u, ''))}`).join(',');
       }
-      function parseTag(raw) {
-        const tags = raw.trim().split(/[\s,]+/).map(t => t.trim().toLowerCase()).filter(Boolean);
+      function parseTag(raw) {const tags = raw.trim().split(/\s+/).map(t => t.trim().toLowerCase()).filter(Boolean);
         return tags.length > 0 ? tags.join(',') : null;
       }
       const parts = [
@@ -363,17 +361,21 @@ function getPageExtractorFn() {
 
     function resolveFilteredRoots(filters) {
       const selector = buildCombinedSelector(filters);
+      console.log('DEBUG: resolveFilteredRoots selector =', selector);
       if (!selector) { return null; }
       let candidates;
       try { candidates = Array.from(document.querySelectorAll(selector)); }
-      catch { return null; }
+      catch (e) { console.log('DEBUG: selector error', e); return null; }
+      console.log('DEBUG: candidates length =', candidates.length);
       if (!candidates.length) { return []; }
       const set = new WeakSet(candidates);
-      return candidates.filter(c => {
+      const roots = candidates.filter(c => {
         let a = c.parentElement;
         while (a) { if (set.has(a)) { return false; } a = a.parentElement; }
         return true;
       });
+      console.log('DEBUG: roots length =', roots.length);
+      return roots;
     }
 
     function traverseDocument(filters) {
@@ -783,6 +785,12 @@ function getPageExtractorFn() {
       return results;
     }
 
+    // MAINTENANCE TRAP: This is an inlined copy of readiness-gate.js.
+    // It runs inside page.evaluate() which requires a serialized function with no imports.
+    // Any change to readiness-gate.js MUST be manually mirrored here.
+    // Long-term fix: serialize readiness-gate.js to string and inject via page.addScriptTag()
+    // then call window.__uiCompareReady(options) from page.evaluate().
+    // See: https://playwright.dev/docs/api/class-page#page-add-script-tag
     const SKELETON_CSS = '[class*="skeleton"],[class*="shimmer"],[class*="placeholder"],[class*="loading"],[class*="spinner"]';
     const NOISE_ATTR_NAMES = ['data-analytics','data-tracking','data-gtm','data-layer','aria-live'];
 
@@ -810,7 +818,14 @@ function getPageExtractorFn() {
         function settle(q) { cleanup(); resolve(q); }
 
         function checkAndSettle() {
-          if (!isDocumentReady()) { return; }
+          if (!isDocumentReady()) {
+            // Skeleton/loading elements still present — reschedule rather than returning dead;
+            // without rescheduling, noise-filtered XHR mutations (coveo- tag mutations) leave
+            // no pending timer and no path back into checkAndSettle before hardTimeoutMs fires,
+            // causing extraction against unpainted skeleton elements.
+            stabilityTimer = setTimeout(checkAndSettle, stabilityWindowMs);
+            return;
+          }
           settle(noiseOnlyCount === 0 ? 'OPTIMAL' : 'STABLE');
         }
 

@@ -1,29 +1,23 @@
-/* global chrome, btoa */
+/* global btoa */
 import logger from '../../../infrastructure/logger.js';
 import storage from '../../../infrastructure/idb-repository.js';
 import { transformToGroupedReport } from '../shared/report-transformer.js';
 
 async function exportToHTML(comparisonResult) {
-  try {
-    const grouped          = transformToGroupedReport(comparisonResult);
-    const manifest         = resolveVisualManifest(comparisonResult.visualDiffs ?? null);
-    const visualDiffStatus = comparisonResult.visualDiffStatus ?? null;
-    const blobData         = await loadBlobData(manifest);
-    const html             = buildDocument(grouped, comparisonResult, manifest, blobData, visualDiffStatus);
-    await triggerDownload(html, `comparison-${Date.now()}.html`);
-    logger.info('HTML export complete', {
-      elements:         grouped.summary.totalMatched,
-      impactScore:      grouped.summary.impactScore,
-      rootCauses:       grouped.summary.rootCauseCount,
-      visualDiffs:      Object.keys(manifest).length,
-      blobsEmbedded:    Object.keys(blobData).length,
-      visualDiffStatus: visualDiffStatus?.status ?? 'none'
-    });
-    return { success: true };
-  } catch (error) {
-    logger.error('HTML export failed', { error: error.message });
-    return { success: false, error: error.message };
-  }
+  const grouped          = transformToGroupedReport(comparisonResult);
+  const manifest         = resolveVisualManifest(comparisonResult.visualDiffs ?? null);
+  const visualDiffStatus = comparisonResult.visualDiffStatus ?? null;
+  const blobData         = await loadBlobData(manifest);
+  const html             = buildDocument(grouped, comparisonResult, manifest, blobData, visualDiffStatus);
+  logger.info('HTML export built', {
+    elements:         grouped.summary.totalMatched,
+    impactScore:      grouped.summary.impactScore,
+    rootCauses:       grouped.summary.rootCauseCount,
+    visualDiffs:      Object.keys(manifest).length,
+    blobsEmbedded:    Object.keys(blobData).length,
+    visualDiffStatus: visualDiffStatus?.status ?? 'none'
+  });
+  return html; // caller sends via api.exportHTML IPC; throws on build failure
 }
 
 function resolveVisualManifest(visualDiffs) {
@@ -69,14 +63,25 @@ function resolveVisualManifest(visualDiffs) {
 }
 
 async function blobToDataUri(blob) {
-  const buf   = await blob.arrayBuffer();
-  const bytes = new Uint8Array(buf);
+  let bytes;
+  let mimeType = 'image/webp';
+  if (blob instanceof Blob) {
+    bytes    = new Uint8Array(await blob.arrayBuffer());
+    mimeType = blob.type || 'image/webp';
+  } else if (blob instanceof Uint8Array) {
+    bytes = blob;
+  } else if (blob instanceof ArrayBuffer) {
+    bytes = new Uint8Array(blob);
+  } else {
+    const buf = blob?.buffer;
+    bytes = buf instanceof ArrayBuffer ? new Uint8Array(buf) : new Uint8Array(0);
+  }
   const chunk = 0x8000;
   let binary  = '';
   for (let i = 0; i < bytes.length; i += chunk) {
     binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
   }
-  return `data:${blob.type || 'image/webp'};base64,${btoa(binary)}`;
+  return `data:${mimeType};base64,${btoa(binary)}`;
 }
 
 async function loadBlobData(manifest) {
@@ -91,17 +96,6 @@ async function loadBlobData(manifest) {
     if (blob) { out[id] = await blobToDataUri(blob); }
   }
   return out;
-}
-
-async function triggerDownload(html, filename) {
-  const bytes = new TextEncoder().encode(html);
-  const chunk = 0x8000;
-  let binary  = '';
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  }
-  const url = `data:text/html;base64,${btoa(binary)}`;
-  await chrome.downloads.download({ url, filename, saveAs: false });
 }
 
 function esc(str) {

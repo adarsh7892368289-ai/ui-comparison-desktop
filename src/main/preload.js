@@ -37,6 +37,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   unregisterBlobsByComparison: (comparisonId) =>
     ipcRenderer.invoke('UNREGISTER_BLOBS_BY_COMPARISON', comparisonId),
 
+  openReport: (params) =>
+    ipcRenderer.invoke('OPEN_REPORT', params),
+
   getVersion: () =>
     ipcRenderer.invoke('GET_VERSION'),
 });

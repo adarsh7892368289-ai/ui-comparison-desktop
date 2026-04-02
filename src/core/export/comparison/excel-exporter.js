@@ -1,15 +1,8 @@
-import { get }  from '../../../config/defaults.js';
-import logger    from '../../../infrastructure/logger.js';
+import * as XLSX from 'xlsx';
+import { get }   from '../../../config/defaults.js';
+import logger     from '../../../infrastructure/logger.js';
 
 const HEADER_FONT_COLOR = 'FFFFFF';
-
-function getXLSX() {
-  const {XLSX} = globalThis;
-  if (!XLSX) {
-    throw new Error('XLSX library not loaded. Ensure libs/xlsx.full.min.js is included before popup.js.');
-  }
-  return XLSX;
-}
 
 function _severityColor(severity) {
   return {
@@ -37,7 +30,7 @@ function _severityCellStyle(severity) {
   };
 }
 
-function _applyHeaderRow(ws, XLSX) {
+function _applyHeaderRow(ws) {
   if (!ws['!ref']) { return; }
   const headerColor = get('export.excel.headerColor');
   const range = XLSX.utils.decode_range(ws['!ref']);
@@ -51,7 +44,7 @@ function _applyFreezePane(ws) {
   ws['!freeze'] = { xSplit: 0, ySplit: 1, topLeftCell: 'A2', state: 'frozen' };
 }
 
-function _applySeverityColumnStyles(ws, XLSX, severityColIndex, dataStartRow = 1) {
+function _applySeverityColumnStyles(ws, severityColIndex, dataStartRow = 1) {
   if (!ws['!ref']) { return; }
   const range = XLSX.utils.decode_range(ws['!ref']);
   for (let r = dataStartRow; r <= range.e.r; r++) {
@@ -62,28 +55,21 @@ function _applySeverityColumnStyles(ws, XLSX, severityColIndex, dataStartRow = 1
 }
 
 function exportToExcel(comparisonResult) {
-  try {
-    const XLSX = getXLSX();
-    const wb   = XLSX.utils.book_new();
+  const wb = XLSX.utils.book_new();
 
-    _addSummarySheet(wb, comparisonResult, XLSX);
-    _addDifferencesSheet(wb, comparisonResult, XLSX);
-    _addMatchedElementsSheet(wb, comparisonResult, XLSX);
-    _addUnmatchedSheet(wb, comparisonResult, XLSX);
-    _addSeveritySheet(wb, comparisonResult, XLSX);
+  _addSummarySheet(wb, comparisonResult);
+  _addDifferencesSheet(wb, comparisonResult);
+  _addMatchedElementsSheet(wb, comparisonResult);
+  _addUnmatchedSheet(wb, comparisonResult);
+  _addSeveritySheet(wb, comparisonResult);
 
-    const filename = `comparison-${comparisonResult.baseline.id}-vs-${comparisonResult.compare.id}.xlsx`;
-    XLSX.writeFile(wb, filename, { cellStyles: true });
-
-    logger.info('Excel export complete', { filename });
-    return { success: true, filename };
-  } catch (error) {
-    logger.error('Excel export failed', { error: error.message });
-    return { success: false, error: error.message };
-  }
+  // type:'array' → Uint8Array; caller normalises byteOffset before IPC transfer
+  const xlsxArray = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true });
+  logger.info('Excel workbook built', { sheets: wb.SheetNames.length });
+  return xlsxArray; // Uint8Array; caller sends via api.exportFile IPC
 }
 
-function _addSummarySheet(wb, result, XLSX) {
+function _addSummarySheet(wb, result) {
   const headerColor = get('export.excel.headerColor');
   const s           = result.comparison.summary;
 
@@ -126,7 +112,6 @@ function _addSummarySheet(wb, result, XLSX) {
   ws['!cols'] = [{ wch: 28 }, { wch: 55 }];
 
   ['A1', 'B1'].forEach(addr => { if (ws[addr]) { ws[addr].s = _headerCellStyle(headerColor); } });
-
   const severityRows = { 28: 'critical', 29: 'high', 30: 'medium', 31: 'low' };
   Object.entries(severityRows).forEach(([rowIdx, severity]) => {
     const valueAddr = XLSX.utils.encode_cell({ r: parseInt(rowIdx, 10) - 1, c: 1 });
@@ -136,7 +121,7 @@ function _addSummarySheet(wb, result, XLSX) {
   XLSX.utils.book_append_sheet(wb, ws, 'Summary');
 }
 
-function _addDifferencesSheet(wb, result, XLSX) {
+function _addDifferencesSheet(wb, result) {
   const headers = [
     'Element ID', 'Tag Name', 'Element ID Attr', 'Class Name',
     'Property', 'Baseline Value', 'Compare Value',
@@ -168,14 +153,14 @@ function _addDifferencesSheet(wb, result, XLSX) {
     { wch: 12 }, { wch: 14 }, { wch: 12 }
   ];
 
-  _applyHeaderRow(ws, XLSX);
+  _applyHeaderRow(ws);
   _applyFreezePane(ws);
-  _applySeverityColumnStyles(ws, XLSX, 9);
+  _applySeverityColumnStyles(ws, 9);
 
   XLSX.utils.book_append_sheet(wb, ws, 'Differences');
 }
 
-function _addMatchedElementsSheet(wb, result, XLSX) {
+function _addMatchedElementsSheet(wb, result) {
   const headers = [
     'Element ID', 'Tag Name', 'Element ID Attr', 'Class Name',
     'Match Strategy', 'Match Confidence', 'CSS Property Changes', 'Overall Severity'
@@ -198,14 +183,14 @@ function _addMatchedElementsSheet(wb, result, XLSX) {
     { wch: 18 }, { wch: 16 }, { wch: 18 }, { wch: 16 }
   ];
 
-  _applyHeaderRow(ws, XLSX);
+  _applyHeaderRow(ws);
   _applyFreezePane(ws);
-  _applySeverityColumnStyles(ws, XLSX, 7);
+  _applySeverityColumnStyles(ws, 7);
 
   XLSX.utils.book_append_sheet(wb, ws, 'Matched Elements');
 }
 
-function _addUnmatchedSheet(wb, result, XLSX) {
+function _addUnmatchedSheet(wb, result) {
   const headers = ['Status', 'Element ID', 'Tag Name', 'Element ID Attr', 'Class Name'];
   const rows    = [];
 
@@ -219,7 +204,7 @@ function _addUnmatchedSheet(wb, result, XLSX) {
   const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
   ws['!cols'] = [{ wch: 26 }, { wch: 12 }, { wch: 10 }, { wch: 20 }, { wch: 28 }];
 
-  _applyHeaderRow(ws, XLSX);
+  _applyHeaderRow(ws);
   _applyFreezePane(ws);
 
   if (ws['!ref']) {
@@ -236,7 +221,7 @@ function _addUnmatchedSheet(wb, result, XLSX) {
   XLSX.utils.book_append_sheet(wb, ws, 'Unmatched Elements');
 }
 
-function _addSeveritySheet(wb, result, XLSX) {
+function _addSeveritySheet(wb, result) {
   const groups = { critical: [], high: [], medium: [], low: [] };
 
   for (const match of result.comparison.results) {

@@ -10,6 +10,7 @@ const initialState = {
   selectedBaseline:  null,
   selectedCompare:   null,
   compareMode:       'dynamic',
+  filters:           { class: '', id: '', tag: '' },
 };
 
 let _state       = { ...initialState };
@@ -93,6 +94,9 @@ function reduce(state, type, payload) {
 
     case 'RESET_COMPARISON':
       return { ...state, comparison: null, phase: 'idle', error: null };
+
+    case 'FILTERS_UPDATED':
+      return { ...state, filters: { ...state.filters, ...payload.filters } };
 
     case 'EXPORT_STARTED':
       return { ...state, exportState: 'pending' };

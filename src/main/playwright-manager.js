@@ -915,6 +915,33 @@ async function captureVisualDiffs(comparisonResult, pageContext, blobCache) {
   }
 }
 
+// Mirrors extraction-filter.js buildCombinedSelector — runs in Node.js (no CSS.escape needed
+// for the selector engine Playwright uses internally, which accepts plain CSS class syntax).
+function buildSelectorFromFilters(filters) {
+  if (!filters) { return null; }
+  // Guard: all three filter fields absent or whitespace-only → no meaningful selector to build;
+  // return null so the caller treats this as "no filter — extract whole page" rather than
+  // proceeding to build a broken empty selector (e.g. ".") that querySelectorAll rejects
+  // with SyntaxError.
+  if (!filters.class?.trim() && !filters.id?.trim() && !filters.tag?.trim()) { return null; }
+  const parts = [];
+  if (filters.class) {
+    const groups = filters.class.trim().split(',')
+      .map(g => g.trim().split(/\s+/).filter(Boolean).map(c => `.${c.replace(/^\./u, '')}`).join(''))
+      .filter(Boolean);
+    if (groups.length) { parts.push(groups.join(',')); }
+  }
+  if (filters.id) {
+    const ids = filters.id.trim().split(/\s+/).filter(Boolean).map(id => `#${id.replace(/^#/u, '')}`);
+    if (ids.length) { parts.push(ids.join(',')); }
+  }
+  if (filters.tag) {
+    const tags = filters.tag.trim().split(/\s+/).filter(Boolean);
+    if (tags.length) { parts.push(tags.join(',')); }
+  }
+  return parts.length > 0 ? parts.join(',') : null;
+}
+
 async function runExtraction({ url, browserType, filters, onProgress }) {
   const browser = await getBrowser(browserType ?? 'chromium');
   const context = await browser.newContext({ serviceWorkers: 'block' });
@@ -922,15 +949,181 @@ async function runExtraction({ url, browserType, filters, onProgress }) {
 
   try {
     onProgress?.('Opening page…', 10);
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-    onProgress?.('Page loaded — waiting for stability…', 25);
 
-    await page.waitForTimeout(500);
+    // Layer 1 — 'load' waits for all images and stylesheets to finish (window.onload equivalent),
+    // which is closer to the extension's document_idle injection point than 'domcontentloaded'
+    // because 'domcontentloaded' fires before subresources load, leaving framework boot incomplete.
+    await page.goto(url, { waitUntil: 'load', timeout: 60_000 });
+    onProgress?.('Waiting for content readiness…', 25);
+
+    const compoundSelector = buildSelectorFromFilters(filters);
+
+    // Derive the broadest individual-class selector for the wait phase.  The compound selector
+    // (.coveo-card-layout.CoveoResult) requires both classes on the same element; on SPAs like
+    // Coveo the framework may restructure the DOM during hydration, moving classes onto different
+    // elements in the hierarchy.  If we used the compound selector for waitForSelector /
+    // waitForFunction the SPA could hydrate and break the compound match mid-wait, causing the
+    // stability gate to never resolve.  Using the single broadest class avoids this: it matches
+    // whichever container the framework ends up rendering and remains stable through hydration.
+    let waitSelector = compoundSelector;
+    if (compoundSelector && filters?.class) {
+      const classes = filters.class.trim().split(/[\s,]+/).filter(Boolean);
+      if (classes.length > 1) {
+        // Pick the individual class with the highest pre-hydration count as the wait anchor;
+        // a pre-hydration count is good enough here because we only need "something to watch"
+        // not a precise final count — the stability gate's descendant-count polling provides
+        // the precision signal once the DOM settles.
+        let bestWaitSel   = `.${classes[0].replace(/^\./u, '')}`;
+        let bestWaitCount = await page.evaluate(
+          (s) => document.querySelectorAll(s).length, bestWaitSel
+        );
+        for (let i = 1; i < classes.length; i++) {
+          const sel = `.${classes[i].replace(/^\./u, '')}`;
+          // eslint-disable-next-line no-await-in-loop
+          const cnt = await page.evaluate((s) => document.querySelectorAll(s).length, sel);
+          if (cnt > bestWaitCount) { bestWaitCount = cnt; bestWaitSel = sel; }
+        }
+        waitSelector = bestWaitSel;
+      }
+    }
+
+    if (waitSelector) {
+      // When a filter is provided the selector-count stability IS the readiness signal.
+      // networkidle is intentionally skipped here: on slow environments (e.g. stage Coveo) the
+      // 15s networkidle budget exhausts itself before the search API returns all result cards,
+      // leaving zero time for the count-stability gate and causing premature extraction.
+
+      // Layer 3a-i — Block until the first matching element is visible (non-zero dimensions),
+      // confirming the Coveo API has returned at least one result and React has painted it.
+      // waitSelector is an individual class so it survives SPA hydration restructuring.
+      await page.waitForSelector(waitSelector, { timeout: 30_000, state: 'visible' })
+        .catch(() => {});
+
+      // Layer 3a-ii — waitForSelector fires on the FIRST container match; on Coveo/React SPAs
+      // the card SHELLS render before their CONTENT (the API response populates children after
+      // the container is inserted). Counting containers (sel) stabilises prematurely.
+      // Instead count ALL DESCENDANTS within matched containers (sel + ' *') so we proceed
+      // only when child content has fully rendered and stopped changing across two 750ms polls.
+      await page.waitForFunction(
+        (sel) => {
+          const count = document.querySelectorAll(sel + ' *').length;
+          if (window.__vdiff_prev_desc_count === undefined) {
+            window.__vdiff_prev_desc_count = count;
+            return false;
+          }
+          if (window.__vdiff_prev_desc_count !== count) {
+            window.__vdiff_prev_desc_count = count;
+            return false;
+          }
+          return count > 0;
+        },
+        waitSelector,
+        { timeout: 30_000, polling: 750 }
+      ).catch(() => {});
+    } else {
+      // No filter — networkidle as best-effort signal; .catch() prevents hard failure on pages
+      // with persistent connections (WebSockets, long-polling) that never reach 0 active requests.
+      await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+
+      // Layer 3b — querySelectorAll('*').length > 100 is a framework-agnostic heuristic that the
+      // component tree has hydrated beyond skeleton/shell structure without requiring knowledge
+      // of any specific element names or component APIs.
+      await page.waitForFunction(
+        () => document.readyState === 'complete' && document.querySelectorAll('*').length > 100,
+        { timeout: 10_000 }
+      ).catch(() => {});
+    }
+
+    // Post-hydration compound probe — runs AFTER the stability gate so the DOM reflects the
+    // SPA's final structure, not the pre-hydration server render that may have had both classes
+    // on the same element.  If the compound selector now matches ≥ 2 elements it is safe to use
+    // as the extraction filter (more precise = fewer false positives from the wider class alone).
+    // If it still under-matches, fall back to the broadest individual class.
+    let effectiveSelector = waitSelector;
+    if (compoundSelector && waitSelector !== compoundSelector) {
+      const compoundCount = await page.evaluate(
+        (sel) => document.querySelectorAll(sel).length,
+        compoundSelector
+      );
+      effectiveSelector = compoundCount >= 2 ? compoundSelector : waitSelector;
+      log.info('[SELECTOR-DIAG] compound:', compoundCount, 'effective selector:', effectiveSelector);
+    } else if (compoundSelector) {
+      // Single-class compound (or compound === waitSelector) — log for observability.
+      const compoundCount = await page.evaluate(
+        (sel) => document.querySelectorAll(sel).length,
+        compoundSelector
+      );
+      log.info('[SELECTOR-DIAG] compound:', compoundCount, 'effective selector:', effectiveSelector);
+    }
 
     onProgress?.('Extracting elements…', 50);
 
+    const diagData = await page.evaluate((sel) => {
+      const containerCount  = sel ? document.querySelectorAll(sel).length : 0;
+      const descendantCount = sel ? document.querySelectorAll(sel + ' *').length : 0;
+      return {
+        readyState:     document.readyState,
+        totalElements:  document.querySelectorAll('*').length,
+        containerCount,
+        descendantCount,
+      };
+    }, effectiveSelector ?? '');
+    log.info('[WAIT-DIAG]', diagData);
+
     const extractorFn = getPageExtractorFn();
-    const report = await page.evaluate(extractorFn, { options: { filters }, sessionId: null });
+
+    // hardTimeoutMs raised to 20000: the MutationObserver stability gate inside page context is a
+    // secondary check that guards against DOM mutations *after* Playwright yields control. On slow
+    // environments (stage Coveo) the search XHR can take >10s to return results after shells appear
+    // in the DOM; the previous 5000ms budget caused hard-timeout extraction against unpainted
+    // skeleton elements (25 elements instead of ~329).  20000ms gives XHR + React reconcile +
+    // stabilityWindowMs sufficient headroom on both fast (prod) and slow (stage) environments.
+    const report = await page.evaluate(extractorFn, {
+      options: {
+        filters,
+        extraction: {
+          batchHardCapMs:    30,
+          maxElements:       10_000,
+          skipInvisible:     true,
+          stabilityWindowMs: 500,
+          hardTimeoutMs:     20_000,
+          section: {
+            headerPositionRatio:  0.20,
+            footerPositionRatio:  0.15,
+            headerViewportFactor: 1.5,
+            footerViewportFactor: 1.0,
+          },
+          irrelevantTags: [
+            'SCRIPT','STYLE','META','LINK','NOSCRIPT','BR','HR','HEAD','TITLE',
+            'BASE','TEMPLATE','SLOT','WBR','PARAM','TRACK','SOURCE','AREA','COL','COLGROUP',
+          ],
+          cssProperties: [
+            'font-family','font-size','font-weight','font-style','line-height',
+            'letter-spacing','word-spacing','text-align','text-decoration','text-transform',
+            'color','background-color','opacity','visibility',
+            'padding','padding-top','padding-right','padding-bottom','padding-left',
+            'margin','margin-top','margin-right','margin-bottom','margin-left','gap',
+            'display','position','float','clear','overflow','overflow-x','overflow-y',
+            'width','height','max-width','max-height','min-width','min-height',
+            'top','right','bottom','left','z-index',
+            'flex-direction','flex-wrap','flex-grow','flex-shrink','flex-basis',
+            'justify-content','align-items','align-content','align-self',
+            'grid-template-columns','grid-template-rows','grid-column','grid-row',
+            'border','border-width','border-style','border-color',
+            'border-top-width','border-right-width','border-bottom-width','border-left-width',
+            'border-top-style','border-right-style','border-bottom-style','border-left-style',
+            'border-top-color','border-right-color','border-bottom-color','border-left-color',
+            'border-radius','border-top-left-radius','border-top-right-radius',
+            'border-bottom-right-radius','border-bottom-left-radius','box-shadow','text-shadow',
+          ],
+        },
+      },
+      sessionId: null,
+    });
+
+    log.info('[EXTRACT] element count:', report?.elements?.length ?? 0);
+
+    report.id = crypto.randomUUID();
 
     onProgress?.('Extraction complete', 100);
     log.info('[PM] runExtraction done', { url, elementCount: report?.totalElements ?? 0 });
@@ -973,6 +1166,16 @@ async function runComparison({
     throw new Error('Compare elements array is empty — renderer failed to load from IDB');
   }
 
+  const b0 = baselineElements[0];
+  const c0 = compareElements[0];
+  console.log('[DIAG] baseline count:', baselineElements.length);
+  console.log('[DIAG] compare count:', compareElements.length);
+  console.log('[DIAG] baseline[0] keys:', b0 ? Object.keys(b0).sort() : 'EMPTY');
+  console.log('[DIAG] baseline[0] hpid:', b0?.hpid ?? b0?.HPID ?? b0?.hierarchicalId ?? b0?.hierarchicalPositionId ?? 'NOT FOUND');
+  console.log('[DIAG] baseline[0] rect:', JSON.stringify(b0?.rect ?? b0?.boundingRect ?? b0?.bounds ?? 'NOT FOUND'));
+  console.log('[DIAG] baseline[0] tag:', b0?.tagName ?? b0?.tag ?? b0?.nodeName ?? 'NOT FOUND');
+  console.log('[DIAG] baseline[0] depth:', b0?.depth ?? b0?.treeDepth ?? b0?.level ?? 'NOT FOUND');
+
   send('Running comparison…', 20);
   const comparator = new Comparator();
   const generator  = comparator.compare(
@@ -1010,11 +1213,17 @@ async function runComparison({
         context.newPage(),
       ]);
 
-      await baselinePage.goto(baselineUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-      await comparePage.goto(compareUrl,   { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      // [BONUS] Parallel navigation to 'load' so subresources finish before CDP attaches;
+      // flat waitForTimeout(500) removed — on slow networks 500ms is arbitrary and brittle.
       await Promise.all([
-        baselinePage.waitForTimeout(500),
-        comparePage.waitForTimeout(500),
+        baselinePage.goto(baselineUrl, { waitUntil: 'load', timeout: 60_000 }),
+        comparePage.goto(compareUrl,   { waitUntil: 'load', timeout: 60_000 }),
+      ]);
+      // [BONUS] Best-effort networkidle in parallel; .catch() prevents hard failure on pages
+      // with persistent connections (same rationale as runExtraction Layer 2).
+      await Promise.all([
+        baselinePage.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {}),
+        comparePage.waitForLoadState('networkidle',  { timeout: 15_000 }).catch(() => {}),
       ]);
 
       send('Capturing screenshots…', 87);
@@ -1025,12 +1234,26 @@ async function runComparison({
       );
 
       if (visualResult.status === 'completed') {
+        // Extract blobs from cache and serialize for IPC transmission
+        // Blobs are keyed by keyframeId and contain { buffer, mimeType }
+        const blobs = {};
+        for (const keyframe of visualResult.keyframes) {
+          const blob = blobCache?.get(keyframe.id);
+          if (blob && blob.buffer) {
+            // Store buffer as Uint8Array for safe IPC serialization
+            blobs[keyframe.id] = {
+              buffer: blob.buffer instanceof Uint8Array ? blob.buffer : new Uint8Array(blob.buffer),
+              mimeType: blob.mimeType || 'image/webp',
+            };
+          }
+        }
         visualData = {
           sessionId:        visualResult.sessionId,
           diffs:            Object.fromEntries(visualResult.diffs),
           keyframes:        visualResult.keyframes,
           rectRecords:      visualResult.rectRecords,
           devToolsWarnings: visualResult.devToolsWarnings,
+          blobs,  // ← NEW: Include captured blobs for renderer to persist to IDB
         };
       } else {
         log.warn('[PM] Visual capture did not complete', {
@@ -1055,13 +1278,22 @@ async function runComparison({
     comparison:        comparisonResult.comparison,
     unmatchedElements: comparisonResult.unmatchedElements,
     duration:          comparisonResult.duration,
-    visualData,
+    // Visual diff data flattened to root level for renderer/exporter consumption
+    visualDiffs:       visualData?.diffs ?? {},
+    visualKeyframes:   visualData?.keyframes ?? [],
+    visualRectRecords: visualData?.rectRecords ?? [],
+    visualBlobs:       visualData?.blobs ?? {},  // ← NEW: Blob data for IDB persistence
+    visualDiffStatus:  visualData ? {
+      status: 'completed',
+      reason: null,
+      devToolsWarnings: visualData.devToolsWarnings ?? [],
+    } : null,
     completedAt: new Date().toISOString(),
   };
 
   send('Done', 100);
   log.info('[PM] runComparison complete', {
-    mode, modified: comparisonResult.summary?.severityCounts,
+    mode, modified: comparisonResult.comparison?.summary?.severityCounts,
   });
 
   return slimResult;
