@@ -1,4 +1,4 @@
-import { get }                                  from '../../config/defaults.js';
+import { get, init as initConfig }               from '../../config/defaults.js';
 import logger                                   from '../../infrastructure/logger.js';
 import { performanceMonitor }                   from '../../infrastructure/performance-monitor.js';
 import { collectAttributes }                    from './attribute-collector.js';
@@ -240,7 +240,7 @@ async function extract(filters) {
   });
 
   try {
-    const captureQuality = await waitForReadiness();
+    const captureQuality = await waitForReadiness(resolvedFilters);
 
     performance.mark('traversal-start');
     const visits = traverseDocument(resolvedFilters);
@@ -298,4 +298,16 @@ async function extract(filters) {
   }
 }
 
-export { extract };
+function init(overrides) {
+  initConfig(overrides);
+}
+
+async function extractWithConfig(filters, configOverrides = {}) {
+  if (configOverrides && Object.keys(configOverrides).length > 0) {
+    init(configOverrides);
+  }
+  return extract(filters);
+}
+
+export { extract, init, extractWithConfig };
+export default { init, extract, extractWithConfig };

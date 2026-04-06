@@ -1,5 +1,3 @@
-'use strict';
-
 const MINIMUM_SCHEMA_VERSION = '3.0';
 
 class PreFlightError extends Error {
@@ -43,6 +41,7 @@ function versionAtLeast(versionStr, minStr) {
 }
 
 function assertVersionCompatibility(baselineVersion, compareVersion) {
+  if (baselineVersion == null && compareVersion == null) { return; }
   const baselineSufficient = versionAtLeast(baselineVersion, MINIMUM_SCHEMA_VERSION);
   const compareSufficient  = versionAtLeast(compareVersion,  MINIMUM_SCHEMA_VERSION);
   if (!baselineSufficient || !compareSufficient) {
@@ -50,7 +49,7 @@ function assertVersionCompatibility(baselineVersion, compareVersion) {
   }
 }
 
-module.exports = {
+export {
   assertVersionCompatibility,
   PreFlightError,
   CompatibilityError,

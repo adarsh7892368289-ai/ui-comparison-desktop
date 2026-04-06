@@ -13,7 +13,6 @@ const { init: configInit, get: configGet } = require('../config/defaults');
 const { validateConfig }                   = require('../config/validator');
 
 
-app.commandLine.appendSwitch('--disable-web-security', false);
 app.enableSandbox();
 
 protocol.registerSchemesAsPrivileged([
@@ -90,10 +89,6 @@ function createMainWindow() {
   win.once('ready-to-show', () => win.show());
 
   win.loadURL('app://./index.html');
-
-  if (process.env.NODE_ENV !== 'production') {
-    win.webContents.openDevTools({ mode: 'right' });
-  }
 
   return win;
 }

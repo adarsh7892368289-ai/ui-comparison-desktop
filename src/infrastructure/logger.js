@@ -1,5 +1,4 @@
 import { get } from '../config/defaults.js';
-import { app } from 'electron';
 import log from 'electron-log';
 
 const LEVELS = { debug: 0, info: 1, warn: 2, error: 3 };
@@ -40,6 +39,9 @@ class Logger {
 
     this.level = get('logging.level', 'info');
     this.transports.push(new ConsoleTransport());
+    if (typeof process !== 'undefined' && process.type === 'browser') {
+      this.transports.push(new FileTransport());
+    }
     this.initialized = true;
 
     return this;

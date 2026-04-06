@@ -1,5 +1,6 @@
 import { get } from '../../config/defaults.js';
 import logger from '../../infrastructure/logger.js';
+import { resolveFilteredRoots } from './extraction-filter.js';
 
 const CAPTURE_QUALITY = Object.freeze({
   OPTIMAL:  'OPTIMAL',
@@ -103,10 +104,11 @@ function isDocumentReady() {
   return !hasUnloadedImages() && !hasSkeletonElements();
 }
 
-function waitForReadiness() {
+function waitForReadiness(filters = null) {
   return new Promise(resolve => {
     const stabilityWindowMs = get('extraction.stabilityWindowMs');
     const hardTimeoutMs     = get('extraction.hardTimeoutMs');
+    const filtersActive     = Boolean(filters && (filters.class || filters.id || filters.tag));
 
     let stabilityTimer = null;
     let hardTimer      = null;
@@ -130,6 +132,13 @@ function waitForReadiness() {
       if (!isDocumentReady()) {
         stabilityTimer = setTimeout(checkAndSettle, stabilityWindowMs);
         return;
+      }
+      if (filtersActive) {
+        const roots = resolveFilteredRoots(filters);
+        if (!roots || roots.length === 0) {
+          stabilityTimer = setTimeout(checkAndSettle, stabilityWindowMs);
+          return;
+        }
       }
       const quality = noiseOnlyCount === 0 ? CAPTURE_QUALITY.OPTIMAL : CAPTURE_QUALITY.STABLE;
       logger.debug('Readiness gate cleared', { quality, noiseMutations: noiseOnlyCount });

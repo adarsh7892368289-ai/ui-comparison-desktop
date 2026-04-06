@@ -15,6 +15,7 @@ import {
   buildAllExtractedReportsExcel,
 } from '../core/export/extraction/report-exporter.js';
 import { assessUrlCompatibility } from '../application/url-compatibility.js';
+import { assertVersionCompatibility, CompatibilityError } from '../application/compare-workflow.js';
 
 const api = window.electronAPI;
 if (!api) {
@@ -392,9 +393,7 @@ async function handleDeleteAllReports() {
   );
   if (!confirmed) { return; }
   try {
-    for (const r of reports) {
-      await storage.deleteReport(r.id);
-    }
+    await storage.deleteAllReports();
     await loadAndRenderReports();
     Toast.success(`Deleted ${reports.length} report${reports.length !== 1 ? 's' : ''}`);
   } catch (err) {
@@ -471,7 +470,7 @@ async function handleExportAllReports() {
 
   if (reports.length === 0) { Toast.info('No reports to export'); return; }
 
-  const format = document.getElementById('export-all-format')?.value ?? 'csv';
+  const format = document.getElementById('export-all-format')?.value ?? 'html';
 
   // Load elements for all reports (they live in IDB, not in the report metadata)
   let fullReports;
@@ -617,7 +616,7 @@ async function handleExport() {
   const result = state.comparison;
   if (!result) { Toast.error('No comparison result to export'); return; }
 
-  const format = document.getElementById('export-format-select')?.value ?? 'excel';
+  const format = document.getElementById('export-format-select')?.value ?? 'html';
   const bId    = result.baselineId ?? result.baseline?.id ?? 'unknown';
   const cId    = result.compareId  ?? result.compare?.id  ?? 'unknown';
 
@@ -852,9 +851,9 @@ function displayComparisonResults(result, cachedAt = null) {
       <div class="result-actions">
         <div class="export-format-row">
           <select class="select" id="export-format-select" aria-label="Export format">
+            <option value="html">HTML</option>
             <option value="xlsx">Excel</option>
             <option value="csv">CSV</option>
-            <option value="html">HTML</option>
             <option value="json">JSON</option>
           </select>
           <button class="btn-ghost btn-sm" id="export-comparison-btn">Export</button>
@@ -890,7 +889,7 @@ async function tryLoadCachedComparison() {
         unmatchedElements: cached.unmatchedElements,
         duration:          cached.duration ?? 0,
       });
-      dispatch('COMPARISON_COMPLETE', { result: normalized });
+      dispatch('COMPARISON_COMPLETE', { result: { ...normalized, id: cached.id } });
       displayComparisonResults(normalized, cached.timestamp);
     } else {
       document.getElementById('compare-results').innerHTML = '';
@@ -947,6 +946,21 @@ async function handleComparison() {
   } catch (compatErr) {
     console.error('URL compatibility check failed:', compatErr);
     Toast.warning('URL compatibility check failed — proceeding');
+  }
+
+  try {
+    assertVersionCompatibility(
+      baselineReport.schemaVersion ?? null,
+      compareReport.schemaVersion  ?? null
+    );
+  } catch (err) {
+    if (err instanceof CompatibilityError) {
+      Toast.error(`Schema version too old — re-extract both reports. (baseline: ${err.baselineVersion ?? 'unknown'}, compare: ${err.compareVersion ?? 'unknown'})`);
+      compareBtn.disabled    = false;
+      compareBtn.textContent = 'Compare Reports';
+      return;
+    }
+    throw err;
   }
 
   showProgress('compare', 'Starting…');
@@ -1008,20 +1022,31 @@ async function handleComparison() {
 
     await storage.saveComparison(meta, sr.comparison?.results ?? []);
 
-    // Save visual blobs to IDB for later retrieval by HTML exporter
-    if (sr.visualBlobs && typeof sr.visualBlobs === 'object') {
-      for (const [keyframeId, blobData] of Object.entries(sr.visualBlobs)) {
-        if (blobData && blobData.buffer) {
-          const uint8Array = blobData.buffer instanceof Uint8Array 
-            ? blobData.buffer 
-            : new Uint8Array(blobData.buffer);
-          const blob = new Blob([uint8Array], { type: blobData.mimeType || 'image/webp' });
-          await storage.saveVisualBlob(keyframeId, blob, meta.id);
+    try {
+      if (sr.visualBlobs && typeof sr.visualBlobs === 'object') {
+        for (const [keyframeId, blobData] of Object.entries(sr.visualBlobs)) {
+          if (blobData && blobData.buffer) {
+            const uint8Array = blobData.buffer instanceof Uint8Array
+              ? blobData.buffer
+              : new Uint8Array(blobData.buffer);
+            const blob = new Blob([uint8Array], { type: blobData.mimeType || 'image/webp' });
+            await storage.saveVisualBlob(`${meta.id}:${keyframeId}`, blob, meta.id);
+          }
         }
       }
+
+      if (Array.isArray(sr.visualKeyframes) && sr.visualKeyframes.length > 0) {
+        await Promise.all(sr.visualKeyframes.map(kf => storage.saveVisualKeyframe(kf)));
+      }
+
+      if (Array.isArray(sr.visualRectRecords) && sr.visualRectRecords.length > 0) {
+        await storage.saveVisualElementRects(sr.visualRectRecords);
+      }
+    } catch (persistErr) {
+      console.error('Visual data persistence failed — comparison result is still available this session but screenshots may not appear in exports:', persistErr.message);
     }
 
-    dispatch('COMPARISON_COMPLETE', { result: normalized });
+    dispatch('COMPARISON_COMPLETE', { result: { ...normalized, id: meta.id } });
 
     const diffs = sr.comparison?.summary?.propertyDiffCount
                ?? sr.comparison?.summary?.totalDifferences
@@ -1044,6 +1069,21 @@ async function handleComparison() {
 
 document.addEventListener('DOMContentLoaded', async () => {
   await storage.applyPendingOperations();
+
+  if (localStorage.getItem('ui-compare-v5-upgrade-data-cleared')) {
+    localStorage.removeItem('ui-compare-v5-upgrade-data-cleared');
+    Toast.show(
+      'A database upgrade cleared your stored reports. Export your data before upgrading in future.',
+      'warning',
+      0
+    );
+  }
+
+  window.addEventListener('storage-degraded', () => {
+    Toast.error(
+      'Storage failure: too many consecutive write errors. No new data will be saved — restart the app to recover.'
+    );
+  });
   await loadAndRenderReports();
 
   // Tab switching
@@ -1103,6 +1143,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       extractBtn.textContent = 'Extracting…';
       showProgress('extract', 'Starting…');
 
+      const offExtraction = api.onExtractionProgress((data) => {
+        updateProgress('extract', data.pct, data.label);
+      });
+
       try {
         const filterClass = document.getElementById('filter-class')?.value.trim() ?? '';
         const filterId    = document.getElementById('filter-id')?.value.trim()    ?? '';
@@ -1132,16 +1176,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       } catch (err) {
         setError('extract', err.message ?? 'Unexpected error');
       } finally {
+        offExtraction();
         extractBtn.disabled    = false;
         extractBtn.textContent = 'Extract Elements';
         hideProgress('extract');
       }
     });
   }
-
-  api.onExtractionProgress((data) => {
-    updateProgress('extract', data.pct, data.label);
-  });
 
   // Export All
   document.getElementById('export-all-btn')?.addEventListener('click', handleExportAllReports);

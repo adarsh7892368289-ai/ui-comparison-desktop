@@ -87,7 +87,7 @@ function resolveFilteredRoots(filters) {
 
   const roots = pruneToTopLevelRoots(candidates);
 
-  logger.info('FILTER DEBUG selector=\\"' + selector + '\\" candidates=' + candidates.length + ' roots=' + roots.length);
+  logger.debug('Filter resolved roots', { selector, candidates: candidates.length, roots: roots.length });
 
   return roots;
 }

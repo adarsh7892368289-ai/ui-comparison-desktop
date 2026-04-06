@@ -42,4 +42,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   getVersion: () =>
     ipcRenderer.invoke('GET_VERSION'),
+
+  getPerfMetrics: () =>
+    ipcRenderer.invoke('GET_PERF_METRICS'),
 });

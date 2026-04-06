@@ -3,7 +3,7 @@ import { ERROR_CODES, errorTracker } from './error-tracker.js';
 import logger from './logger.js';
 
 const DB_NAME                    = 'ui_comparison_db';
-const DB_VERSION                 = 6;
+const DB_VERSION                 = 7;
 const STORE_REPORTS              = 'reports';
 const STORE_ELEMENTS             = 'elements';
 const STORE_COMPARISONS          = 'comparisons';
@@ -16,6 +16,7 @@ const STORE_OP_LOG               = 'operation_log';
 const MAX_COMPARISONS            = 20;
 const OP_STATUS_PENDING          = 'PENDING';
 const OP_STATUS_COMPLETE         = 'COMPLETE';
+const OP_STATUS_FAILED           = 'FAILED';
 const CIRCUIT_BREAKER_LIMIT      = 3;
 
 function requestToPromise(request) {
@@ -83,26 +84,57 @@ function buildComparisonStores(db) {
 }
 
 function buildAuxStores(db) {
-  const summaryStore = db.createObjectStore(STORE_COMP_SUMMARY, { keyPath: 'comparisonId' });
-  summaryStore.createIndex('by_timestamp', 'timestamp', { unique: false });
+  if (!db.objectStoreNames.contains(STORE_COMP_SUMMARY)) {
+    const summaryStore = db.createObjectStore(STORE_COMP_SUMMARY, { keyPath: 'comparisonId' });
+    summaryStore.createIndex('by_timestamp', 'timestamp', { unique: false });
+  }
 
-  const blobStore = db.createObjectStore(STORE_VISUAL_BLOBS, { keyPath: 'key' });
-  blobStore.createIndex('by_comparisonId', 'comparisonId', { unique: false });
-  blobStore.createIndex('by_timestamp',    'timestamp',    { unique: false });
+  if (!db.objectStoreNames.contains(STORE_VISUAL_BLOBS)) {
+    const blobStore = db.createObjectStore(STORE_VISUAL_BLOBS, { keyPath: 'key' });
+    blobStore.createIndex('by_comparisonId', 'comparisonId', { unique: false });
+    blobStore.createIndex('by_timestamp',    'timestamp',    { unique: false });
+  }
 
-  const logStore = db.createObjectStore(STORE_OP_LOG, { keyPath: 'id' });
-  logStore.createIndex('by_status',    'status',    { unique: false });
-  logStore.createIndex('by_timestamp', 'timestamp', { unique: false });
+  if (!db.objectStoreNames.contains(STORE_OP_LOG)) {
+    const logStore = db.createObjectStore(STORE_OP_LOG, { keyPath: 'id' });
+    logStore.createIndex('by_status',    'status',    { unique: false });
+    logStore.createIndex('by_timestamp', 'timestamp', { unique: false });
+  }
 }
 
 function upgradeToV5(upgradeTx) {
   upgradeTx.objectStore(STORE_COMPARISONS)
     .createIndex('by_triple', ['baselineId', 'compareId', 'mode'], { unique: true });
 
-  const stalePurge = [STORE_REPORTS, STORE_ELEMENTS, STORE_COMPARISONS, STORE_COMP_DIFFS, STORE_COMP_SUMMARY];
-  for (const storeName of stalePurge) {
-    upgradeTx.objectStore(storeName).clear();
-  }
+  const reportStore = upgradeTx.objectStore(STORE_REPORTS);
+  const logStore    = upgradeTx.objectStore(STORE_OP_LOG);
+  const reportIds   = [];
+
+  const cursorReq = reportStore.openCursor();
+  cursorReq.onsuccess = () => {
+    const cursor = cursorReq.result;
+    if (cursor) {
+      reportIds.push(cursor.value.id);
+      cursor.continue();
+    } else {
+      logStore.put({
+        id:        crypto.randomUUID(),
+        operation: 'PRE_UPGRADE_V5_BACKUP',
+        payload:   { reportCount: reportIds.length, reportIds, timestamp: Date.now() },
+        status:    OP_STATUS_COMPLETE,
+        timestamp: new Date().toISOString(),
+      });
+
+      const stalePurge = [STORE_REPORTS, STORE_ELEMENTS, STORE_COMPARISONS, STORE_COMP_DIFFS, STORE_COMP_SUMMARY];
+      for (const storeName of stalePurge) {
+        upgradeTx.objectStore(storeName).clear();
+      }
+    }
+  };
+
+  upgradeTx.addEventListener('complete', () => {
+    localStorage.setItem('ui-compare-v5-upgrade-data-cleared', 'true');
+  });
 }
 
 function upgradeToV6(db) {
@@ -114,12 +146,30 @@ function upgradeToV6(db) {
   rectStore.createIndex('by_session_element', ['sessionId', 'elementKey'], { unique: false });
 }
 
+function upgradeToV7(db, upgradeTx) {
+  if (!db.objectStoreNames.contains(STORE_VISUAL_BLOBS)) { return; }
+  const blobStore = upgradeTx.objectStore(STORE_VISUAL_BLOBS);
+  const req = blobStore.openCursor();
+  req.onsuccess = () => {
+    const cursor = req.result;
+    if (!cursor) { return; }
+    const record = cursor.value;
+    if (!record.key.includes(':') && record.comparisonId) {
+      const newKey = `${record.comparisonId}:${record.key}`;
+      cursor.delete();
+      blobStore.put({ ...record, key: newKey });
+    }
+    cursor.continue();
+  };
+}
+
 function runUpgrade(db, upgradeTx, oldVersion) {
   if (oldVersion < 1) { buildReportStores(db); }
   if (oldVersion < 2) { buildComparisonStores(db); }
   if (oldVersion < 4) { buildAuxStores(db); }
   if (oldVersion < 5) { upgradeToV5(upgradeTx); }
   if (oldVersion < 6) { upgradeToV6(db); }
+  if (oldVersion < 7) { upgradeToV7(db, upgradeTx); }
 }
 
 class IDBRepository {
@@ -142,6 +192,13 @@ class IDBRepository {
       logger.error('IDB circuit breaker opened — write queue halted', {
         limit: CIRCUIT_BREAKER_LIMIT
       });
+      window.dispatchEvent(new CustomEvent('storage-degraded', {
+        detail: {
+          consecutiveFailures: this.#consecutiveFailures,
+          limit:               CIRCUIT_BREAKER_LIMIT,
+          openedAt:            Date.now(),
+        },
+      }));
     }
   }
 
@@ -226,12 +283,15 @@ class IDBRepository {
   }
 
   async #saveReportInner(report) {
-    const maxReports     = get('storage.maxReports');
+    const maxReports = get('storage.maxReports');
     const { elements, ...meta } = report;
+    const logId = crypto.randomUUID();
 
     try {
       const db = await this.#getDB();
+      await this.#writeWalEntry(db, logId, 'SAVE_REPORT', { report });
       await this.#writeReportWithEviction(db, meta, elements, meta.id, maxReports);
+      await this.#completeWalEntry(db, logId);
       return { success: true, id: meta.id };
     } catch (writeError) {
       trackError(ERROR_CODES.STORAGE_WRITE_FAILED, writeError.message, { id: meta.id });
@@ -378,7 +438,7 @@ class IDBRepository {
     const logId = crypto.randomUUID();
     try {
       const db = await this.#getDB();
-      await this.#writeWalEntry(db, logId, 'SAVE_COMPARISON', { comparisonId: meta.id });
+      await this.#writeWalEntry(db, logId, 'SAVE_COMPARISON', { meta, slimResults });
       await this.#writeComparisonWithEviction(db, meta, slimResults);
       await this.#completeWalEntry(db, logId);
       return { success: true, id: meta.id };
@@ -473,19 +533,96 @@ class IDBRepository {
     await transactionToPromise(tx);
   }
 
+  async #failWalEntry(db, id) {
+    const tx    = db.transaction(STORE_OP_LOG, 'readwrite');
+    const store = tx.objectStore(STORE_OP_LOG);
+    const req   = store.get(id);
+    req.onsuccess = () => {
+      if (req.result) {
+        store.put({ ...req.result, status: OP_STATUS_FAILED });
+      }
+    };
+    await transactionToPromise(tx);
+  }
+
+  async #incrementWalEntry(db, entry) {
+    const tx = db.transaction(STORE_OP_LOG, 'readwrite');
+    tx.objectStore(STORE_OP_LOG).put({
+      ...entry,
+      replayCount: (entry.replayCount ?? 0) + 1,
+      lastAttempt: Date.now(),
+    });
+    await transactionToPromise(tx);
+  }
+
   async applyPendingOperations() {
     try {
       const db      = await this.#getDB();
-      const tx      = db.transaction(STORE_OP_LOG, 'readonly');
+      const readTx  = db.transaction(STORE_OP_LOG, 'readonly');
       const pending = await requestToPromise(
-        tx.objectStore(STORE_OP_LOG).index('by_status').getAll(IDBKeyRange.only(OP_STATUS_PENDING))
+        readTx.objectStore(STORE_OP_LOG).index('by_status').getAll(IDBKeyRange.only(OP_STATUS_PENDING))
       );
-      if (pending?.length) {
-        errorTracker.track({
-          code:    ERROR_CODES.STORAGE_VERSION_CONFLICT,
-          message: `WAL replay: ${pending.length} pending operations found on startup`
-        });
+
+      if (!pending?.length) { return; }
+
+      logger.warn('WAL replay starting', { pendingCount: pending.length });
+
+      let replayed = 0;
+      let failed   = 0;
+
+      for (const entry of pending) {
+        if (entry.operation === 'SAVE_VISUAL_BLOB') {
+          await this.#failWalEntry(db, entry.id);
+          failed++;
+          continue;
+        }
+
+        const isKnown = entry.operation === 'SAVE_REPORT' || entry.operation === 'SAVE_COMPARISON';
+        if (!isKnown) {
+          logger.warn('WAL replay: unknown operation type', { operation: entry.operation });
+          await this.#failWalEntry(db, entry.id);
+          failed++;
+          continue;
+        }
+
+        if ((entry.replayCount ?? 0) >= 3) {
+          await this.#failWalEntry(db, entry.id);
+          window.dispatchEvent(new CustomEvent('storage-degraded', {
+            detail: {
+              consecutiveFailures: this.#consecutiveFailures,
+              limit:               CIRCUIT_BREAKER_LIMIT,
+              openedAt:            Date.now(),
+            },
+          }));
+          failed++;
+          continue;
+        }
+
+        await this.#incrementWalEntry(db, entry);
+
+        try {
+          if (entry.operation === 'SAVE_REPORT') {
+            const { report } = entry.payload;
+            const { elements, ...meta } = report;
+            await this.#writeReportWithEviction(db, meta, elements, meta.id, get('storage.maxReports'));
+          } else {
+            const { meta, slimResults } = entry.payload;
+            await this.#writeComparisonWithEviction(db, meta, slimResults);
+          }
+
+          await this.#completeWalEntry(db, entry.id);
+          logger.info('WAL replay: operation replayed', { operation: entry.operation, id: entry.id });
+          replayed++;
+        } catch (replayError) {
+          logger.error('WAL replay: operation failed, will retry on next startup', {
+            operation: entry.operation,
+            id:        entry.id,
+            error:     replayError.message,
+          });
+        }
       }
+
+      logger.info('WAL replay complete', { replayed, failed });
     } catch (walError) {
       logger.warn('WAL replay check failed', { error: walError.message });
     }
@@ -523,11 +660,14 @@ class IDBRepository {
   }
 
   async #saveVisualBlobInner(key, blob, comparisonId) {
+    const logId = crypto.randomUUID();
     try {
       const db = await this.#getDB();
+      await this.#writeWalEntry(db, logId, 'SAVE_VISUAL_BLOB', { key, comparisonId });
       const tx = db.transaction(STORE_VISUAL_BLOBS, 'readwrite');
       tx.objectStore(STORE_VISUAL_BLOBS).put({ key, blob, comparisonId, timestamp: new Date().toISOString() });
       await transactionToPromise(tx);
+      await this.#completeWalEntry(db, logId);
       return { success: true };
     } catch (writeError) {
       trackError(ERROR_CODES.STORAGE_WRITE_FAILED, writeError.message);
@@ -725,5 +865,4 @@ class IDBRepository {
 export { buildPairKey, IDBRepository };
 
 const storage = new IDBRepository();
-storage.applyPendingOperations();
 export default storage;

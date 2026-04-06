@@ -2,13 +2,13 @@
 
 const { chromium, firefox, webkit } = require('playwright');
 const path   = require('path');
+const fs     = require('fs');
 const crypto = require('crypto');
 const log    = require('electron-log');
 
-const { groupIntoKeyframes } = require('../core/comparison/keyframe-grouper.js');
-const { Comparator }         = require('../core/comparison/comparator.js');
+const { groupIntoKeyframes }     = require('../core/comparison/keyframe-grouper.js');
+const { Comparator }             = require('../core/comparison/comparator.js');
 const { assessUrlCompatibility } = require('../application/url-compatibility.js');
-const { getPageExtractorFn } = require('../core/extraction/page-extractor.js');
 
 const CAPTURE_SCALE_FACTOR         = 2;
 const CAPTURE_QUALITY              = 85;
@@ -26,6 +26,34 @@ const WEBP_MIME                    = 'image/webp';
 const PNG_MIME                     = 'image/png';
 
 const _browsers = new Map();
+
+let _extractorBundleSource = null;
+
+function getExtractorBundleSource() {
+  if (_extractorBundleSource !== null) {
+    return _extractorBundleSource;
+  }
+
+  const candidates = [
+    path.join(process.resourcesPath ?? '', 'extractor-bundle.js'),
+    path.join(__dirname, '../../dist/extractor-bundle.js'),
+    path.join(__dirname, '../dist/extractor-bundle.js'),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      _extractorBundleSource = fs.readFileSync(candidate, 'utf8');
+      log.info('[PM] Loaded extractor bundle', { path: candidate });
+      return _extractorBundleSource;
+    } catch {
+      // not at this path — try next
+    }
+  }
+
+  throw new Error(
+    `Extractor bundle not found. Run: npm run build:extractor\nSearched:\n${candidates.map(c => `  ${c}`).join('\n')}`
+  );
+}
 
 async function getBrowser(browserType = 'chromium') {
   const existing = _browsers.get(browserType);
@@ -686,7 +714,7 @@ async function captureKeyframe(sessionHandle, keyframe, kfSelectorPairs, session
   };
 }
 
-async function captureAllKeyframes(sessionHandle, keyframes, selectorById, sessionId, role, actualDPR, documentHeight, blobCache) {
+async function captureAllKeyframes(sessionHandle, keyframes, selectorById, sessionId, role, actualDPR, documentHeight, blobCache, comparisonId) {
   const total            = keyframes.length;
   const roleStart        = Date.now();
   const remeasureResults = [];
@@ -704,7 +732,7 @@ async function captureAllKeyframes(sessionHandle, keyframes, selectorById, sessi
     );
 
     if (blobCache && result.blob) {
-      blobCache.set(result.keyframeId, result.blob);
+      blobCache.set(`${comparisonId}:${result.keyframeId}`, result.blob);
     }
 
     capturedKeyframes.push(result.keyframeMeta);
@@ -722,7 +750,7 @@ async function captureAllKeyframes(sessionHandle, keyframes, selectorById, sessi
   return { remeasureResults, capturedKeyframes };
 }
 
-async function executeTabCapture(sessionHandle, selectorPairs, sessionId, role, blobCache) {
+async function executeTabCapture(sessionHandle, selectorPairs, sessionId, role, blobCache, comparisonId) {
   const t0   = Date.now();
   const page = sessionHandle.page;
   log.info(`VDIFF [${role}] executeTabCapture START`, { selectorCount: selectorPairs.length });
@@ -788,7 +816,7 @@ async function executeTabCapture(sessionHandle, selectorPairs, sessionId, role, 
   const documentYById = new Map(validRects.map(r => [r.id, r.documentY]));
 
   const { remeasureResults, capturedKeyframes } = await captureAllKeyframes(
-    sessionHandle, keyframes, selectorById, sessionId, role, actualDPR, documentHeight, blobCache
+    sessionHandle, keyframes, selectorById, sessionId, role, actualDPR, documentHeight, blobCache, comparisonId
   );
 
   const manifest = buildManifestFromRemeasured(
@@ -805,7 +833,7 @@ async function executeTabCapture(sessionHandle, selectorPairs, sessionId, role, 
   return { manifest, keyframes: capturedKeyframes, rectRecords, devToolsWarning };
 }
 
-async function runTabCapture(page, selectorPairs, sessionId, role, blobCache) {
+async function runTabCapture(page, selectorPairs, sessionId, role, blobCache, comparisonId) {
   const t0 = Date.now();
   let sessionHandle = null;
   log.info(`VDIFF [${role}] attach START`);
@@ -814,7 +842,7 @@ async function runTabCapture(page, selectorPairs, sessionId, role, blobCache) {
     sessionHandle = await attachSession(page);
     log.info(`VDIFF [${role}] attach DONE`, { elapsed: ms(t0) });
 
-    return await executeTabCapture(sessionHandle, selectorPairs, sessionId, role, blobCache);
+    return await executeTabCapture(sessionHandle, selectorPairs, sessionId, role, blobCache, comparisonId);
 
   } catch (err) {
     const msg = err?.message ?? String(err);
@@ -836,13 +864,13 @@ async function runTabCapture(page, selectorPairs, sessionId, role, blobCache) {
   }
 }
 
-async function captureRoleSequential(page, selectorPairs, sessionId, role, blobCache) {
+async function captureRoleSequential(page, selectorPairs, sessionId, role, blobCache, comparisonId) {
   if (!page) {
     log.warn(`VDIFF [${role}] page is null — skipping`);
     return { manifest: new Map(), keyframes: [], rectRecords: [], devToolsWarning: null };
   }
 
-  const result = await runTabCapture(page, selectorPairs, sessionId, role, blobCache);
+  const result = await runTabCapture(page, selectorPairs, sessionId, role, blobCache, comparisonId);
   if (result === null) {
     return { manifest: new Map(), keyframes: [], rectRecords: [], devToolsWarning: null };
   }
@@ -854,7 +882,7 @@ async function captureRoleSequential(page, selectorPairs, sessionId, role, blobC
   };
 }
 
-async function captureVisualDiffs(comparisonResult, pageContext, blobCache) {
+async function captureVisualDiffs(comparisonResult, pageContext, blobCache, comparisonId) {
   const sessionStart = Date.now();
   log.info('VDIFF captureVisualDiffs ENTER');
 
@@ -879,8 +907,8 @@ async function captureVisualDiffs(comparisonResult, pageContext, blobCache) {
   });
 
   try {
-    const baselineResult = await captureRoleSequential(baselinePage, baselinePairs, sessionId, 'baseline', blobCache);
-    const compareResult  = await captureRoleSequential(comparePage,  comparePairs,  sessionId, 'compare',  blobCache);
+    const baselineResult = await captureRoleSequential(baselinePage, baselinePairs, sessionId, 'baseline', blobCache, comparisonId);
+    const compareResult  = await captureRoleSequential(comparePage,  comparePairs,  sessionId, 'compare',  blobCache, comparisonId);
 
     const baselineManifest = baselineResult.manifest;
     const compareManifest  = compareResult.manifest;
@@ -1070,56 +1098,24 @@ async function runExtraction({ url, browserType, filters, onProgress }) {
     }, effectiveSelector ?? '');
     log.info('[WAIT-DIAG]', diagData);
 
-    const extractorFn = getPageExtractorFn();
+    onProgress?.('Injecting extraction engine…', 52);
+    await page.addScriptTag({ content: getExtractorBundleSource() });
 
-    // hardTimeoutMs raised to 20000: the MutationObserver stability gate inside page context is a
-    // secondary check that guards against DOM mutations *after* Playwright yields control. On slow
-    // environments (stage Coveo) the search XHR can take >10s to return results after shells appear
-    // in the DOM; the previous 5000ms budget caused hard-timeout extraction against unpainted
-    // skeleton elements (25 elements instead of ~329).  20000ms gives XHR + React reconcile +
-    // stabilityWindowMs sufficient headroom on both fast (prod) and slow (stage) environments.
-    const report = await page.evaluate(extractorFn, {
-      options: {
-        filters,
-        extraction: {
-          batchHardCapMs:    30,
-          maxElements:       10_000,
-          skipInvisible:     true,
-          stabilityWindowMs: 500,
-          hardTimeoutMs:     20_000,
-          section: {
-            headerPositionRatio:  0.20,
-            footerPositionRatio:  0.15,
-            headerViewportFactor: 1.5,
-            footerViewportFactor: 1.0,
-          },
-          irrelevantTags: [
-            'SCRIPT','STYLE','META','LINK','NOSCRIPT','BR','HR','HEAD','TITLE',
-            'BASE','TEMPLATE','SLOT','WBR','PARAM','TRACK','SOURCE','AREA','COL','COLGROUP',
-          ],
-          cssProperties: [
-            'font-family','font-size','font-weight','font-style','line-height',
-            'letter-spacing','word-spacing','text-align','text-decoration','text-transform',
-            'color','background-color','opacity','visibility',
-            'padding','padding-top','padding-right','padding-bottom','padding-left',
-            'margin','margin-top','margin-right','margin-bottom','margin-left','gap',
-            'display','position','float','clear','overflow','overflow-x','overflow-y',
-            'width','height','max-width','max-height','min-width','min-height',
-            'top','right','bottom','left','z-index',
-            'flex-direction','flex-wrap','flex-grow','flex-shrink','flex-basis',
-            'justify-content','align-items','align-content','align-self',
-            'grid-template-columns','grid-template-rows','grid-column','grid-row',
-            'border','border-width','border-style','border-color',
-            'border-top-width','border-right-width','border-bottom-width','border-left-width',
-            'border-top-style','border-right-style','border-bottom-style','border-left-style',
-            'border-top-color','border-right-color','border-bottom-color','border-left-color',
-            'border-radius','border-top-left-radius','border-top-right-radius',
-            'border-bottom-right-radius','border-bottom-left-radius','box-shadow','text-shadow',
-          ],
-        },
+    const configOverrides = {
+      extraction: {
+        batchHardCapMs:    30,
+        maxElements:       10_000,
+        skipInvisible:     true,
+        stabilityWindowMs: 500,
+        hardTimeoutMs:     20_000,
       },
-      sessionId: null,
-    });
+    };
+
+    onProgress?.('Extracting elements…', 55);
+    const report = await page.evaluate(
+      ({ filters: f, cfg }) => window.__uiCompare.extractWithConfig(f, cfg),
+      { filters: compoundSelector ? filters : null, cfg: configOverrides }
+    );
 
     log.info('[EXTRACT] element count:', report?.elements?.length ?? 0);
 
@@ -1149,6 +1145,7 @@ async function runComparison({
 }) {
   log.info('[PM] runComparison start', { baselineId, compareId, mode, baselineCount: baselineElements?.length, compareCount: compareElements?.length });
 
+  const comparisonId = crypto.randomUUID();
   const send = (label, pct) => onProgress?.(label, pct);
 
   send('Pre-flight checks…', 5);
@@ -1165,16 +1162,6 @@ async function runComparison({
   if (!compareElements?.length) {
     throw new Error('Compare elements array is empty — renderer failed to load from IDB');
   }
-
-  const b0 = baselineElements[0];
-  const c0 = compareElements[0];
-  console.log('[DIAG] baseline count:', baselineElements.length);
-  console.log('[DIAG] compare count:', compareElements.length);
-  console.log('[DIAG] baseline[0] keys:', b0 ? Object.keys(b0).sort() : 'EMPTY');
-  console.log('[DIAG] baseline[0] hpid:', b0?.hpid ?? b0?.HPID ?? b0?.hierarchicalId ?? b0?.hierarchicalPositionId ?? 'NOT FOUND');
-  console.log('[DIAG] baseline[0] rect:', JSON.stringify(b0?.rect ?? b0?.boundingRect ?? b0?.bounds ?? 'NOT FOUND'));
-  console.log('[DIAG] baseline[0] tag:', b0?.tagName ?? b0?.tag ?? b0?.nodeName ?? 'NOT FOUND');
-  console.log('[DIAG] baseline[0] depth:', b0?.depth ?? b0?.treeDepth ?? b0?.level ?? 'NOT FOUND');
 
   send('Running comparison…', 20);
   const comparator = new Comparator();
@@ -1230,17 +1217,15 @@ async function runComparison({
       const visualResult = await captureVisualDiffs(
         comparisonResult,
         { baselinePage, comparePage },
-        blobCache
+        blobCache,
+        comparisonId
       );
 
       if (visualResult.status === 'completed') {
-        // Extract blobs from cache and serialize for IPC transmission
-        // Blobs are keyed by keyframeId and contain { buffer, mimeType }
         const blobs = {};
         for (const keyframe of visualResult.keyframes) {
-          const blob = blobCache?.get(keyframe.id);
+          const blob = blobCache?.get(`${comparisonId}:${keyframe.id}`);
           if (blob && blob.buffer) {
-            // Store buffer as Uint8Array for safe IPC serialization
             blobs[keyframe.id] = {
               buffer: blob.buffer instanceof Uint8Array ? blob.buffer : new Uint8Array(blob.buffer),
               mimeType: blob.mimeType || 'image/webp',
@@ -1270,6 +1255,7 @@ async function runComparison({
   send('Finalising…', 96);
 
   const slimResult = {
+    comparisonId,
     baselineId,
     compareId,
     mode,

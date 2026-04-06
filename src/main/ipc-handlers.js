@@ -155,7 +155,7 @@ function _registerFileHandlers() {
       const win = new BrowserWindow({
         width:          1400,
         height:         900,
-        webPreferences: { contextIsolation: true, nodeIntegration: false },
+        webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
       });
       win.on('closed', () => fs.unlink(tempPath, () => {}));
       await win.loadFile(tempPath);
@@ -203,6 +203,10 @@ function _registerBlobHandlers() {
       log.warn('REGISTER_BLOB: blob cache not initialised');
       return { success: false };
     }
+    if (!blobId || !/^[^:]+:[^:]+$/.test(blobId)) {
+      log.warn('REGISTER_BLOB: invalid blobId format rejected', { blobId });
+      return { success: false, error: 'blobId must be comparisonId:keyframeId' };
+    }
     _blobCache.set(blobId, {
       buffer:   Buffer.from(base64, 'base64'),
       mimeType: mimeType ?? 'image/webp',
@@ -227,6 +231,9 @@ function _registerBlobHandlers() {
 
 function _registerMetaHandlers() {
   ipcMain.handle('GET_VERSION', () => app.getVersion());
+  ipcMain.handle('GET_PERF_METRICS', () => ({
+    success: true, metrics: {}, timestamp: Date.now(),
+  }));
 }
 
 module.exports = { registerIpcHandlers, setBlobCache };
