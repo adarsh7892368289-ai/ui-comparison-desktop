@@ -1,6 +1,7 @@
 import { get } from '../config/defaults.js';
 import { ERROR_CODES, errorTracker } from './error-tracker.js';
 import logger from './logger.js';
+import { performanceMonitor } from './performance-monitor.js';
 
 const DB_NAME                    = 'ui_comparison_db';
 const DB_VERSION                 = 7;
@@ -194,6 +195,7 @@ class IDBRepository {
       });
       window.dispatchEvent(new CustomEvent('storage-degraded', {
         detail: {
+          reason:              'CIRCUIT_OPEN',
           consecutiveFailures: this.#consecutiveFailures,
           limit:               CIRCUIT_BREAKER_LIMIT,
           openedAt:            Date.now(),
@@ -279,7 +281,7 @@ class IDBRepository {
   }
 
   saveReport(report) {
-    return this.#enqueue(() => this.#saveReportInner(report));
+    return this.#enqueue(performanceMonitor.wrap('idb.saveReport', () => this.#saveReportInner(report)));
   }
 
   async #saveReportInner(report) {
@@ -340,30 +342,34 @@ class IDBRepository {
   }
 
   async loadReports() {
-    try {
-      const db = await this.#getDB();
-      const tx = db.transaction(STORE_REPORTS, 'readonly');
-      return collectCursor(tx.objectStore(STORE_REPORTS).index('by_timestamp'), 'prev');
-    } catch (readError) {
-      trackError(ERROR_CODES.STORAGE_READ_FAILED, readError.message);
-      return [];
-    }
+    return performanceMonitor.wrap('idb.loadReports', async () => {
+      try {
+        const db = await this.#getDB();
+        const tx = db.transaction(STORE_REPORTS, 'readonly');
+        return collectCursor(tx.objectStore(STORE_REPORTS).index('by_timestamp'), 'prev');
+      } catch (readError) {
+        trackError(ERROR_CODES.STORAGE_READ_FAILED, readError.message);
+        return [];
+      }
+    })();
   }
 
   async loadReportElements(reportId) {
-    try {
-      const db     = await this.#getDB();
-      const tx     = db.transaction(STORE_ELEMENTS, 'readonly');
-      const record = await requestToPromise(tx.objectStore(STORE_ELEMENTS).get(reportId));
-      return record?.data ?? [];
-    } catch (readError) {
-      trackError(ERROR_CODES.STORAGE_READ_FAILED, readError.message, { reportId });
-      return [];
-    }
+    return performanceMonitor.wrap('idb.loadReportElements', async () => {
+      try {
+        const db     = await this.#getDB();
+        const tx     = db.transaction(STORE_ELEMENTS, 'readonly');
+        const record = await requestToPromise(tx.objectStore(STORE_ELEMENTS).get(reportId));
+        return record?.data ?? [];
+      } catch (readError) {
+        trackError(ERROR_CODES.STORAGE_READ_FAILED, readError.message, { reportId });
+        return [];
+      }
+    })();
   }
 
   deleteReport(id) {
-    return this.#enqueue(() => this.#deleteReportInner(id));
+    return this.#enqueue(performanceMonitor.wrap('idb.deleteReport', () => this.#deleteReportInner(id)));
   }
 
   async #deleteReportInner(id) {
@@ -371,7 +377,11 @@ class IDBRepository {
       const db              = await this.#getDB();
       const compIdsToDelete = await this.#getComparisonIdsByReportId(db, id);
 
-      const stores = [STORE_REPORTS, STORE_ELEMENTS, STORE_COMPARISONS, STORE_COMP_DIFFS, STORE_COMP_SUMMARY];
+      const stores = [
+        STORE_REPORTS, STORE_ELEMENTS,
+        STORE_COMPARISONS, STORE_COMP_DIFFS, STORE_COMP_SUMMARY,
+        STORE_VISUAL_BLOBS, STORE_VISUAL_KEYFRAMES, STORE_VISUAL_ELEMENT_RECTS
+      ];
       const tx     = db.transaction(stores, 'readwrite');
 
       tx.objectStore(STORE_REPORTS).delete(id);
@@ -381,6 +391,27 @@ class IDBRepository {
         tx.objectStore(STORE_COMPARISONS).delete(compId);
         tx.objectStore(STORE_COMP_DIFFS).delete(compId);
         tx.objectStore(STORE_COMP_SUMMARY).delete(compId);
+
+        const blobStore = tx.objectStore(STORE_VISUAL_BLOBS);
+        const blobReq   = blobStore.index('by_comparisonId').openKeyCursor(IDBKeyRange.only(compId));
+        blobReq.onsuccess = () => {
+          const cursor = blobReq.result;
+          if (cursor) { blobStore.delete(cursor.primaryKey); cursor.continue(); }
+        };
+
+        const kfStore = tx.objectStore(STORE_VISUAL_KEYFRAMES);
+        const kfReq   = kfStore.index('by_session').openKeyCursor(IDBKeyRange.only(compId));
+        kfReq.onsuccess = () => {
+          const cursor = kfReq.result;
+          if (cursor) { kfStore.delete(cursor.primaryKey); cursor.continue(); }
+        };
+
+        const rectStore = tx.objectStore(STORE_VISUAL_ELEMENT_RECTS);
+        const rectReq   = rectStore.index('by_session').openKeyCursor(IDBKeyRange.only(compId));
+        rectReq.onsuccess = () => {
+          const cursor = rectReq.result;
+          if (cursor) { rectStore.delete(cursor.primaryKey); cursor.continue(); }
+        };
       }
 
       await transactionToPromise(tx);
@@ -407,7 +438,7 @@ class IDBRepository {
   }
 
   deleteAllReports() {
-    return this.#enqueue(() => this.#deleteAllInner());
+    return this.#enqueue(performanceMonitor.wrap('idb.deleteAllReports', () => this.#deleteAllInner()));
   }
 
   async #deleteAllInner() {
@@ -431,7 +462,7 @@ class IDBRepository {
   }
 
   saveComparison(meta, slimResults) {
-    return this.#enqueue(() => this.#saveComparisonInner(meta, slimResults));
+    return this.#enqueue(performanceMonitor.wrap('idb.saveComparison', () => this.#saveComparisonInner(meta, slimResults)));
   }
 
   async #saveComparisonInner(meta, slimResults) {
@@ -522,14 +553,8 @@ class IDBRepository {
   }
 
   async #completeWalEntry(db, id) {
-    const tx    = db.transaction(STORE_OP_LOG, 'readwrite');
-    const store = tx.objectStore(STORE_OP_LOG);
-    const getReq = store.get(id);
-    getReq.onsuccess = () => {
-      if (getReq.result) {
-        store.put({ ...getReq.result, status: OP_STATUS_COMPLETE });
-      }
-    };
+    const tx = db.transaction(STORE_OP_LOG, 'readwrite');
+    tx.objectStore(STORE_OP_LOG).delete(id);
     await transactionToPromise(tx);
   }
 
@@ -556,107 +581,113 @@ class IDBRepository {
   }
 
   async applyPendingOperations() {
-    try {
-      const db      = await this.#getDB();
-      const readTx  = db.transaction(STORE_OP_LOG, 'readonly');
-      const pending = await requestToPromise(
-        readTx.objectStore(STORE_OP_LOG).index('by_status').getAll(IDBKeyRange.only(OP_STATUS_PENDING))
-      );
+    return performanceMonitor.wrap('idb.applyPendingOperations', async () => {
+      try {
+        const db      = await this.#getDB();
+        const readTx  = db.transaction(STORE_OP_LOG, 'readonly');
+        const pending = await requestToPromise(
+          readTx.objectStore(STORE_OP_LOG).index('by_status').getAll(IDBKeyRange.only(OP_STATUS_PENDING))
+        );
 
-      if (!pending?.length) { return; }
+        if (!pending?.length) { return; }
 
-      logger.warn('WAL replay starting', { pendingCount: pending.length });
+        logger.warn('WAL replay starting', { pendingCount: pending.length });
 
-      let replayed = 0;
-      let failed   = 0;
+        let replayed = 0;
+        let failed   = 0;
 
-      for (const entry of pending) {
-        if (entry.operation === 'SAVE_VISUAL_BLOB') {
-          await this.#failWalEntry(db, entry.id);
-          failed++;
-          continue;
-        }
-
-        const isKnown = entry.operation === 'SAVE_REPORT' || entry.operation === 'SAVE_COMPARISON';
-        if (!isKnown) {
-          logger.warn('WAL replay: unknown operation type', { operation: entry.operation });
-          await this.#failWalEntry(db, entry.id);
-          failed++;
-          continue;
-        }
-
-        if ((entry.replayCount ?? 0) >= 3) {
-          await this.#failWalEntry(db, entry.id);
-          window.dispatchEvent(new CustomEvent('storage-degraded', {
-            detail: {
-              consecutiveFailures: this.#consecutiveFailures,
-              limit:               CIRCUIT_BREAKER_LIMIT,
-              openedAt:            Date.now(),
-            },
-          }));
-          failed++;
-          continue;
-        }
-
-        await this.#incrementWalEntry(db, entry);
-
-        try {
-          if (entry.operation === 'SAVE_REPORT') {
-            const { report } = entry.payload;
-            const { elements, ...meta } = report;
-            await this.#writeReportWithEviction(db, meta, elements, meta.id, get('storage.maxReports'));
-          } else {
-            const { meta, slimResults } = entry.payload;
-            await this.#writeComparisonWithEviction(db, meta, slimResults);
+        for (const entry of pending) {
+          if (entry.operation === 'SAVE_VISUAL_BLOB') {
+            await this.#failWalEntry(db, entry.id);
+            failed++;
+            continue;
           }
 
-          await this.#completeWalEntry(db, entry.id);
-          logger.info('WAL replay: operation replayed', { operation: entry.operation, id: entry.id });
-          replayed++;
-        } catch (replayError) {
-          logger.error('WAL replay: operation failed, will retry on next startup', {
-            operation: entry.operation,
-            id:        entry.id,
-            error:     replayError.message,
-          });
-        }
-      }
+          const isKnown = entry.operation === 'SAVE_REPORT' || entry.operation === 'SAVE_COMPARISON';
+          if (!isKnown) {
+            logger.warn('WAL replay: unknown operation type', { operation: entry.operation });
+            await this.#failWalEntry(db, entry.id);
+            failed++;
+            continue;
+          }
 
-      logger.info('WAL replay complete', { replayed, failed });
-    } catch (walError) {
-      logger.warn('WAL replay check failed', { error: walError.message });
-    }
+          if ((entry.replayCount ?? 0) >= 3) {
+            await this.#failWalEntry(db, entry.id);
+            window.dispatchEvent(new CustomEvent('storage-degraded', {
+              detail: {
+                reason:    'WAL_REPLAY_EXHAUSTED',
+                entryId:   entry.id,
+                operation: entry.operation,
+              },
+            }));
+            failed++;
+            continue;
+          }
+
+          await this.#incrementWalEntry(db, entry);
+
+          try {
+            if (entry.operation === 'SAVE_REPORT') {
+              const { report } = entry.payload;
+              const { elements, ...meta } = report;
+              await this.#writeReportWithEviction(db, meta, elements, meta.id, get('storage.maxReports'));
+            } else {
+              const { meta, slimResults } = entry.payload;
+              await this.#writeComparisonWithEviction(db, meta, slimResults);
+            }
+
+            await this.#completeWalEntry(db, entry.id);
+            logger.info('WAL replay: operation replayed', { operation: entry.operation, id: entry.id });
+            replayed++;
+          } catch (replayError) {
+            logger.error('WAL replay: operation failed, will retry on next startup', {
+              operation: entry.operation,
+              id:        entry.id,
+              error:     replayError.message,
+            });
+          }
+        }
+
+        logger.info('WAL replay complete', { replayed, failed });
+      } catch (walError) {
+        logger.warn('WAL replay check failed', { error: walError.message });
+      }
+    })();
   }
 
   async loadComparisonByPair(baselineId, compareId, mode) {
-    try {
-      const db      = await this.#getDB();
-      const pairKey = buildPairKey(baselineId, compareId, mode);
-      const tx      = db.transaction(STORE_COMPARISONS, 'readonly');
-      const record  = await requestToPromise(
-        tx.objectStore(STORE_COMPARISONS).index('by_pair').get(pairKey)
-      );
-      return record ?? null;
-    } catch (readError) {
-      trackError(ERROR_CODES.STORAGE_READ_FAILED, readError.message);
-      return null;
-    }
+    return performanceMonitor.wrap('idb.loadComparisonByPair', async () => {
+      try {
+        const db      = await this.#getDB();
+        const pairKey = buildPairKey(baselineId, compareId, mode);
+        const tx      = db.transaction(STORE_COMPARISONS, 'readonly');
+        const record  = await requestToPromise(
+          tx.objectStore(STORE_COMPARISONS).index('by_pair').get(pairKey)
+        );
+        return record ?? null;
+      } catch (readError) {
+        trackError(ERROR_CODES.STORAGE_READ_FAILED, readError.message);
+        return null;
+      }
+    })();
   }
 
   async loadComparisonDiffs(comparisonId) {
-    try {
-      const db     = await this.#getDB();
-      const tx     = db.transaction(STORE_COMP_DIFFS, 'readonly');
-      const record = await requestToPromise(tx.objectStore(STORE_COMP_DIFFS).get(comparisonId));
-      return record?.results ?? [];
-    } catch (readError) {
-      trackError(ERROR_CODES.STORAGE_READ_FAILED, readError.message);
-      return [];
-    }
+    return performanceMonitor.wrap('idb.loadComparisonDiffs', async () => {
+      try {
+        const db     = await this.#getDB();
+        const tx     = db.transaction(STORE_COMP_DIFFS, 'readonly');
+        const record = await requestToPromise(tx.objectStore(STORE_COMP_DIFFS).get(comparisonId));
+        return record?.results ?? [];
+      } catch (readError) {
+        trackError(ERROR_CODES.STORAGE_READ_FAILED, readError.message);
+        return [];
+      }
+    })();
   }
 
   saveVisualBlob(key, blob, comparisonId) {
-    return this.#enqueue(() => this.#saveVisualBlobInner(key, blob, comparisonId));
+    return this.#enqueue(performanceMonitor.wrap('idb.saveVisualBlob', () => this.#saveVisualBlobInner(key, blob, comparisonId)));
   }
 
   async #saveVisualBlobInner(key, blob, comparisonId) {
@@ -676,15 +707,17 @@ class IDBRepository {
   }
 
   async loadVisualBlob(key) {
-    try {
-      const db     = await this.#getDB();
-      const tx     = db.transaction(STORE_VISUAL_BLOBS, 'readonly');
-      const record = await requestToPromise(tx.objectStore(STORE_VISUAL_BLOBS).get(key));
-      return record?.blob ?? null;
-    } catch (readError) {
-      trackError(ERROR_CODES.STORAGE_READ_FAILED, readError.message);
-      return null;
-    }
+    return performanceMonitor.wrap('idb.loadVisualBlob', async () => {
+      try {
+        const db     = await this.#getDB();
+        const tx     = db.transaction(STORE_VISUAL_BLOBS, 'readonly');
+        const record = await requestToPromise(tx.objectStore(STORE_VISUAL_BLOBS).get(key));
+        return record?.blob ?? null;
+      } catch (readError) {
+        trackError(ERROR_CODES.STORAGE_READ_FAILED, readError.message);
+        return null;
+      }
+    })();
   }
 
   deleteVisualBlobsByComparisonId(comparisonId) {
@@ -715,7 +748,7 @@ class IDBRepository {
   }
 
   saveVisualKeyframe(keyframe) {
-    return this.#enqueue(() => this.#saveVisualKeyframeInner(keyframe));
+    return this.#enqueue(performanceMonitor.wrap('idb.saveVisualKeyframe', () => this.#saveVisualKeyframeInner(keyframe)));
   }
 
   async #saveVisualKeyframeInner(keyframe) {
@@ -763,7 +796,7 @@ class IDBRepository {
   }
 
   saveVisualElementRects(rectRecords) {
-    return this.#enqueue(() => this.#saveVisualElementRectsInner(rectRecords));
+    return this.#enqueue(performanceMonitor.wrap('idb.saveVisualElementRects', () => this.#saveVisualElementRectsInner(rectRecords)));
   }
 
   async #saveVisualElementRectsInner(rectRecords) {

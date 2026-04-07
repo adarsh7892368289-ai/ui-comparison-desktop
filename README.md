@@ -1,11 +1,6 @@
 # UI Comparison Desktop
 
 **A production-grade Electron desktop application for  DOM-level visual regression testing and cross-environment UI comparison.**
-
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/your-org/ui-comparison-desktop)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](#license)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#supported-platforms)
-
 ---
 
 ## What This System Does
@@ -83,78 +78,6 @@ Unlike screenshot diffing tools, UI Comparison Desktop operates at the **semanti
 - **Performance monitoring** — Instrumentation for bottleneck identification
 - **Detailed logging** — Structured logs for debugging and audit trails
 - **DevTools detection** — Warnings when Chrome DevTools may interfere with measurements
-
----
-
-## Installation
-
-### System Requirements
-
-| Component | Requirement |
-|-----------|------------|
-| **Node.js** | 16.x or later |
-| **npm** | 8.x or later |
-| **Electron** | 33.0.0 (handled by npm) |
-| **Playwright** | 1.48.0 (bundled) |
-| **Memory** | 2GB minimum (8GB recommended for large page extractions) |
-| **Disk** | 1GB for browsers + app + reports |
-
-### Supported Platforms
-
-- **Windows** 10+ (x64)
-- **macOS** 10.13+ (x64, arm64 with Rosetta)
-- **Linux** (Ubuntu 18.04+, Fedora 30+, Debian 10+, other Chromium-based distributions)
-
-### Download & Installation
-
-#### Option 1: From Release Installer (Recommended for End Users)
-
-Visit the [Releases](https://github.com/your-org/ui-comparison-desktop/releases) page and download the appropriate installer:
-- **Windows**: `UI-Comparison-Setup-x.x.x.exe`
-- **macOS**: `UI-Comparison-x.x.x.dmg`
-- **Linux**: `ui-comparison-desktop-x.x.x.AppImage`
-
-Run the installer and follow the on-screen prompts.
-
-#### Option 2: From Source (For Development)
-
-```bash
-# Clone the repository
-git clone https://github.com/your-org/ui-comparison-desktop.git
-cd ui-comparison-desktop
-
-# Install dependencies
-npm install
-
-# Install Playwright browsers  
-npm run install:browsers
-
-# Start development server
-npm start
-```
-
-This runs three concurrent processes:
-- `webpack --watch` on main process code
-- `webpack --watch` on renderer process code
-- `electron .` to launch the Electron window
-
-### Build & Distribution
-
-```bash
-# Build for production
-npm run build
-
-# Create installers (all platforms on the current OS)
-npm run dist
-
-# Create Windows installer only
-npm run dist:win
-
-# Create macOS dmg only
-npm run dist:mac
-```
-
-Installers are created in the `dist-installer/` directory.
 
 ---
 
@@ -264,29 +187,24 @@ infrastructure (utilities)
 **Exposed API** via `window.electronAPI`:
 
 ```javascript
-// Extraction
 extractElements(params: { url, depth, useIFrame })
   → { report: { id, elements[], styles{}, ... } }
 
 onExtractionProgress(callback)
   → { phase, progress, message, elementCount }
 
-// Comparison
 startComparison(params: { baselineElements[], compareElements[], mode, includeVisualDiffs })
   → Returns IPC port for streaming responses
 
 onComparisonProgress(callback)
   → { phase, progress, elementsProcessed, totalElements }
 
-// Export
 exportHTML(params: { htmlContent, filename })
 exportFile(params: { format, data, filename })
 
-// Blob Management
 registerBlob(params: { comparisonId, keyframeId, blob })
 unregisterBlobsByComparison(comparisonId)
 
-// Utility
 getVersion() → version string
 openReport(comparisonId) → Opens report in new window
 ```
@@ -317,9 +235,9 @@ See [src/config/defaults.js](src/config/defaults.js) for all configurable values
 ```javascript
 {
   extraction: {
-    timeout: 20000,              // Max wait for page to settle
+    timeout: 20000,
     cssProperties: [/* 80+ properties */],
-    shadowSentinel: 0,           // HPID sentinel for shadow DOM boundaries
+    shadowSentinel: 0,
   },
   comparison: {
     modes: {
@@ -333,12 +251,12 @@ See [src/config/defaults.js](src/config/defaults.js) for all configurable values
     }
   },
   logger: {
-    level: 'info',               // debug, info, warn, error
-    prettyPrint: true,           // Console formatting
+    level: 'info',
+    prettyPrint: true,
   },
   errorTracking: {
     enabled: true,
-    maxRecent: 100,              // Keep last N errors in memory
+    maxRecent: 100,
   },
 }
 ```
@@ -367,50 +285,85 @@ Edit `src/config/defaults.js` → `comparison.severity.{critical,high,medium}`
 src/
 ├── application/              # Workflows and use cases
 │   ├── compare-workflow.js   # Comparison orchestration
+│   ├── export-workflow.js    # Export handling
+│   ├── import-workflow.js    # Import handling
+│   ├── report-manager.js     # Report management
 │   └── url-compatibility.js  # Pre-flight checks
 ├── config/                   # Configuration management
 │   ├── defaults.js          # All configurable defaults
 │   └── validator.js         # Config validation at startup
 ├── core/                     # Business logic (no UI, no storage)
 │   ├── comparison/          # Matching and diffing
-│   │   ├── comparator.js
-│   │   ├── matcher.js
-│   │   ├── differ.js
-│   │   └── severity-analyzer.js
+│   │   ├── async-utils.js   # Async utilities for comparison
+│   │   ├── color-utils.js   # Color manipulation utilities
+│   │   ├── comparator.js    # Main comparison engine
+│   │   ├── comparison-modes.js # Static/dynamic mode definitions
+│   │   ├── differ.js        # Property diffing logic
+│   │   ├── keyframe-grouper.js # Visual diff grouping
+│   │   ├── matcher.js       # Element matching algorithms
+│   │   └── severity-analyzer.js # Severity classification
 │   ├── extraction/          # DOM traversal and style collection
-│   │   ├── extractor.js
-│   │   ├── dom-traversal.js
-│   │   └── element-classifier.js
+│   │   ├── attribute-collector.js # Element attribute collection
+│   │   ├── dom-enrichment.js # DOM enhancement utilities
+│   │   ├── dom-traversal.js # DOM tree traversal
+│   │   ├── element-classifier.js # Element type classification
+│   │   ├── extraction-filter.js # Filtering logic for extraction
+│   │   ├── extractor.js     # Main extraction engine
+│   │   ├── page-extractor.js # Page-level extraction
+│   │   ├── readiness-gate.js # Page readiness detection
+│   │   ├── section-detector.js # Page section detection
+│   │   ├── style-collector.js # CSS style collection
+│   │   └── _page_stubs_/    # Stubs for page context
+│   │       ├── electron-log.js
+│   │       └── electron.js
 │   ├── export/              # Report generation
-│   │   ├── comparison/
-│   │   │   ├── html-exporter.js
+│   │   ├── comparison/      # Comparison report exports
 │   │   │   ├── csv-exporter.js
-│   │   │   ├── json-exporter.js
-│   │   │   └── excel-exporter.js
-│   │   └── extraction/
-│   │       └── report-exporter.js
+│   │   │   ├── excel-exporter.js
+│   │   │   ├── html-exporter.js
+│   │   │   └── json-exporter.js
+│   │   ├── extraction/      # Extraction report exports
+│   │   │   └── report-exporter.js
+│   │   └── shared/          # Shared export utilities
+│   │       ├── csv-utils.js
+│   │       ├── download-trigger.js
+│   │       └── report-transformer.js
 │   ├── normalization/       # CSS normalization
-│   │   ├── color-normalizer.js
-│   │   └── unit-normalizer.js
+│   │   ├── cache.js         # Normalization caching
+│   │   ├── color-normalizer.js # Color value normalization
+│   │   ├── font-normalizer.js # Font property normalization
+│   │   ├── normalizer-engine.js # Main normalization engine
+│   │   ├── shorthand-expander.js # CSS shorthand expansion
+│   │   └── unit-normalizer.js # Unit conversion and normalization
 │   └── selectors/           # Selector generation and validation
-│       ├── css/
-│       └── xpath/
+│       ├── selector-engine.js # Main selector engine
+│       ├── selector-utils.js # Selector utilities
+│       ├── css/             # CSS selector handling
+│       │   ├── generator.js
+│       │   ├── strategies.js
+│       │   └── validator.js
+│       └── xpath/           # XPath selector handling
+│           ├── generator.js
+│           ├── strategies.js
+│           └── validator.js
 ├── infrastructure/          # Utilities and low-level services
-│   ├── logger.js            # Structured logging
-│   ├── idb-repository.js    # IndexedDB CRUD (renderer only)
-│   ├── playwright-manager.js # Browser control via Playwright
 │   ├── error-tracker.js     # Error collection and reporting
-│   └── performance-monitor.js # Instrumentation
+│   ├── idb-repository.js    # IndexedDB CRUD (renderer only)
+│   ├── logger.js            # Structured logging
+│   ├── performance-monitor.js # Instrumentation
+│   └── playwright-manager.js # Browser control via Playwright
 ├── main/                    # Electron main process
 │   ├── index.js            # App initialization
 │   ├── ipc-handlers.js     # IPC message handlers
 │   ├── playwright-manager.js # Orchestrates Playwright
-│   └── preload.js          # Context bridge setup
+│   ├── preload.js          # Context bridge setup
+│   └── protocol-handler.js # Custom protocol handling
 └── renderer/               # Electron renderer process
     ├── app.js             # Main UI logic and state management
     ├── state.js           # Application state machine
     ├── index.html         # UI template
-    └── idb-repository.js  # Storage operations (renderer-owned)
+    └── stubs/             # Electron stubs for renderer
+        └── electron.js
 ```
 
 ### Running Tests
@@ -449,7 +402,6 @@ npm start
 
 In DevTools Console (when Electron window is open):
 ```javascript
-// List all stored reports
 const db = await new Promise((resolve, reject) => {
   const req = indexedDB.open('ui-comparison');
   req.onsuccess = () => resolve(req.result);
@@ -484,14 +436,12 @@ Performance events are logged to the main console. Search logs for:
 2. Create mode class in `src/core/comparison/comparison-modes.js`:
    ```javascript
    class MyMode extends BaseComparisonMode {
-     // Inherits compareMatch() but can override
    }
    ```
 
 3. Register in comparator:
    ```javascript
    const modes = {
-     // ...existing...
      myMode: new MyMode(...),
    };
    ```
@@ -631,7 +581,6 @@ Inherited CSS changes are automatically suppressed to show only intentional modi
 Enable detailed logging for troubleshooting:
 
 ```javascript
-// In DevTools console
 window.electronAPI.setLogLevel('debug');
 window.electronAPI.exportLogs('./debug-logs.json');
 ```
@@ -651,15 +600,12 @@ Check application logs:
 const { Comparator } = require('./src/core/comparison/comparator');
 const { Extractor } = require('./src/core/extraction/extractor');
 
-// Extract elements
 const extractor = new Extractor(page, config);
 const report = await extractor.extract();
 
-// Compare reports
 const comparator = new Comparator(config);
 const result = comparator.compare(baselineElements, compareElements, 'static');
 
-// Export results
 const { exportToHTML } = require('./src/core/export/comparison/html-exporter');
 const html = await exportToHTML(result, { includeScreenshots: true });
 ```
@@ -670,7 +616,6 @@ All exporters follow the same interface:
 
 ```javascript
 class CustomExporter {
-  // Transform comparison result to desired format
   async export(comparisonResult, options = {}) {
     return {
       success: true,
@@ -716,90 +661,206 @@ Auto-updates are configured in `electron-builder.config.js`. To enable:
 
 ---
 
-## Known Limitations
+## Detailed Architecture
 
-1. **Screenshot timing race** — Layout shifts between scroll settle and CDP freeze can cause pixel misalignment. DevTools open status is detected but CDP geometry may still be inaccurate.
+### Main Process (Node.js Runtime)
 
-2. **Shadow DOM matching** — HPID sentinel value must be consistent across captures. If sentinel changes, all shadow-hosted elements fail to match.
+The main process handles Electron lifecycle, IPC communication, and orchestrates Playwright browser operations.
 
-3. **Positional swaps** — If two sibling elements swap positions, they may be detected as replacements rather than moved positions (HPIDs are structural).
+**Key Components:**
 
-4. **Large page extraction** — Pages with >5000 elements may hit performance limits. Consider filtering to subtree scope.
+- **`src/main/index.js`** — Application entry point, window creation, config validation
+- **`src/main/ipc-handlers.js`** — IPC message routing and handler registration
+- **`src/main/playwright-manager.js`** — Browser control, screenshot capture, comparison execution
+- **`src/main/preload.js`** — Context bridge exposing secure APIs to renderer
+- **`src/main/protocol-handler.js`** — Custom `app://` protocol for loading UI assets
 
-5. **Dynamic content** — Content that loads post-interaction (modals, lazy-loaded lists) won't be captured. Trigger updates before extraction.
+**IPC Contract Details:**
 
-6. **CDP parallelization** — Visual captures must run sequentially (one tab at a time) due to `Page.bringToFront` exclusivity.
+```javascript
+window.electronAPI = {
+  startComparison(params): Promise<ComparisonResult>
+  onComparisonProgress(callback): UnsubscribeFunction
+  
+  extractElements(params): Promise<ExtractionResult>
+  onExtractionProgress(callback): UnsubscribeFunction
+  
+  exportHTML(params): Promise<void>
+  exportFile(params): Promise<{success: boolean, filePath?: string}>
+  
+  registerBlob(params): Promise<void>
+  unregisterBlobsByComparison(id): Promise<void>
+  
+  getVersion(): Promise<string>
+  openReport(id): Promise<void>
+}
+```
+
+### Renderer Process (Chromium Runtime)
+
+The renderer process manages the UI, state, and IndexedDB storage operations.
+
+**Key Components:**
+
+- **`src/renderer/app.js`** — Main UI logic, event handlers, toast notifications
+- **`src/renderer/state.js`** — Application state management with reducer pattern
+- **`src/renderer/index.html`** — UI template with embedded CSS variables
+- **`src/renderer/application/`** — Workflow orchestrators:
+  - `compare-workflow.js` — Comparison execution and result display
+  - `export-workflow.js` — Multi-format export handling
+  - `import-workflow.js` — Report import functionality
+  - `report-manager.js` — Report CRUD operations and UI updates
+
+### Core Business Logic
+
+**Comparison Engine (`src/core/comparison/`):**
+
+- **`comparator.js`** — Main comparison orchestrator, coordinates matching and diffing
+- **`matcher.js`** — Four-phase element matching pipeline with confidence scoring
+- **`differ.js`** — Property-level diffing with tolerance-based comparisons
+- **`severity-analyzer.js`** — Severity classification (critical/high/medium/low)
+- **`comparison-modes.js`** — Static vs dynamic comparison mode implementations
+- **`keyframe-grouper.js`** — Visual diff screenshot grouping logic
+- **`async-utils.js`** — Async utilities for non-blocking operations
+- **`color-utils.js`** — Color parsing and manipulation utilities
+
+**Extraction Engine (`src/core/extraction/`):**
+
+- **`extractor.js`** — Main extraction coordinator
+- **`page-extractor.js`** — Page-level extraction orchestration
+- **`dom-traversal.js`** — DOM tree traversal with HPID generation
+- **`style-collector.js`** — CSS computed style collection
+- **`element-classifier.js`** — Element tier classification (content/layout/etc.)
+- **`attribute-collector.js`** — HTML attribute collection
+- **`readiness-gate.js`** — Page load state detection
+- **`section-detector.js`** — Page section identification
+- **`dom-enrichment.js`** — Additional DOM metadata collection
+
+**Export System (`src/core/export/`):**
+
+- **`comparison/html-exporter.js`** — Self-contained HTML report generation
+- **`comparison/csv-exporter.js`** — CSV format for data analysis
+- **`comparison/json-exporter.js`** — JSON format for API integration
+- **`comparison/excel-exporter.js`** — Excel workbook generation
+- **`extraction/report-exporter.js`** — Extraction report exports
+- **`shared/report-transformer.js`** — Common report transformation utilities
+- **`shared/csv-utils.js`** — CSV generation utilities
+- **`shared/download-trigger.js`** — File download handling
+
+**Normalization Engine (`src/core/normalization/`):**
+
+- **`normalizer-engine.js`** — Main normalization coordinator
+- **`color-normalizer.js`** — Color value standardization
+- **`font-normalizer.js`** — Font property normalization
+- **`unit-normalizer.js`** — CSS unit conversion (px, em, rem, etc.)
+- **`shorthand-expander.js`** — CSS shorthand property expansion
+- **`cache.js`** — Normalization result caching
+
+**Selector Engine (`src/core/selectors/`):**
+
+- **`selector-engine.js`** — Main selector generation coordinator
+- **`css/generator.js`** — CSS selector generation strategies
+- **`css/strategies.js`** — CSS selector matching algorithms
+- **`css/validator.js`** — CSS selector validation
+- **`xpath/generator.js`** — XPath selector generation
+- **`xpath/strategies.js`** — XPath selector matching
+- **`xpath/validator.js`** — XPath selector validation
+- **`selector-utils.js`** — Common selector utilities
+
+### Infrastructure Layer
+
+**Storage & Persistence (`src/infrastructure/`):**
+
+- **`idb-repository.js`** — IndexedDB CRUD operations with WAL for crash recovery
+- **`logger.js`** — Structured logging with configurable transports
+- **`error-tracker.js`** — Error collection and reporting system
+- **`performance-monitor.js`** — Operation timing and bottleneck detection
+
+### Configuration System
+
+**Configuration Management (`src/config/`):**
+
+- **`defaults.js`** — All default configuration values and validation
+- **`validator.js`** — Configuration validation at startup
+
+**Key Configuration Areas:**
+
+```javascript
+{
+  // Extraction settings
+  extraction: {
+    timeout: 20000,           // Page load timeout
+    cssProperties: [...],     // 80+ CSS properties to track
+    skipInvisible: true,      // Skip invisible elements
+    batchSize: 20            // Processing batch size
+  },
+  
+  // Comparison settings  
+  comparison: {
+    modes: {
+      static: { /* Full CSS suite, tight tolerances */ },
+      dynamic: { /* Curated 40 properties, loose tolerances */ }
+    },
+    severity: {
+      critical: ['display', 'position', ...],
+      high: ['opacity', 'font-size', ...],
+      medium: ['margin', 'padding', ...]
+    }
+  },
+  
+  // Matching settings
+  hpid: {
+    coordinateMode: 'dual',   // HPID generation strategy
+    maxDepth: 5000           // Maximum DOM depth
+  },
+  
+  // Selector generation
+  selectors: {
+    generateCSS: true,
+    generateXPath: true,
+    concurrency: 4
+  }
+}
+```
 
 ---
 
-## Contributing
+## Security Considerations
 
-### Code Review Checklist
-
-Before submitting a pull request:
-
-- [ ] Code passes `npm run lint` without errors
-- [ ] Code is formatted with `npm run format`
-- [ ] No circular imports between architectural layers
-- [ ] Error handling included (try/catch or .catch())
-- [ ] IPC contract changes documented in this README
-- [ ] Backwards compatibility maintained (no breaking API changes)
-- [ ] Performance impact assessed (especially for matching/diffing)
-- [ ] Tests added for new features (to be implemented)
-
-### Adding a New Feature
-
-1. **Plan the architecture** — Which layers does it touch? Any new dependencies?
-2. **Write tests** (when test suite is complete)
-3. **Implement in core** (business logic first, isolated from UI)
-4. **Add IPC handlers** if it needs main process access
-5. **Wire UI** in renderer process
-6. **Document** in README and comments
-7. **Get code review** before merging to main
-
-### Reporting Bugs
-
-Use GitHub Issues with:
-- Reproducible steps
-- Application version (`Help → About`)
-- Operating system and version
-- Log output (if applicable)
-- Screenshot of the issue (if applicable)
+- **No external network calls** — All processing is local; no data sent to servers
+- **Local storage only** — Reports stored in IndexedDB; no cloud sync
+- **Browser isolation** — Playwright runs in isolated browser contexts
+- **No credential handling** — Does not store or transmit authentication data
+- **Content Security Policy** — Electron CSP headers prevent XSS in renderer
+- **Input validation** — All IPC messages validated before processing
+- **Error sanitization** — Sensitive information stripped from error logs
 
 ---
 
-## License
+## Dependencies
 
-MIT License — See [LICENSE](LICENSE) file for details
+### Runtime Dependencies
 
----
+- **Electron 33.0.0** — Cross-platform desktop app framework
+- **Playwright 1.48.0** — Browser automation for extraction
+- **better-sqlite3 12.8.0** — SQLite database for metadata (if used)
+- **electron-log 5.1.2** — Structured logging
+- **electron-updater 6.3.0** — Auto-update functionality
+- **xlsx 0.18.5** — Excel file generation
 
-## Support
+### Development Dependencies
 
-- **Documentation**: See [docs/](docs/) folder (to be populated)
-- **Issue Tracker**: [GitHub Issues](https://github.com/your-org/ui-comparison-desktop/issues)
-- **Email**: support@your-org.com
+- **Webpack 5.96.0** — Module bundling
+- **Babel 7.24.0** — JavaScript transpilation
+- **ESLint 8.57.0** — Code linting
+- **Prettier 3.2.5** — Code formatting
+- **electron-builder 24.13.3** — Application packaging
+- **fake-indexeddb 6.2.5** — IndexedDB mocking for tests
 
----
+### Browser Dependencies
 
-## Changelog
+Playwright bundles:
+- **Chromium** — Primary browser engine
+- **Firefox** — Alternative browser for compatibility testing
+- **WebKit** — Safari engine for cross-browser validation
 
-### Version 1.0.0 (April 2026)
-
-**Initial Release:**
-- ✅ Multi-page DOM extraction with CSS property collection
-- ✅ Four-phase element matching pipeline (>85% success rate on standard pages)
-- ✅ Static and dynamic comparison modes with configurable tolerances
-- ✅ Severity-ranked diff reports with cascade suppression
-- ✅ Visual diff capture via CDP with side-by-side screenshots
-- ✅ Multi-format export (HTML, CSV, JSON, Excel)
-- ✅ IndexedDB storage with write-ahead logging for crash recovery
-- ✅ Cross-platform support (Windows, macOS, Linux)
-- ✅ Production-grade error handling and monitoring
-- ⚠️ Unit tests to be added in Phase 5
-
----
-
-**Built with ❤️ by the UI Comparison Desktop Team**
-
-For more technical deep-dives, see [UI_COMPARISON_DESKTOP_CONTEXT.md](UI_COMPARISON_DESKTOP_CONTEXT.md) (internal engineering reference).

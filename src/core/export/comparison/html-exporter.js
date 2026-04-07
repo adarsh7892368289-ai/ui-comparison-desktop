@@ -7,7 +7,7 @@ async function exportToHTML(comparisonResult) {
   const grouped          = transformToGroupedReport(comparisonResult);
   const manifest         = resolveVisualManifest(comparisonResult.visualDiffs ?? null);
   const visualDiffStatus = comparisonResult.visualDiffStatus ?? null;
-  const blobData         = await loadBlobData(manifest);
+  const blobData         = await loadBlobData(manifest, comparisonResult.id ?? null);
   const html             = buildDocument(grouped, comparisonResult, manifest, blobData, visualDiffStatus);
   logger.info('HTML export built', {
     elements:         grouped.summary.totalMatched,
@@ -84,7 +84,7 @@ async function blobToDataUri(blob) {
   return `data:${mimeType};base64,${btoa(binary)}`;
 }
 
-async function loadBlobData(manifest) {
+async function loadBlobData(manifest, comparisonId) {
   const ids = new Set();
   for (const entry of Object.values(manifest)) {
     if (entry.baselineKeyframeId) { ids.add(entry.baselineKeyframeId); }
@@ -92,7 +92,8 @@ async function loadBlobData(manifest) {
   }
   const out = Object.create(null);
   for (const id of ids) {
-    const blob = await storage.loadVisualBlob(id);
+    const idbKey = comparisonId ? `${comparisonId}:${id}` : id;
+    const blob = await storage.loadVisualBlob(idbKey);
     if (blob) { out[id] = await blobToDataUri(blob); }
   }
   return out;

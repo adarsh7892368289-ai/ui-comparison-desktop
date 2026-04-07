@@ -232,7 +232,7 @@ function _registerBlobHandlers() {
 function _registerMetaHandlers() {
   ipcMain.handle('GET_VERSION', () => app.getVersion());
   ipcMain.handle('GET_PERF_METRICS', () => ({
-    success: true, metrics: {}, timestamp: Date.now(),
+    success: true, metrics: playwrightManager.getPerformanceSnapshot(), timestamp: Date.now(),
   }));
 }
 

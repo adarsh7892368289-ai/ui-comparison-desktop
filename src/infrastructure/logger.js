@@ -1,13 +1,6 @@
 import { get } from '../config/defaults.js';
-import log from 'electron-log';
 
 const LEVELS = { debug: 0, info: 1, warn: 2, error: 3 };
-
-class FileTransport {
-  write(entry) {
-    log[entry.level]?.('[StoredLog]', entry.message, entry.data ?? {});
-  }
-}
 
 class ConsoleTransport {
   write(logEntry) {
@@ -39,9 +32,6 @@ class Logger {
 
     this.level = get('logging.level', 'info');
     this.transports.push(new ConsoleTransport());
-    if (typeof process !== 'undefined' && process.type === 'browser') {
-      this.transports.push(new FileTransport());
-    }
     this.initialized = true;
 
     return this;
@@ -156,4 +146,4 @@ class Logger {
 const logger = new Logger();
 
 export default logger;
-export { Logger, ConsoleTransport, FileTransport };
+export { Logger, ConsoleTransport };

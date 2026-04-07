@@ -8,7 +8,7 @@ const log    = require('electron-log');
 
 const { groupIntoKeyframes }     = require('../core/comparison/keyframe-grouper.js');
 const { Comparator }             = require('../core/comparison/comparator.js');
-const { assessUrlCompatibility } = require('../application/url-compatibility.js');
+const { assessUrlCompatibility } = require('../renderer/application/url-compatibility.js');
 
 const CAPTURE_SCALE_FACTOR         = 2;
 const CAPTURE_QUALITY              = 85;
@@ -27,6 +27,34 @@ const PNG_MIME                     = 'image/png';
 
 const _browsers = new Map();
 
+const _perfAccumulator = new Map();
+
+function _recordPhase(name, startMs) {
+  const duration = Date.now() - startMs;
+  const arr = _perfAccumulator.get(name) ?? [];
+  arr.push(duration);
+  _perfAccumulator.set(name, arr);
+  log.debug('[PM] phase timing', { phase: name, ms: duration });
+}
+
+function getPerformanceSnapshot() {
+  const out = {};
+  for (const [phase, durations] of _perfAccumulator) {
+    if (!durations.length) { continue; }
+    const sorted = [...durations].sort((a, b) => a - b);
+    const count  = durations.length;
+    const p = (ratio) => count < 2 ? null : sorted[Math.floor(sorted.length * ratio)];
+    out[phase] = {
+      count,
+      p50:    p(0.50),
+      p95:    p(0.95),
+      p99:    p(0.99),
+      lastMs: durations[durations.length - 1],
+    };
+  }
+  return out;
+}
+
 let _extractorBundleSource = null;
 
 function getExtractorBundleSource() {
@@ -36,8 +64,8 @@ function getExtractorBundleSource() {
 
   const candidates = [
     path.join(process.resourcesPath ?? '', 'extractor-bundle.js'),
-    path.join(__dirname, '../../dist/extractor-bundle.js'),
-    path.join(__dirname, '../dist/extractor-bundle.js'),
+    path.join(__dirname, '../extractor-bundle.js'),
+    path.join(process.cwd(), 'dist', 'extractor-bundle.js'),
   ];
 
   for (const candidate of candidates) {
@@ -971,6 +999,8 @@ function buildSelectorFromFilters(filters) {
 }
 
 async function runExtraction({ url, browserType, filters, onProgress }) {
+  const totalStart    = Date.now();
+  const navigateStart = Date.now();
   const browser = await getBrowser(browserType ?? 'chromium');
   const context = await browser.newContext({ serviceWorkers: 'block' });
   const page    = await context.newPage();
@@ -1098,8 +1128,12 @@ async function runExtraction({ url, browserType, filters, onProgress }) {
     }, effectiveSelector ?? '');
     log.info('[WAIT-DIAG]', diagData);
 
+    _recordPhase('pm.extract.navigate', navigateStart);
+
+    const injectStart = Date.now();
     onProgress?.('Injecting extraction engine…', 52);
     await page.addScriptTag({ content: getExtractorBundleSource() });
+    _recordPhase('pm.extract.inject', injectStart);
 
     const configOverrides = {
       extraction: {
@@ -1111,11 +1145,19 @@ async function runExtraction({ url, browserType, filters, onProgress }) {
       },
     };
 
+    const evaluateStart = Date.now();
     onProgress?.('Extracting elements…', 55);
     const report = await page.evaluate(
       ({ filters: f, cfg }) => window.__uiCompare.extractWithConfig(f, cfg),
       { filters: compoundSelector ? filters : null, cfg: configOverrides }
     );
+    _recordPhase('pm.extract.evaluate', evaluateStart);
+
+    try {
+      const perfMarks = await page.evaluate(() => JSON.stringify(performance.getEntriesByType('measure')));
+      log.debug('[PM] Extraction perf measures', { measures: JSON.parse(perfMarks) });
+    } catch {
+    }
 
     log.info('[EXTRACT] element count:', report?.elements?.length ?? 0);
 
@@ -1123,6 +1165,7 @@ async function runExtraction({ url, browserType, filters, onProgress }) {
 
     onProgress?.('Extraction complete', 100);
     log.info('[PM] runExtraction done', { url, elementCount: report?.totalElements ?? 0 });
+    _recordPhase('pm.extract.total', totalStart);
     return report;
 
   } finally {
@@ -1143,6 +1186,7 @@ async function runComparison({
   onProgress,
   blobCache,
 }) {
+  const totalStart = Date.now();
   log.info('[PM] runComparison start', { baselineId, compareId, mode, baselineCount: baselineElements?.length, compareCount: compareElements?.length });
 
   const comparisonId = crypto.randomUUID();
@@ -1171,6 +1215,7 @@ async function runComparison({
     mode
   );
 
+  const matchStart = Date.now();
   let comparisonResult = null;
   for await (const frame of generator) {
     if (frame.type === 'progress') {
@@ -1180,6 +1225,7 @@ async function runComparison({
       comparisonResult = frame.payload;
     }
   }
+  _recordPhase('pm.compare.match', matchStart);
 
   if (!comparisonResult) {
     throw new Error('Comparator returned no result frame');
@@ -1189,7 +1235,7 @@ async function runComparison({
 
   let visualData = null;
   if (includeScreenshots !== false) {
-    // Navigate to pages only for screenshot capture — element data already supplied by renderer
+    const visualStart = Date.now();
     send('Loading pages for screenshots…', 82);
     const browser  = await getBrowser('chromium');
     const context  = await browser.newContext({ serviceWorkers: 'block' });
@@ -1250,6 +1296,7 @@ async function runComparison({
       await comparePage?.close().catch(() => { /* ignore */ });
       await context.close().catch(() => { /* ignore */ });
     }
+    _recordPhase('pm.compare.visual', visualStart);
   }
 
   send('Finalising…', 96);
@@ -1282,6 +1329,7 @@ async function runComparison({
     mode, modified: comparisonResult.comparison?.summary?.severityCounts,
   });
 
+  _recordPhase('pm.compare.total', totalStart);
   return slimResult;
 }
 
@@ -1300,4 +1348,5 @@ module.exports = {
   recoverFrozenSessions,
 
   getBrowser,
+  getPerformanceSnapshot,
 };

@@ -34,15 +34,35 @@ app.on('ready', () => {
   log.initialize({ preload: true });
   log.info('App ready — initialising config, window and handlers');
 
-  // 0.4: config.init() before registerIpcHandlers() — any handler that constructs a
-  // Comparator or ComparisonMode reads config at construction time; an uninitialized
-  // config object returns stale defaults or throws, silently corrupting comparison parameters
+  const isSmokeTest = process.argv.includes('--smoke-test');
+  if (isSmokeTest) {
+    const fs = require('fs');
+    const candidates = [
+      path.join(process.resourcesPath ?? '', 'extractor-bundle.js'),
+      path.join(__dirname, '../extractor-bundle.js'),
+      path.join(process.cwd(), 'dist', 'extractor-bundle.js'),
+    ];
+
+    const bundleFound = candidates.some(c => { try { return fs.existsSync(c); } catch { return false; } });
+    if (!bundleFound) {
+      console.log('[smoke-test] FAIL: extractor-bundle.js not found in candidate paths:');
+      for (const c of candidates) { console.log(`  ${c}`); }
+      process.exit(1);
+    }
+
+    const version = app.getVersion();
+    if (!version || typeof version !== 'string' || version.trim() === '') {
+      console.log('[smoke-test] FAIL: app.getVersion() returned empty or invalid string');
+      process.exit(1);
+    }
+
+    console.log(`[smoke-test] PASS: version=${version}`);
+    app.quit();
+    return;
+  }
+
   configInit();
 
-  // validateConfig(throwOnError:true) at boot — on throw, quit immediately rather than
-  // running with a broken config that produces wrong comparison results silently;
-  // throwOnError:false is correct only in non-critical paths (e.g. a settings UI that
-  // wants to surface errors to the user without crashing the app)
   try {
     validateConfig({ throwOnError: true });
   } catch (configErr) {
