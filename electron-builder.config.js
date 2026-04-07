@@ -11,7 +11,7 @@ module.exports = {
   ],
   asar: true,
   asarUnpack: [
-    '**/node_modules/better-sqlite3/**',
+    'dist/extractor-bundle.js',
     '**/node_modules/playwright/**',
     '**/*.node',
   ],

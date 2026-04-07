@@ -8,7 +8,7 @@ const log    = require('electron-log');
 
 const { groupIntoKeyframes }     = require('../core/comparison/keyframe-grouper.js');
 const { Comparator }             = require('../core/comparison/comparator.js');
-const { assessUrlCompatibility } = require('../renderer/application/url-compatibility.js');
+const { assessUrlCompatibility } = require('../core/comparison/url-compatibility.js');
 
 const CAPTURE_SCALE_FACTOR         = 2;
 const CAPTURE_QUALITY              = 85;
@@ -289,9 +289,27 @@ async function executeInPage(sessionHandle, fn, args) {
 
 async function recoverFrozenSessions() {
   let recovered = 0;
-  if (recovered > 0) {
-    log.warn('[PM] Startup recovery complete', { frozenSessionsRecovered: recovered });
+  for (const [, browser] of _browsers) {
+    if (!browser.isConnected()) { continue; }
+    try {
+      for (const context of browser.contexts()) {
+        for (const page of context.pages()) {
+          const frozen = await page.evaluate(
+            () => !!document.getElementById('vdiff-freeze-styles')
+          ).catch(() => false);
+          if (frozen) {
+            const url = page.url();
+            log.warn('[PM] Closing frozen page from prior session', { url });
+            await page.close().catch(() => {});
+            recovered++;
+          }
+        }
+      }
+    } catch (err) {
+      log.warn('[PM] recoverFrozenSessions: error probing browser', { error: err.message });
+    }
   }
+  return recovered;
 }
 
 function inPageGetViewport() {

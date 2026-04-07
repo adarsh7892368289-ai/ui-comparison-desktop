@@ -1,7 +1,7 @@
 /* global btoa */
 import logger from '../../../infrastructure/logger.js';
 import storage from '../../../infrastructure/idb-repository.js';
-import { transformToGroupedReport } from '../shared/report-transformer.js';
+import { transformToGroupedReport } from '../export-utils/report-transformer.js';
 
 async function exportToHTML(comparisonResult) {
   const grouped          = transformToGroupedReport(comparisonResult);

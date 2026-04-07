@@ -1,6 +1,6 @@
 import * as XLSX       from 'xlsx';
 import { get }        from '../../../config/defaults.js';
-import { rowsToCsv }  from '../shared/csv-utils.js';
+import { rowsToCsv }  from '../export-utils/csv-utils.js';
 
 const UTF8_BOM          = '\uFEFF';
 const CSV_TEXT_MAX      = 200;

@@ -15,7 +15,6 @@ module.exports = {
   },
 
   externals: {
-    'better-sqlite3': 'commonjs better-sqlite3',
     playwright:       'commonjs playwright',
     'electron-log':   'commonjs electron-log',
     'electron-updater': 'commonjs electron-updater',

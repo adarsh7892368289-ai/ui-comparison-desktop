@@ -1,11 +1,11 @@
 import { getState }                          from '../state.js';
-import { Toast }                              from '../app.js';
+import { Toast }                              from '../ui.js';
 import { sanitizeFilename, hostFromUrl }      from './report-manager.js';
 import { normalizeComparisonResult }          from './compare-workflow.js';
-import { exportToHTML }                       from '../../core/export/comparison/html-exporter.js';
-import { buildComparisonCsv }                 from '../../core/export/comparison/csv-exporter.js';
-import { buildComparisonJsonPayload }         from '../../core/export/comparison/json-exporter.js';
-import { exportToExcel }                      from '../../core/export/comparison/excel-exporter.js';
+import { exportToHTML }                       from '../../core/export/comparison-exporters/html-exporter.js';
+import { buildComparisonCsv }                 from '../../core/export/comparison-exporters/csv-exporter.js';
+import { buildComparisonJsonPayload }         from '../../core/export/comparison-exporters/json-exporter.js';
+import { exportToExcel }                      from '../../core/export/comparison-exporters/excel-exporter.js';
 import {
   buildExtractedReportCsv,
   buildExtractedReportJson,
@@ -13,7 +13,7 @@ import {
   buildAllExtractedReportsJson,
   buildExtractedReportExcel,
   buildAllExtractedReportsExcel,
-} from '../../core/export/extraction/report-exporter.js';
+} from '../../core/export/extraction-exporters/report-exporter.js';
 import storage from '../../infrastructure/idb-repository.js';
 
 const api = window.electronAPI;

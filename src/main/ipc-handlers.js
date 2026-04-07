@@ -7,10 +7,13 @@ const os     = require('os');
 const crypto = require('crypto');
 const log    = require('electron-log');
 
+const CH = require('./ipc-channels');
 const playwrightManager = require('./playwright-manager');
 
-let _mainWindow = null;
-let _blobCache  = null;
+let _mainWindow  = null;
+let _blobCache   = null;
+let _blobCacheSet    = null;
+let _blobCacheDelete = null;
 
 function registerIpcHandlers(mainWindow) {
   _mainWindow = mainWindow;
@@ -21,8 +24,10 @@ function registerIpcHandlers(mainWindow) {
   _registerMetaHandlers();
 }
 
-function setBlobCache(cache) {
-  _blobCache = cache;
+function setBlobCache(cache, cacheSet, cacheDelete) {
+  _blobCache       = cache;
+  _blobCacheSet    = cacheSet;
+  _blobCacheDelete = cacheDelete;
 }
 
 function _pushToWindow(channel, payload) {
@@ -32,13 +37,11 @@ function _pushToWindow(channel, payload) {
 }
 
 function _registerComparisonHandlers() {
-  // Params now include baselineElements/compareElements: renderer loads elements
-  // from IDB before this call; main process receives plain objects and runs comparison.
-  ipcMain.handle('START_COMPARISON', async (event, params) => {
+  ipcMain.handle(CH.START_COMPARISON, async (event, params) => {
     const { baselineId, compareId, mode, baselineUrl, compareUrl, baselineElements, compareElements, includeScreenshots } = params;
     log.info('START_COMPARISON', { baselineId, compareId, mode, baselineCount: baselineElements?.length, compareCount: compareElements?.length });
 
-    const sendProgress = (label, pct) => _pushToWindow('COMPARISON_PROGRESS', { label, pct });
+    const sendProgress = (label, pct) => _pushToWindow(CH.COMPARISON_PROGRESS, { label, pct });
 
     try {
       const result = await playwrightManager.runComparison({
@@ -65,13 +68,13 @@ function _registerComparisonHandlers() {
 }
 
 function _registerExtractionHandlers() {
-  ipcMain.handle('EXTRACT_ELEMENTS', async (event, params) => {
+  ipcMain.handle(CH.EXTRACT_ELEMENTS, async (event, params) => {
     const { url, options } = params;
-    const filters = options?.filters;
+    const filters     = options?.filters;
     const browserType = options?.browserType;
     log.info('EXTRACT_ELEMENTS', { url, filters });
 
-    const sendProgress = (label, pct) => _pushToWindow('EXTRACTION_PROGRESS', { label, pct });
+    const sendProgress = (label, pct) => _pushToWindow(CH.EXTRACTION_PROGRESS, { label, pct });
 
     try {
       const report = await playwrightManager.runExtraction({
@@ -90,7 +93,7 @@ function _registerExtractionHandlers() {
 }
 
 function _registerFileHandlers() {
-  ipcMain.handle('EXPORT_HTML', async (event, { htmlContent, filename }) => {
+  ipcMain.handle(CH.EXPORT_HTML, async (event, { htmlContent, filename }) => {
     const { canceled, filePath } = await dialog.showSaveDialog(_mainWindow, {
       title:       'Export Comparison Report',
       defaultPath: path.join(app.getPath('downloads'), filename ?? 'comparison-report.html'),
@@ -106,13 +109,16 @@ function _registerFileHandlers() {
       log.info('HTML report exported', { filePath });
       return { success: true, filePath };
     } catch (err) {
-      log.error('EXPORT_HTML write failed', { error: err.message });
-      return { success: false, error: err.message };
+      log.error('EXPORT_HTML write failed', { error: err.message, code: err.code });
+      const reason = err.code === 'EACCES' ? 'Permission denied — choose a different location'
+                   : err.code === 'EBUSY'  ? 'File is in use by another process'
+                   : err.message;
+      return { success: false, error: reason };
     }
   });
 
-  ipcMain.handle('EXPORT_FILE', async (event, { data, filename, format }) => {
-    const extensionMap = { xlsx: 'xlsx', excel: 'xlsx', csv: 'csv', json: 'json' };
+  ipcMain.handle(CH.EXPORT_FILE, async (event, { data, filename, format }) => {
+    const extensionMap = { xlsx: 'xlsx', csv: 'csv', json: 'json' };
     const ext  = extensionMap[format] ?? format;
     const name = filename ?? `export.${ext}`;
 
@@ -129,26 +135,27 @@ function _registerFileHandlers() {
     try {
       let content;
       if (data instanceof Uint8Array) {
-        // Normalise sub-buffer views — byteOffset > 0 aliases wrong bytes if passed as-is
         content = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
       } else if (data instanceof ArrayBuffer) {
         content = Buffer.from(data);
       } else if (Array.isArray(data)) {
         content = Buffer.from(data);
       } else {
-        // String — csv / json path
         content = data;
       }
       await fs.promises.writeFile(filePath, content);
       log.info('File exported', { filePath, format });
       return { success: true, filePath };
     } catch (err) {
-      log.error('EXPORT_FILE write failed', { error: err.message });
-      return { success: false, error: err.message };
+      log.error('EXPORT_FILE write failed', { error: err.message, code: err.code });
+      const reason = err.code === 'EACCES' ? 'Permission denied — choose a different location'
+                   : err.code === 'EBUSY'  ? 'File is in use by another process'
+                   : err.message;
+      return { success: false, error: reason };
     }
   });
 
-  ipcMain.handle('OPEN_REPORT', async (event, { htmlContent }) => {
+  ipcMain.handle(CH.OPEN_REPORT, async (event, { htmlContent }) => {
     const tempPath = path.join(os.tmpdir(), `ui-comparison-report-${crypto.randomUUID()}.html`);
     try {
       await fs.promises.writeFile(tempPath, htmlContent, 'utf8');
@@ -168,7 +175,7 @@ function _registerFileHandlers() {
     }
   });
 
-  ipcMain.handle('IMPORT_FILE', async () => {
+  ipcMain.handle(CH.IMPORT_FILE, async () => {
     const { canceled, filePaths } = await dialog.showOpenDialog(_mainWindow, {
       title:      'Import Report File',
       properties: ['openFile'],
@@ -186,20 +193,23 @@ function _registerFileHandlers() {
 
     const filePath = filePaths[0];
     try {
-      const ext  = path.extname(filePath).slice(1).toLowerCase();
-      const data = await fs.promises.readFile(filePath);
+      const ext     = path.extname(filePath).slice(1).toLowerCase();
+      const data    = await fs.promises.readFile(filePath);
       const content = (ext === 'xlsx') ? data.toString('base64') : data.toString('utf8');
       return { success: true, content, ext, filename: path.basename(filePath) };
     } catch (err) {
-      log.error('IMPORT_FILE read failed', { error: err.message });
-      return { success: false, error: err.message };
+      log.error('IMPORT_FILE read failed', { error: err.message, code: err.code });
+      const reason = err.code === 'ENOENT' ? 'File not found — it may have been moved or deleted'
+                   : err.code === 'EACCES' ? 'Permission denied reading file'
+                   : err.message;
+      return { success: false, error: reason };
     }
   });
 }
 
 function _registerBlobHandlers() {
-  ipcMain.handle('REGISTER_BLOB', (event, { blobId, base64, mimeType }) => {
-    if (!_blobCache) {
+  ipcMain.handle(CH.REGISTER_BLOB, (event, { blobId, base64, mimeType }) => {
+    if (!_blobCache || !_blobCacheSet) {
       log.warn('REGISTER_BLOB: blob cache not initialised');
       return { success: false };
     }
@@ -207,7 +217,7 @@ function _registerBlobHandlers() {
       log.warn('REGISTER_BLOB: invalid blobId format rejected', { blobId });
       return { success: false, error: 'blobId must be comparisonId:keyframeId' };
     }
-    _blobCache.set(blobId, {
+    _blobCacheSet(blobId, {
       buffer:   Buffer.from(base64, 'base64'),
       mimeType: mimeType ?? 'image/webp',
     });
@@ -215,12 +225,12 @@ function _registerBlobHandlers() {
     return { success: true };
   });
 
-  ipcMain.handle('UNREGISTER_BLOBS_BY_COMPARISON', (event, comparisonId) => {
-    if (!_blobCache) { return { success: false }; }
+  ipcMain.handle(CH.UNREGISTER_BLOBS_BY_COMPARISON, (event, comparisonId) => {
+    if (!_blobCache || !_blobCacheDelete) { return { success: false }; }
     let removed = 0;
-    for (const [key] of _blobCache) {
+    for (const key of Array.from(_blobCache.keys())) {
       if (key.startsWith(`${comparisonId}:`)) {
-        _blobCache.delete(key);
+        _blobCacheDelete(key);
         removed++;
       }
     }
@@ -230,8 +240,8 @@ function _registerBlobHandlers() {
 }
 
 function _registerMetaHandlers() {
-  ipcMain.handle('GET_VERSION', () => app.getVersion());
-  ipcMain.handle('GET_PERF_METRICS', () => ({
+  ipcMain.handle(CH.GET_VERSION, () => app.getVersion());
+  ipcMain.handle(CH.GET_PERF_METRICS, () => ({
     success: true, metrics: playwrightManager.getPerformanceSnapshot(), timestamp: Date.now(),
   }));
 }

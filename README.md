@@ -283,12 +283,6 @@ Edit `src/config/defaults.js` → `comparison.severity.{critical,high,medium}`
 
 ```
 src/
-├── application/              # Workflows and use cases
-│   ├── compare-workflow.js   # Comparison orchestration
-│   ├── export-workflow.js    # Export handling
-│   ├── import-workflow.js    # Import handling
-│   ├── report-manager.js     # Report management
-│   └── url-compatibility.js  # Pre-flight checks
 ├── config/                   # Configuration management
 │   ├── defaults.js          # All configurable defaults
 │   └── validator.js         # Config validation at startup
@@ -301,7 +295,8 @@ src/
 │   │   ├── differ.js        # Property diffing logic
 │   │   ├── keyframe-grouper.js # Visual diff grouping
 │   │   ├── matcher.js       # Element matching algorithms
-│   │   └── severity-analyzer.js # Severity classification
+│   │   ├── severity-analyzer.js # Severity classification
+│   │   └── url-compatibility.js # URL compatibility assessment
 │   ├── extraction/          # DOM traversal and style collection
 │   │   ├── attribute-collector.js # Element attribute collection
 │   │   ├── dom-enrichment.js # DOM enhancement utilities
@@ -309,7 +304,6 @@ src/
 │   │   ├── element-classifier.js # Element type classification
 │   │   ├── extraction-filter.js # Filtering logic for extraction
 │   │   ├── extractor.js     # Main extraction engine
-│   │   ├── page-extractor.js # Page-level extraction
 │   │   ├── readiness-gate.js # Page readiness detection
 │   │   ├── section-detector.js # Page section detection
 │   │   ├── style-collector.js # CSS style collection
@@ -317,14 +311,14 @@ src/
 │   │       ├── electron-log.js
 │   │       └── electron.js
 │   ├── export/              # Report generation
-│   │   ├── comparison/      # Comparison report exports
+│   │   ├── comparison-exporters/  # Comparison report exports
 │   │   │   ├── csv-exporter.js
 │   │   │   ├── excel-exporter.js
 │   │   │   ├── html-exporter.js
 │   │   │   └── json-exporter.js
-│   │   ├── extraction/      # Extraction report exports
+│   │   ├── extraction-exporters/  # Extraction report exports
 │   │   │   └── report-exporter.js
-│   │   └── shared/          # Shared export utilities
+│   │   └── export-utils/          # Shared export utilities
 │   │       ├── csv-utils.js
 │   │       ├── download-trigger.js
 │   │       └── report-transformer.js
@@ -350,21 +344,30 @@ src/
 │   ├── error-tracker.js     # Error collection and reporting
 │   ├── idb-repository.js    # IndexedDB CRUD (renderer only)
 │   ├── logger.js            # Structured logging
-│   ├── performance-monitor.js # Instrumentation
-│   └── playwright-manager.js # Browser control via Playwright
+│   └── performance-monitor.js # Instrumentation
 ├── main/                    # Electron main process
 │   ├── index.js            # App initialization
+│   ├── ipc-channels.js     # IPC channel constants
 │   ├── ipc-handlers.js     # IPC message handlers
 │   ├── playwright-manager.js # Orchestrates Playwright
 │   ├── preload.js          # Context bridge setup
 │   └── protocol-handler.js # Custom protocol handling
 └── renderer/               # Electron renderer process
     ├── app.js             # Main UI logic and state management
-    ├── state.js           # Application state machine
+    ├── application/       # In-renderer workflows and report management
+    │   ├── compare-workflow.js   # Comparison orchestration
+    │   ├── export-workflow.js    # Export handling
+    │   ├── import-workflow.js    # Import handling
+    │   ├── report-manager.js     # Report management
+    │   └── url-compatibility.js  # Pre-flight URL compatibility checks
     ├── index.html         # UI template
-    └── stubs/             # Electron stubs for renderer
-        └── electron.js
+    ├── state.js           # Application state machine
+    ├── stubs/             # Electron stubs for renderer
+    │   └── electron.js
+    └── ui.js              # Renderer UI helpers and DOM bindings
 ```
+
+
 
 ### Running Tests
 
@@ -727,7 +730,6 @@ The renderer process manages the UI, state, and IndexedDB storage operations.
 **Extraction Engine (`src/core/extraction/`):**
 
 - **`extractor.js`** — Main extraction coordinator
-- **`page-extractor.js`** — Page-level extraction orchestration
 - **`dom-traversal.js`** — DOM tree traversal with HPID generation
 - **`style-collector.js`** — CSS computed style collection
 - **`element-classifier.js`** — Element tier classification (content/layout/etc.)

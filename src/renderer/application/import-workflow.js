@@ -1,7 +1,7 @@
 import * as XLSX from 'xlsx';
 import storage from '../../infrastructure/idb-repository.js';
 import { dispatch, getState } from '../state.js';
-import { Toast, Modal, syncCompareButton } from '../app.js';
+import { Toast, Modal, syncCompareButton } from '../ui.js';
 import { loadAndRenderReports } from './report-manager.js';
 import { tryLoadCachedComparison } from './compare-workflow.js';
 

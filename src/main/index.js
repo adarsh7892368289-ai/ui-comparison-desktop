@@ -4,9 +4,9 @@ const { app, BrowserWindow, protocol, nativeTheme } = require('electron');
 const path = require('path');
 const log  = require('electron-log');
 
-const { registerIpcHandlers, setBlobCache } = require('./ipc-handlers');
-const { registerProtocolHandler, blobCache } = require('./protocol-handler');
-const { shutdownPlaywright }                 = require('./playwright-manager');
+const { registerIpcHandlers, setBlobCache }                        = require('./ipc-handlers');
+const { registerProtocolHandler, blobCache, blobCacheSet, blobCacheDelete } = require('./protocol-handler');
+const { shutdownPlaywright, recoverFrozenSessions }                = require('./playwright-manager');
 
 // Config and validator run in main process via webpack-bundled ESM→CJS output
 const { init: configInit, get: configGet } = require('../config/defaults');
@@ -79,10 +79,14 @@ app.on('ready', () => {
 
   if (!_handlersRegistered) {
     registerIpcHandlers(mainWindow);
-    setBlobCache(blobCache);
+    setBlobCache(blobCache, blobCacheSet, blobCacheDelete);
 
     _handlersRegistered = true;
   }
+
+  recoverFrozenSessions()
+    .then(n => { if (n > 0) { log.warn('[BOOT] Recovered frozen sessions', { count: n }); } })
+    .catch(() => {});
 
   mainWindow.on('closed', () => { mainWindow = null; });
 });

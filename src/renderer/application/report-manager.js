@@ -8,7 +8,7 @@ import {
   hideProgress,
   updateProgress,
   syncCompareButton,
-} from '../app.js';
+} from '../ui.js';
 import { handleExportReport } from './export-workflow.js';
 
 const api = window.electronAPI;

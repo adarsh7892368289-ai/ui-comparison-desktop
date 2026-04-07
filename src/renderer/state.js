@@ -11,6 +11,7 @@ const initialState = {
   selectedCompare:   null,
   compareMode:       'dynamic',
   filters:           { class: '', id: '', tag: '' },
+  cachedAt:          null,
 };
 
 let _state       = { ...initialState };
@@ -51,6 +52,7 @@ function reduce(state, type, payload) {
         comparison: null,
         progress:   { label: 'Starting…', pct: 0 },
         error:      null,
+        cachedAt:   null,
       };
 
     case 'COMPARISON_PROGRESS':
@@ -66,6 +68,7 @@ function reduce(state, type, payload) {
         comparison: payload.result,
         progress:   { label: 'Complete', pct: 100 },
         error:      null,
+        cachedAt:   payload.cachedAt ?? null,
       };
 
     case 'COMPARISON_ERROR':
@@ -93,7 +96,7 @@ function reduce(state, type, payload) {
       return { ...state, compareMode: payload.mode };
 
     case 'RESET_COMPARISON':
-      return { ...state, comparison: null, phase: 'idle', error: null };
+      return { ...state, comparison: null, phase: 'idle', error: null, cachedAt: null };
 
     case 'FILTERS_UPDATED':
       return { ...state, filters: { ...state.filters, ...payload.filters } };

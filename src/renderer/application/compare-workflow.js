@@ -1,15 +1,14 @@
 import { dispatch, getState } from '../state.js';
 import storage from '../../infrastructure/idb-repository.js';
 import { buildPairKey } from '../../infrastructure/idb-repository.js';
-import { assessUrlCompatibility } from './url-compatibility.js';
+import { assessUrlCompatibility } from '@core/comparison/url-compatibility.js';
 import {
   Toast,
   setError,
   showProgress,
   hideProgress,
   updateProgress,
-  displayComparisonResults,
-} from '../app.js';
+} from '../ui.js';
 
 const api = window.electronAPI;
 
@@ -63,7 +62,6 @@ async function tryLoadCachedComparison() {
         duration:          cached.duration ?? 0,
       });
       dispatch('COMPARISON_COMPLETE', { result: { ...normalized, id: cached.id }, cachedAt: cached.timestamp });
-      displayComparisonResults(normalized, cached.timestamp);
     } else {
       document.getElementById('compare-results').innerHTML = '';
       dispatch('COMPARISON_COMPLETE', { result: null });
@@ -205,8 +203,8 @@ async function handleComparison() {
 
     dispatch('COMPARISON_COMPLETE', { result: { ...normalized, id: meta.id } });
 
-    if (sr.visualDiffStatus && sr.visualDiffStatus !== 'completed') {
-      Toast.info(`Visual diff did not complete (status: ${sr.visualDiffStatus}) — screenshot comparison may be unavailable`);
+    if (sr.visualDiffStatus?.status !== 'completed') {
+      Toast.info(`Visual diff did not complete (status: ${sr.visualDiffStatus?.status}) — screenshot comparison may be unavailable`);
     }
 
     const diffs = sr.comparison?.summary?.propertyDiffCount

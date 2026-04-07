@@ -1,6 +1,6 @@
 import logger              from '../../../infrastructure/logger.js';
-import { rowsToCsv }       from '../shared/csv-utils.js';
-import { triggerDownload } from '../shared/download-trigger.js';
+import { rowsToCsv }       from '../export-utils/csv-utils.js';
+import { triggerDownload } from '../export-utils/download-trigger.js';
 
 const UTF8_BOM = '\uFEFF';
 
