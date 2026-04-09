@@ -64,7 +64,7 @@ function getExtractorBundleSource() {
 
   const candidates = [
     path.join(process.resourcesPath ?? '', 'extractor-bundle.js'),
-    path.join(__dirname, '../extractor-bundle.js'),
+    path.join(__dirname, 'extractor-bundle.js'),
     path.join(process.cwd(), 'dist', 'extractor-bundle.js'),
   ];
 
@@ -74,7 +74,6 @@ function getExtractorBundleSource() {
       log.info('[PM] Loaded extractor bundle', { path: candidate });
       return _extractorBundleSource;
     } catch {
-      // not at this path — try next
     }
   }
 
@@ -145,7 +144,7 @@ async function detachSession(sessionHandle) {
   _sessionMap.delete(sessionHandle.page);
 
   if (sessionHandle.cdpSession) {
-    await sessionHandle.cdpSession.detach().catch(() => { /* ignore */ });
+    await sessionHandle.cdpSession.detach().catch(() => {  });
     log.debug('[PM] CDP session detached');
   }
 }
@@ -253,11 +252,11 @@ async function unfreezePage(sessionHandle) {
     if (window.__vdiff_raf_orig) { window.requestAnimationFrame = window.__vdiff_raf_orig; }
     if (window.__vdiff_set_orig) { window.setTimeout            = window.__vdiff_set_orig; }
     if (window.__vdiff_int_orig) { window.setInterval           = window.__vdiff_int_orig; }
-  }).catch(() => { /* ignore */ });
+  }).catch(() => {  });
 
   await sessionHandle.page.evaluate(({ styleId }) => {
     document.getElementById(styleId)?.remove();
-  }, { styleId: FREEZE_STYLE_ID }).catch(() => { /* ignore */ });
+  }, { styleId: FREEZE_STYLE_ID }).catch(() => {  });
 
   sessionHandle.frozen = false;
 }
@@ -690,11 +689,11 @@ function buildSelectorPairs(elements, role) {
 
 async function safeRestorePage(sessionHandle) {
   const sh = sessionHandle;
-  await executeInPage(sh, inPageUnlockScrollbar).catch(() => { /* ignore */ });
-  await executeInPage(sh, inPageRestoreFixed, SUPPRESS_ATTR).catch(() => { /* ignore */ });
-  await executeInPage(sh, inPageRestoreAnimations, FREEZE_STYLE_ID).catch(() => { /* ignore */ });
-  await executeInPage(sh, inPageScrollAndSettle, [0, SCROLL_SETTLE_TIMEOUT_MS]).catch(() => { /* ignore */ });
-  await sendCDP(sh, 'Emulation.clearDeviceMetricsOverride').catch(() => { /* ignore */ });
+  await executeInPage(sh, inPageUnlockScrollbar).catch(() => {  });
+  await executeInPage(sh, inPageRestoreFixed, SUPPRESS_ATTR).catch(() => {  });
+  await executeInPage(sh, inPageRestoreAnimations, FREEZE_STYLE_ID).catch(() => {  });
+  await executeInPage(sh, inPageScrollAndSettle, [0, SCROLL_SETTLE_TIMEOUT_MS]).catch(() => {  });
+  await sendCDP(sh, 'Emulation.clearDeviceMetricsOverride').catch(() => {  });
 }
 
 async function captureKeyframe(sessionHandle, keyframe, kfSelectorPairs, sessionId, index, total, roleStart, actualDPR, documentHeight) {
@@ -903,7 +902,7 @@ async function runTabCapture(page, selectorPairs, sessionId, role, blobCache, co
 
   } finally {
     if (sessionHandle) {
-      await safeRestorePage(sessionHandle).catch(() => { /* ignore */ });
+      await safeRestorePage(sessionHandle).catch(() => {  });
       await detachSession(sessionHandle);
       log.info(`VDIFF [${role}] detach DONE`);
     }
@@ -989,14 +988,8 @@ async function captureVisualDiffs(comparisonResult, pageContext, blobCache, comp
   }
 }
 
-// Mirrors extraction-filter.js buildCombinedSelector — runs in Node.js (no CSS.escape needed
-// for the selector engine Playwright uses internally, which accepts plain CSS class syntax).
 function buildSelectorFromFilters(filters) {
   if (!filters) { return null; }
-  // Guard: all three filter fields absent or whitespace-only → no meaningful selector to build;
-  // return null so the caller treats this as "no filter — extract whole page" rather than
-  // proceeding to build a broken empty selector (e.g. ".") that querySelectorAll rejects
-  // with SyntaxError.
   if (!filters.class?.trim() && !filters.id?.trim() && !filters.tag?.trim()) { return null; }
   const parts = [];
   if (filters.class) {
@@ -1026,36 +1019,21 @@ async function runExtraction({ url, browserType, filters, onProgress }) {
   try {
     onProgress?.('Opening page…', 10);
 
-    // Layer 1 — 'load' waits for all images and stylesheets to finish (window.onload equivalent),
-    // which is closer to the extension's document_idle injection point than 'domcontentloaded'
-    // because 'domcontentloaded' fires before subresources load, leaving framework boot incomplete.
     await page.goto(url, { waitUntil: 'load', timeout: 60_000 });
     onProgress?.('Waiting for content readiness…', 25);
 
     const compoundSelector = buildSelectorFromFilters(filters);
 
-    // Derive the broadest individual-class selector for the wait phase.  The compound selector
-    // (.coveo-card-layout.CoveoResult) requires both classes on the same element; on SPAs like
-    // Coveo the framework may restructure the DOM during hydration, moving classes onto different
-    // elements in the hierarchy.  If we used the compound selector for waitForSelector /
-    // waitForFunction the SPA could hydrate and break the compound match mid-wait, causing the
-    // stability gate to never resolve.  Using the single broadest class avoids this: it matches
-    // whichever container the framework ends up rendering and remains stable through hydration.
     let waitSelector = compoundSelector;
     if (compoundSelector && filters?.class) {
       const classes = filters.class.trim().split(/[\s,]+/).filter(Boolean);
       if (classes.length > 1) {
-        // Pick the individual class with the highest pre-hydration count as the wait anchor;
-        // a pre-hydration count is good enough here because we only need "something to watch"
-        // not a precise final count — the stability gate's descendant-count polling provides
-        // the precision signal once the DOM settles.
         let bestWaitSel   = `.${classes[0].replace(/^\./u, '')}`;
         let bestWaitCount = await page.evaluate(
           (s) => document.querySelectorAll(s).length, bestWaitSel
         );
         for (let i = 1; i < classes.length; i++) {
           const sel = `.${classes[i].replace(/^\./u, '')}`;
-          // eslint-disable-next-line no-await-in-loop
           const cnt = await page.evaluate((s) => document.querySelectorAll(s).length, sel);
           if (cnt > bestWaitCount) { bestWaitCount = cnt; bestWaitSel = sel; }
         }
@@ -1064,22 +1042,9 @@ async function runExtraction({ url, browserType, filters, onProgress }) {
     }
 
     if (waitSelector) {
-      // When a filter is provided the selector-count stability IS the readiness signal.
-      // networkidle is intentionally skipped here: on slow environments (e.g. stage Coveo) the
-      // 15s networkidle budget exhausts itself before the search API returns all result cards,
-      // leaving zero time for the count-stability gate and causing premature extraction.
-
-      // Layer 3a-i — Block until the first matching element is visible (non-zero dimensions),
-      // confirming the Coveo API has returned at least one result and React has painted it.
-      // waitSelector is an individual class so it survives SPA hydration restructuring.
       await page.waitForSelector(waitSelector, { timeout: 30_000, state: 'visible' })
         .catch(() => {});
 
-      // Layer 3a-ii — waitForSelector fires on the FIRST container match; on Coveo/React SPAs
-      // the card SHELLS render before their CONTENT (the API response populates children after
-      // the container is inserted). Counting containers (sel) stabilises prematurely.
-      // Instead count ALL DESCENDANTS within matched containers (sel + ' *') so we proceed
-      // only when child content has fully rendered and stopped changing across two 750ms polls.
       await page.waitForFunction(
         (sel) => {
           const count = document.querySelectorAll(sel + ' *').length;
@@ -1097,24 +1062,14 @@ async function runExtraction({ url, browserType, filters, onProgress }) {
         { timeout: 30_000, polling: 750 }
       ).catch(() => {});
     } else {
-      // No filter — networkidle as best-effort signal; .catch() prevents hard failure on pages
-      // with persistent connections (WebSockets, long-polling) that never reach 0 active requests.
       await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
 
-      // Layer 3b — querySelectorAll('*').length > 100 is a framework-agnostic heuristic that the
-      // component tree has hydrated beyond skeleton/shell structure without requiring knowledge
-      // of any specific element names or component APIs.
       await page.waitForFunction(
         () => document.readyState === 'complete' && document.querySelectorAll('*').length > 100,
         { timeout: 10_000 }
       ).catch(() => {});
     }
 
-    // Post-hydration compound probe — runs AFTER the stability gate so the DOM reflects the
-    // SPA's final structure, not the pre-hydration server render that may have had both classes
-    // on the same element.  If the compound selector now matches ≥ 2 elements it is safe to use
-    // as the extraction filter (more precise = fewer false positives from the wider class alone).
-    // If it still under-matches, fall back to the broadest individual class.
     let effectiveSelector = waitSelector;
     if (compoundSelector && waitSelector !== compoundSelector) {
       const compoundCount = await page.evaluate(
@@ -1124,7 +1079,6 @@ async function runExtraction({ url, browserType, filters, onProgress }) {
       effectiveSelector = compoundCount >= 2 ? compoundSelector : waitSelector;
       log.info('[SELECTOR-DIAG] compound:', compoundCount, 'effective selector:', effectiveSelector);
     } else if (compoundSelector) {
-      // Single-class compound (or compound === waitSelector) — log for observability.
       const compoundCount = await page.evaluate(
         (sel) => document.querySelectorAll(sel).length,
         compoundSelector
@@ -1187,8 +1141,8 @@ async function runExtraction({ url, browserType, filters, onProgress }) {
     return report;
 
   } finally {
-    await page.close().catch(() => { /* ignore */ });
-    await context.close().catch(() => { /* ignore */ });
+    await page.close().catch(() => {  });
+    await context.close().catch(() => {  });
   }
 }
 
@@ -1264,14 +1218,10 @@ async function runComparison({
         context.newPage(),
       ]);
 
-      // [BONUS] Parallel navigation to 'load' so subresources finish before CDP attaches;
-      // flat waitForTimeout(500) removed — on slow networks 500ms is arbitrary and brittle.
       await Promise.all([
         baselinePage.goto(baselineUrl, { waitUntil: 'load', timeout: 60_000 }),
         comparePage.goto(compareUrl,   { waitUntil: 'load', timeout: 60_000 }),
       ]);
-      // [BONUS] Best-effort networkidle in parallel; .catch() prevents hard failure on pages
-      // with persistent connections (same rationale as runExtraction Layer 2).
       await Promise.all([
         baselinePage.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {}),
         comparePage.waitForLoadState('networkidle',  { timeout: 15_000 }).catch(() => {}),
@@ -1302,7 +1252,7 @@ async function runComparison({
           keyframes:        visualResult.keyframes,
           rectRecords:      visualResult.rectRecords,
           devToolsWarnings: visualResult.devToolsWarnings,
-          blobs,  // ← NEW: Include captured blobs for renderer to persist to IDB
+          blobs,
         };
       } else {
         log.warn('[PM] Visual capture did not complete', {
@@ -1310,9 +1260,9 @@ async function runComparison({
         });
       }
     } finally {
-      await baselinePage?.close().catch(() => { /* ignore */ });
-      await comparePage?.close().catch(() => { /* ignore */ });
-      await context.close().catch(() => { /* ignore */ });
+      await baselinePage?.close().catch(() => {  });
+      await comparePage?.close().catch(() => {  });
+      await context.close().catch(() => {  });
     }
     _recordPhase('pm.compare.visual', visualStart);
   }
@@ -1329,11 +1279,10 @@ async function runComparison({
     comparison:        comparisonResult.comparison,
     unmatchedElements: comparisonResult.unmatchedElements,
     duration:          comparisonResult.duration,
-    // Visual diff data flattened to root level for renderer/exporter consumption
     visualDiffs:       visualData?.diffs ?? {},
     visualKeyframes:   visualData?.keyframes ?? [],
     visualRectRecords: visualData?.rectRecords ?? [],
-    visualBlobs:       visualData?.blobs ?? {},  // ← NEW: Blob data for IDB persistence
+    visualBlobs:       visualData?.blobs ?? {},
     visualDiffStatus:  visualData ? {
       status: 'completed',
       reason: null,

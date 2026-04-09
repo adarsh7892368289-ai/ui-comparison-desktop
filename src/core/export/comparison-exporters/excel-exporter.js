@@ -63,10 +63,9 @@ function exportToExcel(comparisonResult) {
   _addUnmatchedSheet(wb, comparisonResult);
   _addSeveritySheet(wb, comparisonResult);
 
-  // type:'array' → Uint8Array; caller normalises byteOffset before IPC transfer
   const xlsxArray = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true });
   logger.info('Excel workbook built', { sheets: wb.SheetNames.length });
-  return xlsxArray; // Uint8Array; caller sends via api.exportFile IPC
+  return xlsxArray;
 }
 
 function _addSummarySheet(wb, result) {

@@ -1,9 +1,10 @@
 module.exports = {
-  appId:       'com.internal.ui-comparison-desktop',
+  appId: 'com.internal.ui-comparison-desktop',
   productName: 'UI Comparison',
+  main: 'dist/index.js',
   directories: {
     buildResources: 'build',
-    output:         'dist-installer',
+    output: 'dist-installer',
   },
   files: [
     'dist/**/*',
@@ -18,30 +19,30 @@ module.exports = {
   extraResources: [
     {
       from: '${env.PLAYWRIGHT_BROWSERS_PATH}',
-      to:   'browsers',
+      to: 'browsers',
       filter: ['**/*'],
     },
   ],
   win: {
-    target:      [{ target: 'nsis', arch: ['x64'] }],
-    icon:        'build/icon.ico',
+    target: [{ target: 'nsis', arch: ['x64'] }],
+    icon: 'build/icon.ico',
   },
   nsis: {
-    oneClick:            false,
+    oneClick: false,
     allowToChangeInstallationDirectory: true,
-    installerIcon:       'build/icon.ico',
-    uninstallerIcon:     'build/icon.ico',
-    shortcutName:        'UI Comparison',
+    installerIcon: 'build/icon.ico',
+    uninstallerIcon: 'build/icon.ico',
+    shortcutName: 'UI Comparison',
     createStartMenuShortcut: true,
-    createDesktopShortcut:   true,
+    createDesktopShortcut: true,
   },
   mac: {
-    target:       [{ target: 'dmg', arch: ['x64', 'arm64'] }],
-    icon:         'build/icon.icns',
-    category:     'public.app-category.developer-tools',
-    hardenedRuntime:     true,
-    gatekeeperAssess:    false,
-    entitlements:        'build/entitlements.mac.plist',
+    target: [{ target: 'dmg', arch: ['x64', 'arm64'] }],
+    icon: 'build/icon.icns',
+    category: 'public.app-category.developer-tools',
+    hardenedRuntime: true,
+    gatekeeperAssess: false,
+    entitlements: 'build/entitlements.mac.plist',
     entitlementsInherit: 'build/entitlements.mac.plist',
   },
   dmg: {

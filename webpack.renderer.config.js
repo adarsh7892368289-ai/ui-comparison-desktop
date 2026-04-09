@@ -1,13 +1,36 @@
 const path = require('path');
 const fs   = require('fs');
 
-class CopyIndexHtmlPlugin {
+function copyDirSync(src, dest) {
+  fs.mkdirSync(dest, { recursive: true });
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const srcPath  = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyDirSync(srcPath, destPath);
+    } else {
+      fs.copyFileSync(srcPath, destPath);
+    }
+  }
+}
+
+class CopyStaticAssetsPlugin {
   apply(compiler) {
-    compiler.hooks.afterEmit.tap('CopyIndexHtmlPlugin', () => {
-      const src  = path.resolve(__dirname, 'src/renderer/index.html');
-      const dest = path.resolve(__dirname, 'dist/renderer/index.html');
-      fs.mkdirSync(path.dirname(dest), { recursive: true });
-      fs.copyFileSync(src, dest);
+    compiler.hooks.afterEmit.tap('CopyStaticAssetsPlugin', () => {
+      const rendererSrc  = path.resolve(__dirname, 'src/renderer');
+      const rendererDest = path.resolve(__dirname, 'dist/renderer');
+
+      fs.mkdirSync(rendererDest, { recursive: true });
+
+      fs.copyFileSync(
+        path.join(rendererSrc,  'index.html'),
+        path.join(rendererDest, 'index.html')
+      );
+
+      copyDirSync(
+        path.join(rendererSrc,  'styles'),
+        path.join(rendererDest, 'styles')
+      );
     });
   }
 }
@@ -55,15 +78,15 @@ module.exports = {
   resolve: {
     extensions: ['.js'],
     alias: {
-      '@core':   path.resolve(__dirname, 'src/core'),
-      '@config': path.resolve(__dirname, 'src/config'),
-      '@infra':  path.resolve(__dirname, 'src/infrastructure'),
-'electron-log': require.resolve('electron-log/renderer'),
-      'electron': path.resolve(__dirname, 'src/renderer/stubs/electron.js'),
+      '@core':        path.resolve(__dirname, 'src/core'),
+      '@config':      path.resolve(__dirname, 'src/config'),
+      '@infra':       path.resolve(__dirname, 'src/infrastructure'),
+      'electron-log': require.resolve('electron-log/renderer'),
+      'electron':     path.resolve(__dirname, 'src/renderer/stubs/electron.js'),
     },
   },
 
-  plugins: [new CopyIndexHtmlPlugin()],
+  plugins: [new CopyStaticAssetsPlugin()],
 
   devtool: process.env.NODE_ENV === 'production' ? false : 'source-map',
 

@@ -118,7 +118,7 @@ async function handleExportAllReports() {
       return;
     }
 
-    if (format === 'excel') {
+    if (format === 'xlsx') {
       const result = buildAllExtractedReportsExcel(fullReports);
       if (!result.success) { Toast.error(`Excel build failed: ${result.error}`); return; }
       const raw          = result.data;

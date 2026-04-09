@@ -62,7 +62,8 @@ function blobCacheDelete(key) {
   }
 }
 
-const DIST_ROOT = path.resolve(__dirname, '../renderer');
+const { pathToFileURL } = require('url');
+const distRoot = path.join(__dirname, 'renderer');
 
 function registerProtocolHandler() {
   protocol.handle('app', (request) => {
@@ -88,14 +89,14 @@ function registerProtocolHandler() {
       }
 
       const relativePath = url.pathname === '/' ? 'index.html' : url.pathname;
-      const absolutePath = path.join(DIST_ROOT, relativePath);
+      const absolutePath = path.join(distRoot, relativePath);
 
-      if (!absolutePath.startsWith(DIST_ROOT)) {
+      if (!absolutePath.startsWith(distRoot)) {
         log.warn('[Protocol] Path traversal attempt blocked', { relativePath });
         return new Response('Forbidden', { status: 403 });
       }
 
-      return net.fetch(`file://${absolutePath}`);
+      return net.fetch(pathToFileURL(absolutePath).href);
 
     } catch (err) {
       log.error('[Protocol] Handler threw', { error: err.message, url: request.url });
@@ -103,7 +104,7 @@ function registerProtocolHandler() {
     }
   });
 
-  log.info('[Protocol] app:// scheme handler registered', { distRoot: DIST_ROOT });
+  log.info('[Protocol] app:// scheme handler registered', { distRoot });
 }
 
 module.exports = { registerProtocolHandler, blobCache, blobCacheSet, blobCacheDelete };

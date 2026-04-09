@@ -8,10 +8,8 @@ const { registerIpcHandlers, setBlobCache }                        = require('./
 const { registerProtocolHandler, blobCache, blobCacheSet, blobCacheDelete } = require('./protocol-handler');
 const { shutdownPlaywright, recoverFrozenSessions }                = require('./playwright-manager');
 
-// Config and validator run in main process via webpack-bundled ESM→CJS output
 const { init: configInit, get: configGet } = require('../config/defaults');
 const { validateConfig }                   = require('../config/validator');
-
 
 app.enableSandbox();
 
@@ -39,7 +37,7 @@ app.on('ready', () => {
     const fs = require('fs');
     const candidates = [
       path.join(process.resourcesPath ?? '', 'extractor-bundle.js'),
-      path.join(__dirname, '../extractor-bundle.js'),
+      path.join(__dirname, 'extractor-bundle.js'),
       path.join(process.cwd(), 'dist', 'extractor-bundle.js'),
     ];
 
@@ -107,7 +105,7 @@ function createMainWindow() {
       webSecurity:      true,
     },
     title:           'UI Comparison',
-    backgroundColor: '#1a1a2e',
+    backgroundColor: '#ffffff',
   });
 
   win.once('ready-to-show', () => win.show());

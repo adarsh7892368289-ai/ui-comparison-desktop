@@ -1,4 +1,3 @@
-/* global btoa */
 import logger from '../../../infrastructure/logger.js';
 import storage from '../../../infrastructure/idb-repository.js';
 import { transformToGroupedReport } from '../export-utils/report-transformer.js';
@@ -17,7 +16,7 @@ async function exportToHTML(comparisonResult) {
     blobsEmbedded:    Object.keys(blobData).length,
     visualDiffStatus: visualDiffStatus?.status ?? 'none'
   });
-  return html; // caller sends via api.exportHTML IPC; throws on build failure
+  return html;
 }
 
 function resolveVisualManifest(visualDiffs) {

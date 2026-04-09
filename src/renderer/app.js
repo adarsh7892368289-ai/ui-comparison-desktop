@@ -14,12 +14,15 @@ import {
   renderReportList,
   handleDeleteAllReports,
   handleExtraction,
-  sanitize,
-  relativeTime,
 } from './application/report-manager.js';
 import { handleExport, handleExportAllReports, handleFullReport } from './application/export-workflow.js';
 import { handleImportReport } from './application/import-workflow.js';
 import { handleComparison, tryLoadCachedComparison } from './application/compare-workflow.js';
+import { createResultPanel } from './components/result-panel.js';
+import { createAppShell }       from './components/app-shell.js';
+import { createCommandPalette } from './components/command-palette.js';
+import { SystemBanner }         from './components/system-banner.js';
+import { createStatusBar }      from './components/status-bar.js';
 
 const api = window.electronAPI;
 if (!api) {
@@ -29,147 +32,19 @@ if (!api) {
   );
 }
 
-let _visibilityObserver = null;
-let _activeDisplayCmpId = null;
-let _pendingCachedAt    = null;
-
-function displayComparisonResults(result, cachedAt = null) {
-  const container = document.getElementById('compare-results');
-  if (!container || !result) { return; }
-
-  const { matching, comparison, mode, duration } = result;
-  const { summary } = comparison;
-  const { severityBreakdown, severityCounts, totalDifferences, propertyDiffCount, modifiedElements, unchangedElements } = summary;
-  const { critical = 0, high = 0, medium = 0, low = 0 } = severityBreakdown ?? severityCounts ?? {};
-  const sevTotal = (critical + high + medium + low) || 1;
-
-  const added   = result.unmatchedElements?.compare  ?? [];
-  const removed = result.unmatchedElements?.baseline ?? [];
-
-  const totalElements  = (matching.totalMatched ?? 0) + (matching.unmatchedBaseline ?? 0) + (matching.unmatchedCompare ?? 0);
-  const unmatchedTotal = (matching.unmatchedBaseline ?? 0) + (matching.unmatchedCompare ?? 0);
-
-  const pct  = n => totalElements > 0 ? ((n / totalElements) * 100).toFixed(1) : 0;
-  const spct = n => sevTotal  > 0 ? ((n / sevTotal)  * 100).toFixed(1) : 0;
-
-  const rateClass = critical > 0 ? 'rate-critical' : high > 0 ? 'rate-high' : 'rate-ok';
-
-  const sevRow = (label, count, type) => count === 0 ? '' : `
-    <div class="sev-row">
-      <span class="badge badge-${type}">${label}</span>
-      <div class="sev-bar-wrap"><div class="sev-bar-fill sev-${type}" style="width:${spct(count)}%"></div></div>
-      <span class="sev-count">${count}</span>
-    </div>`;
-
-  const DETAIL_CAP = 20;
-
-  const elRow = (el, status) => {
-    const tag    = (el.tagName || 'unknown').toLowerCase();
-    const idStr  = el.elementId ? `#${el.elementId}` : '';
-    const cls    = el.className?.trim()
-      ? `.${el.className.trim().split(/\s+/).slice(0, 2).join('.')}`
-      : '';
-    const label  = `${tag}${idStr}${cls}` || 'unknown';
-    const hpid   = el.hpid ? `<span class="el-hpid" title="HPID">${sanitize(el.hpid)}</span>` : '';
-    const text   = el.textContent?.trim()
-      ? `<span class="el-text">"${sanitize(el.textContent.trim().slice(0, 60))}${el.textContent.trim().length > 60 ? '…' : ''}"</span>`
-      : '';
-    const sel    = el.cssSelector
-      ? `<span class="el-sel" title="${sanitize(el.cssSelector)}">${sanitize(el.cssSelector.slice(0, 50))}${el.cssSelector.length > 50 ? '…' : ''}</span>`
-      : '';
-    const badgeCls = status === 'added' ? 'badge-added' : 'badge-removed';
-    const badgeTxt = status === 'added' ? '+' : '−';
-    return `<div class="el-row">
-      <span class="el-badge ${badgeCls}">${badgeTxt}</span>
-      <div class="el-info"><span class="el-label">${sanitize(label)}</span>${hpid}${text}${sel}</div>
-    </div>`;
-  };
-
-  const addedRows   = added.slice(0, DETAIL_CAP).map(el => elRow(el, 'added')).join('');
-  const removedRows = removed.slice(0, DETAIL_CAP).map(el => elRow(el, 'removed')).join('');
-  const addedOver   = added.length   > DETAIL_CAP ? `<div class="el-overflow">+${added.length   - DETAIL_CAP} more — export for full list</div>` : '';
-  const removedOver = removed.length > DETAIL_CAP ? `<div class="el-overflow">+${removed.length - DETAIL_CAP} more — export for full list</div>` : '';
-  const propChanges = propertyDiffCount ?? totalDifferences ?? 0;
-
-  container.innerHTML = `
-    <div class="result-card">
-      <div class="result-header">
-        <div class="result-match-rate ${rateClass}">
-          <span class="rate-value">${matching.matchRate}%</span>
-          <span class="rate-label">matched</span>
-        </div>
-        <div class="result-meta">
-          <span class="result-mode-badge">${sanitize(mode)}</span>
-          <span class="result-duration">${duration}ms</span>
-          ${cachedAt ? `<span class="result-cached-badge" title="Loaded from cache — run Compare to refresh">Cached · ${relativeTime(cachedAt)}</span>` : ''}
-        </div>
-      </div>
-
-      <div class="match-breakdown">
-        <div class="match-breakdown-title">Element Coverage — ${totalElements} total</div>
-        <div class="match-breakdown-row">
-          <div class="mbr-item mbr-matched"><div class="mbr-val">${matching.totalMatched}</div><div class="mbr-lbl">Matched</div></div>
-          <div class="mbr-item mbr-modified"><div class="mbr-val">${modifiedElements ?? 0}</div><div class="mbr-lbl">Modified</div></div>
-          <div class="mbr-item mbr-unchanged"><div class="mbr-val">${unchangedElements ?? 0}</div><div class="mbr-lbl">Unchanged</div></div>
-          <div class="mbr-item mbr-unmatched"><div class="mbr-val">${unmatchedTotal}</div><div class="mbr-lbl">Unmatched</div></div>
-        </div>
-        <div class="match-bar-wrap">
-          <div class="match-bar-seg match-bar-unchanged" style="width:${pct(unchangedElements ?? 0)}%" title="${unchangedElements} unchanged"></div>
-          <div class="match-bar-seg match-bar-modified"  style="width:${pct(modifiedElements  ?? 0)}%" title="${modifiedElements} modified"></div>
-          <div class="match-bar-seg match-bar-added"     style="width:${pct(added.length)}%"           title="${added.length} added"></div>
-          <div class="match-bar-seg match-bar-removed"   style="width:${pct(removed.length)}%"         title="${removed.length} removed"></div>
-        </div>
-      </div>
-
-      ${propChanges > 0 ? `
-        <div class="severity-section">
-          <div class="severity-section-title">Severity — ${propChanges} CSS property change${propChanges !== 1 ? 's' : ''} across ${critical + high + medium + low} modified element${(critical + high + medium + low) !== 1 ? 's' : ''}</div>
-          ${sevRow('Critical', critical, 'critical')}
-          ${sevRow('High',     high,     'high')}
-          ${sevRow('Medium',   medium,   'medium')}
-          ${sevRow('Low',      low,      'low')}
-        </div>` : '<div class="no-diffs">✓ No style differences in matched elements</div>'}
-
-      ${added.length > 0 ? `
-        <details class="el-section">
-          <summary class="el-section-summary">
-            <span class="badge badge-added">+${added.length}</span>
-            Added in compare
-          </summary>
-          <div class="el-list">${addedRows}${addedOver}</div>
-        </details>` : ''}
-
-      ${removed.length > 0 ? `
-        <details class="el-section">
-          <summary class="el-section-summary">
-            <span class="badge badge-removed">−${removed.length}</span>
-            Removed from baseline
-          </summary>
-          <div class="el-list">${removedRows}${removedOver}</div>
-        </details>` : ''}
-
-      ${matching.ambiguousCount > 0 ? `<div class="ambiguous-note">⚠ ${matching.ambiguousCount} element${matching.ambiguousCount !== 1 ? 's' : ''} had ambiguous matches — see full report for details</div>` : ''}
-
-      <div class="result-actions">
-        <div class="export-format-row">
-          <select class="select" id="export-format-select" aria-label="Export format">
-            <option value="html">HTML</option>
-            <option value="xlsx">Excel</option>
-            <option value="csv">CSV</option>
-            <option value="json">JSON</option>
-          </select>
-          <button class="btn-ghost btn-sm" id="export-comparison-btn">Export</button>
-        </div>
-        <button class="btn-primary btn-sm" id="view-report-btn">Full Report</button>
-      </div>
-    </div>`;
-
-  container.querySelector('#export-comparison-btn')?.addEventListener('click', handleExport);
-  container.querySelector('#view-report-btn')?.addEventListener('click', handleFullReport);
-}
+let _resultPanel        = null;
+let _appShell           = null;
+let _cmdPalette         = null;
+let _statusBar          = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
   await initializeApp();
+
+  const compareResultsEl = document.getElementById('compare-results');
+  if (compareResultsEl) {
+    _resultPanel = createResultPanel(compareResultsEl);
+    _resultPanel.clear();
+  }
 
   if (localStorage.getItem('ui-compare-v5-upgrade-data-cleared')) {
     localStorage.removeItem('ui-compare-v5-upgrade-data-cleared');
@@ -182,41 +57,52 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   window.addEventListener('storage-degraded', (event) => {
     if (event.detail?.reason === 'WAL_REPLAY_EXHAUSTED') {
-      Toast.warning(
-        'Some previously queued writes could not be replayed — those records may be missing.'
+      SystemBanner.warning(
+        'Storage degraded — some previously queued writes could not be replayed. Those records may be missing.'
       );
     } else {
-      Toast.error(
-        'Storage failure: too many consecutive write errors. No new data will be saved — restart the app to recover.'
+      SystemBanner.error(
+        'Storage failure — too many consecutive write errors. No new data will be saved. Restart the app to recover.'
       );
     }
   });
 
-  document.querySelectorAll('[role="tab"]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const tab = btn.dataset.tab;
-      document.querySelectorAll('[role="tab"]').forEach(t => {
-        const active = t.dataset.tab === tab;
-        t.classList.toggle('active', active);
-        t.setAttribute('aria-selected', String(active));
-      });
-      document.querySelectorAll('[role="tabpanel"]').forEach(p => {
-        const active = p.id === `panel-${tab}`;
-        p.hidden = !active;
-        p.classList.toggle('active', active);
-      });
-    });
-  });
+  _appShell = createAppShell();
+  _cmdPalette = createCommandPalette();
+  _statusBar = createStatusBar();
+
+  _statusBar.updateReportCount(getState().reports);
+
+  _cmdPalette.registerCommands([
+    { id: 'go-extract',  label: 'Go to Extract',        icon: '⬡', shortcut: 'E',         keywords: ['extract', 'capture', 'dom'],       action: () => _appShell.activateSection('extract') },
+    { id: 'go-compare',  label: 'Go to Compare',         icon: '⬡', shortcut: 'C',         keywords: ['compare', 'diff', 'regression'],   action: () => _appShell.activateSection('compare') },
+    { id: 'go-reports',  label: 'Focus Report List',     icon: '⬡', shortcut: 'R',         keywords: ['reports', 'list', 'history'],       action: () => document.getElementById('search-reports')?.focus() },
+    { id: 'search',      label: 'Search Reports',        icon: '⬡', shortcut: '/',         keywords: ['search', 'filter', 'find'],        action: () => document.getElementById('search-reports')?.focus() },
+    { id: 'extract',     label: 'Start Extraction',      icon: '⬡', shortcut: '',          keywords: ['run', 'start', 'capture'],         action: () => document.getElementById('extract-btn')?.click() },
+    { id: 'compare',     label: 'Run Comparison',        icon: '⬡', shortcut: '',          keywords: ['run', 'compare', 'diff'],          action: () => document.getElementById('compare-btn')?.click() },
+    { id: 'export-html', label: 'Export as HTML',        icon: '⬡', shortcut: '',          keywords: ['export', 'html', 'download'],      action: () => { if (document.getElementById('export-format-select')?.value === 'html') { document.getElementById('export-comparison-btn')?.click(); } } },
+    { id: 'delete-all',  label: 'Delete All Reports',    icon: '⬡', shortcut: '',          keywords: ['delete', 'clear', 'remove all'],   action: () => document.getElementById('delete-all-btn')?.click() },
+    { id: 'diagnostics', label: 'Open Diagnostics Panel',icon: '⬡', shortcut: 'Ctrl+⇧+D', keywords: ['perf', 'metrics', 'debug'],        action: () => showDiagnosticsPanel() },
+  ]);
+
+  document.getElementById('cmd-palette-trigger')
+    ?.addEventListener('click', () => _cmdPalette.toggle());
+
+  document.getElementById('panel-toggle-btn')
+    ?.addEventListener('click', () => _appShell.toggleLeftPanel());
+
+  _appShell.activateSection('extract');
 
   document.addEventListener('keydown', e => {
     const inInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+      e.preventDefault();
+      _cmdPalette.toggle();
+      return;
+    }
     if (inInput) { return; }
-    if (e.key === '1') {
-      document.querySelector('[data-tab="extract"]')?.click();
-    }
-    if (e.key === '2') {
-      document.querySelector('[data-tab="compare"]')?.click();
-    }
+    if (e.key === 'e' || e.key === 'E') { _appShell.activateSection('extract'); }
+    if (e.key === 'c' || e.key === 'C') { _appShell.activateSection('compare'); }
     if (e.key === '/') {
       e.preventDefault();
       document.getElementById('search-reports')?.focus();
@@ -236,13 +122,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   document.getElementById('delete-all-btn')?.addEventListener('click', handleDeleteAllReports);
 
-  let searchDebounce;
-  document.getElementById('search-reports')?.addEventListener('input', e => {
-    clearTimeout(searchDebounce);
-    searchDebounce = setTimeout(() => {
-      renderReportList(getState().reports ?? [], e.target.value);
-    }, 200);
-  });
+
 
   ['baseline', 'compare'].forEach(slot => {
     const input = document.getElementById(`${slot}-upload`);
@@ -287,20 +167,38 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.addEventListener('keydown', async (e) => {
     if (!e.ctrlKey || !e.shiftKey || e.key !== 'D') { return; }
     e.preventDefault();
-    const result = await api.getPerfMetrics();
-    if (!result?.success) { Toast.error('Diagnostics unavailable'); return; }
+    showDiagnosticsPanel();
+  });
+
+  subscribe((state) => {
+    _statusBar?.updatePhase(state);
+    _statusBar?.updateReportCount(state.reports);
+
+    if (state.comparison && state.phase === 'done') {
+      _resultPanel?.render(state.comparison, state.cachedAt ?? null);
+      _appShell?.setBreadcrumb([{ label: 'UI Comparison' }, { label: 'Compare' }, { label: 'Results' }]);
+    } else if (state.phase === 'idle') {
+      _resultPanel?.clear();
+    }
+  });
+});
+
+async function showDiagnosticsPanel() {
+  const api = window.electronAPI;
+  const result = await api.getPerfMetrics();
+    if (!result?.success) { Toast.show('Diagnostics unavailable', 'error'); return; }
 
     const overlay = document.createElement('div');
     Object.assign(overlay.style, {
-      position: 'fixed', inset: '0', background: 'rgba(0,0,0,0.65)',
+      position: 'fixed', inset: '0', background: 'var(--color-scrim)',
       display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: '9999',
     });
 
     const panel = document.createElement('div');
     Object.assign(panel.style, {
-      background: 'var(--bg-surface, #1e1e2e)', color: 'var(--text-primary, #cdd6f4)',
+      background: 'var(--color-surface-base)', color: 'var(--color-text-primary)',
       borderRadius: '8px', padding: '24px', maxWidth: '900px', width: '90vw',
-      maxHeight: '80vh', overflow: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+      maxHeight: '80vh', overflow: 'auto', boxShadow: 'var(--shadow-lg)',
     });
 
     const titleEl = document.createElement('p');
@@ -348,15 +246,4 @@ document.addEventListener('DOMContentLoaded', async () => {
     overlay.addEventListener('click', (ev) => { if (ev.target === overlay) { dismiss(); } });
     const escHandler = (ev) => { if (ev.key === 'Escape') { dismiss(); document.removeEventListener('keydown', escHandler); } };
     document.addEventListener('keydown', escHandler);
-  });
-
-  subscribe((state) => {
-    if (state.comparison && state.phase === 'done') {
-      displayComparisonResults(state.comparison, state.cachedAt ?? null);
-    }
-  });
-});
-
-export {
-  displayComparisonResults,
-};
+}

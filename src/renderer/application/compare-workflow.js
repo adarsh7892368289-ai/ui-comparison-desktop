@@ -63,11 +63,9 @@ async function tryLoadCachedComparison() {
       });
       dispatch('COMPARISON_COMPLETE', { result: { ...normalized, id: cached.id }, cachedAt: cached.timestamp });
     } else {
-      document.getElementById('compare-results').innerHTML = '';
-      dispatch('COMPARISON_COMPLETE', { result: null });
+      dispatch('RESET_COMPARISON', {});
     }
   } catch (_) {
-    /* cache miss is non-fatal */
   }
 }
 
