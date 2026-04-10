@@ -13,4 +13,7 @@ module.exports = Object.freeze({
   GET_PERF_METRICS:               'GET_PERF_METRICS',
   COMPARISON_PROGRESS:            'COMPARISON_PROGRESS',
   EXTRACTION_PROGRESS:            'EXTRACTION_PROGRESS',
+  SET_WINDOW_TITLE:               'SET_WINDOW_TITLE',
+  SHOW_CONTEXT_MENU:              'show-context-menu',
+  CONTEXT_ACTION:                 'context-action',
 });

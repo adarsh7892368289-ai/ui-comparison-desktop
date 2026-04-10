@@ -10,10 +10,11 @@ import { getState, dispatch, subscribe } from './state.js';
 import { Toast, syncCompareButton } from './ui.js';
 import {
   initializeApp,
-  loadAndRenderReports,
+  insertReportListSkeletonOverlay,
   renderReportList,
   handleDeleteAllReports,
   handleExtraction,
+  hostFromUrl,
 } from './application/report-manager.js';
 import { handleExport, handleExportAllReports, handleFullReport } from './application/export-workflow.js';
 import { handleImportReport } from './application/import-workflow.js';
@@ -23,13 +24,35 @@ import { createAppShell }       from './components/app-shell.js';
 import { createCommandPalette } from './components/command-palette.js';
 import { SystemBanner }         from './components/system-banner.js';
 import { createStatusBar }      from './components/status-bar.js';
+import {
+  iconActivity,
+  iconAlertCircle,
+  iconFileDown,
+  iconGitCompare,
+  iconGlobe,
+  iconList,
+  iconPlay,
+  iconSearch,
+  iconTrash2,
+} from './utils/icons.js';
 
 const api = window.electronAPI;
 if (!api) {
-  throw new Error(
-    'window.electronAPI is undefined. ' +
-    'Verify preload.js path in BrowserWindow.webPreferences and contextIsolation: true.'
-  );
+  const showBridgeFatal = () => {
+    document.body.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:center;height:100vh;
+                  flex-direction:column;gap:16px;background:#0f1523;font-family:system-ui">
+        <span style="color:#ef4444;display:inline-flex" aria-hidden="true">${iconAlertCircle(32)}</span>
+        <p style="font-size:15px;font-weight:600;color:#e8ecf2;margin:0">Failed to initialize</p>
+        <p style="font-size:13px;color:#a0aec0;margin:0">Window bridge unavailable — restart the application.</p>
+      </div>`;
+  };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', showBridgeFatal);
+  } else {
+    showBridgeFatal();
+  }
+  throw new Error('window.electronAPI is undefined');
 }
 
 let _resultPanel        = null;
@@ -38,6 +61,7 @@ let _cmdPalette         = null;
 let _statusBar          = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
+  insertReportListSkeletonOverlay();
   await initializeApp();
 
   const compareResultsEl = document.getElementById('compare-results');
@@ -71,18 +95,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   _cmdPalette = createCommandPalette();
   _statusBar = createStatusBar();
 
+  _statusBar.updatePhase(getState());
   _statusBar.updateReportCount(getState().reports);
 
   _cmdPalette.registerCommands([
-    { id: 'go-extract',  label: 'Go to Extract',        icon: '⬡', shortcut: 'E',         keywords: ['extract', 'capture', 'dom'],       action: () => _appShell.activateSection('extract') },
-    { id: 'go-compare',  label: 'Go to Compare',         icon: '⬡', shortcut: 'C',         keywords: ['compare', 'diff', 'regression'],   action: () => _appShell.activateSection('compare') },
-    { id: 'go-reports',  label: 'Focus Report List',     icon: '⬡', shortcut: 'R',         keywords: ['reports', 'list', 'history'],       action: () => document.getElementById('search-reports')?.focus() },
-    { id: 'search',      label: 'Search Reports',        icon: '⬡', shortcut: '/',         keywords: ['search', 'filter', 'find'],        action: () => document.getElementById('search-reports')?.focus() },
-    { id: 'extract',     label: 'Start Extraction',      icon: '⬡', shortcut: '',          keywords: ['run', 'start', 'capture'],         action: () => document.getElementById('extract-btn')?.click() },
-    { id: 'compare',     label: 'Run Comparison',        icon: '⬡', shortcut: '',          keywords: ['run', 'compare', 'diff'],          action: () => document.getElementById('compare-btn')?.click() },
-    { id: 'export-html', label: 'Export as HTML',        icon: '⬡', shortcut: '',          keywords: ['export', 'html', 'download'],      action: () => { if (document.getElementById('export-format-select')?.value === 'html') { document.getElementById('export-comparison-btn')?.click(); } } },
-    { id: 'delete-all',  label: 'Delete All Reports',    icon: '⬡', shortcut: '',          keywords: ['delete', 'clear', 'remove all'],   action: () => document.getElementById('delete-all-btn')?.click() },
-    { id: 'diagnostics', label: 'Open Diagnostics Panel',icon: '⬡', shortcut: 'Ctrl+⇧+D', keywords: ['perf', 'metrics', 'debug'],        action: () => showDiagnosticsPanel() },
+    { id: 'go-extract',  label: 'Go to Extract',        icon: iconGlobe(), shortcut: 'E',         keywords: ['extract', 'capture', 'dom'],       action: () => _appShell.activateSection('extract') },
+    { id: 'go-compare',  label: 'Go to Compare',         icon: iconGitCompare(), shortcut: 'C',         keywords: ['compare', 'diff', 'regression'],   action: () => _appShell.activateSection('compare') },
+    { id: 'go-reports',  label: 'Focus Report List',     icon: iconList(), shortcut: 'R',         keywords: ['reports', 'list', 'history'],       action: () => document.getElementById('search-reports')?.focus() },
+    { id: 'search',      label: 'Search Reports',        icon: iconSearch(), shortcut: '/',         keywords: ['search', 'filter', 'find'],        action: () => document.getElementById('search-reports')?.focus() },
+    { id: 'extract',     label: 'Start Extraction',      icon: iconPlay(), shortcut: '',          keywords: ['run', 'start', 'capture'],         action: () => document.getElementById('extract-btn')?.click() },
+    { id: 'compare',     label: 'Run Comparison',        icon: iconGitCompare(), shortcut: '',          keywords: ['run', 'compare', 'diff'],          action: () => document.getElementById('compare-btn')?.click() },
+    { id: 'export-html', label: 'Export as HTML',        icon: iconFileDown(), shortcut: '',          keywords: ['export', 'html', 'download'],      action: () => { if (document.getElementById('export-format-select')?.value === 'html') { document.getElementById('export-comparison-btn')?.click(); } } },
+    { id: 'delete-all',  label: 'Delete All Reports',    icon: iconTrash2(), shortcut: '',          keywords: ['delete', 'clear', 'remove all'],   action: () => document.getElementById('delete-all-btn')?.click() },
+    { id: 'diagnostics', label: 'Open Diagnostics Panel',icon: iconActivity(), shortcut: 'Ctrl+⇧+D', keywords: ['perf', 'metrics', 'debug'],        action: () => showDiagnosticsPanel() },
   ]);
 
   document.getElementById('cmd-palette-trigger')
@@ -93,8 +118,26 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   _appShell.activateSection('extract');
 
+  const isMac = typeof navigator !== 'undefined' && navigator.platform.startsWith('Mac');
+  const paletteShortcut = isMac ? '⌘K' : 'Ctrl+K';
+  const cmdTrigger = document.getElementById('cmd-palette-trigger');
+  const cmdShortcutSpan = cmdTrigger?.querySelector('span');
+  if (cmdShortcutSpan) { cmdShortcutSpan.textContent = paletteShortcut; }
+  cmdTrigger?.setAttribute('aria-label', `Command palette (${paletteShortcut})`);
+
+  document.getElementById('url-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.repeat) {
+      document.getElementById('extract-btn')?.click();
+    }
+  });
+
   document.addEventListener('keydown', e => {
     const inInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
+    if (e.key === 'Enter' && !e.repeat && getState().phase === 'error' && !inInput) {
+      e.preventDefault();
+      dispatch('DISMISS_ERROR');
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
       e.preventDefault();
       _cmdPalette.toggle();
@@ -174,12 +217,38 @@ document.addEventListener('DOMContentLoaded', async () => {
     _statusBar?.updatePhase(state);
     _statusBar?.updateReportCount(state.reports);
 
-    if (state.comparison && state.phase === 'done') {
+    if (state.phase === 'comparing') {
+      _resultPanel?.showComparing?.();
+      _appShell?.setBreadcrumb([{ label: 'Compare' }]);
+    } else if (state.phase === 'error') {
+      _resultPanel?.showError?.(state.error);
+      _appShell?.setBreadcrumb([{ label: 'Compare' }]);
+    } else if (state.comparison && state.phase === 'done') {
       _resultPanel?.render(state.comparison, state.cachedAt ?? null);
-      _appShell?.setBreadcrumb([{ label: 'UI Comparison' }, { label: 'Compare' }, { label: 'Results' }]);
+      _appShell?.setBreadcrumb([
+        { label: 'Compare', action: () => _appShell.activateSection('compare') },
+        { label: 'Results' },
+      ]);
     } else if (state.phase === 'idle') {
       _resultPanel?.clear();
+      _appShell?.syncBreadcrumbToActiveSection();
     }
+
+    const titles = {
+      idle: 'UI Comparison',
+      extracting: 'Extracting elements…',
+      comparing: 'Running comparison…',
+      done:
+        state.comparison && state.phase === 'done'
+          ? (() => {
+              const br = (state.reports ?? []).find(r => r.id === state.comparison.baselineId);
+              const host = br?.url ? hostFromUrl(br.url) : '';
+              return host ? `Results — ${host}` : 'UI Comparison';
+            })()
+          : 'UI Comparison',
+      error: 'UI Comparison',
+    };
+    window.electronAPI?.setWindowTitle?.(titles[state.phase] ?? 'UI Comparison');
   });
 });
 

@@ -2,6 +2,8 @@ import { Toast } from './toast.js';
 import { sanitize } from '../utils/sanitize.js';
 import { relativeTime } from '../utils/time.js';
 import { handleExport, handleFullReport } from '../application/export-workflow.js';
+import { dispatch } from '../state.js';
+import { iconAlertCircle, iconAlertTriangle, iconCheck, iconGitCompare } from '../utils/icons.js';
 
 const DETAIL_CAP = 50;
 
@@ -53,7 +55,7 @@ function _buildElRow(el, status) {
 }
 
 function _buildElSection(items, status) {
-  const section = _ce('details', 'element-section');
+  const section = _ce('details', 'element-section result-section');
   const summary = _ce('summary');
 
   const countBadge = _text('span', `badge ${status === 'added' ? 'badge-added' : 'badge-removed'}`,
@@ -135,7 +137,11 @@ export class ResultPanel {
     if (propChanges > 0) {
       root.appendChild(this._buildSeveritySection(propChanges, sevElements, critical, high, medium, low, sevTotal));
     } else {
-      root.appendChild(_text('div', 'rp-no-diffs', '✓ No style differences in matched elements'));
+      const noDiffs = _ce('div', 'rp-no-diffs');
+      const checkIc = _ce('span', 'rp-inline-icon');
+      checkIc.innerHTML = iconCheck(16);
+      noDiffs.append(checkIc, document.createTextNode('No style differences in matched elements'));
+      root.appendChild(noDiffs);
     }
 
     if (added.length > 0) {
@@ -147,8 +153,15 @@ export class ResultPanel {
     }
 
     if (matching.ambiguousCount > 0) {
-      const note = _text('div', 'rp-ambiguous-note',
-        `⚠ ${matching.ambiguousCount} element${matching.ambiguousCount !== 1 ? 's' : ''} had ambiguous matches — see full report for details`);
+      const note = _ce('div', 'rp-ambiguous-note');
+      const warnIc = _ce('span', 'rp-inline-icon');
+      warnIc.innerHTML = iconAlertTriangle(16);
+      note.append(
+        warnIc,
+        document.createTextNode(
+          `${matching.ambiguousCount} element${matching.ambiguousCount !== 1 ? 's' : ''} had ambiguous matches — see full report for details`
+        )
+      );
       root.appendChild(note);
     }
 
@@ -224,23 +237,37 @@ export class ResultPanel {
     bar.setAttribute('aria-valuenow', String(matching.totalMatched ?? 0));
     bar.setAttribute('aria-valuetext', `${matching.totalMatched ?? 0} of ${totalElements} elements matched`);
     const segs = [
-      { cls: 'seg-unchanged', n: unchangedElements ?? 0, title: `${unchangedElements} unchanged`,  segLabel: 'Unchanged' },
-      { cls: 'seg-modified',  n: modifiedElements  ?? 0, title: `${modifiedElements} modified`,    segLabel: 'Modified' },
-      { cls: 'seg-added',     n: added.length,           title: `${added.length} added`,           segLabel: 'Added' },
-      { cls: 'seg-removed',   n: removed.length,         title: `${removed.length} removed`,       segLabel: 'Removed' },
+      { cls: 'seg-unchanged', n: unchangedElements ?? 0, title: `${unchangedElements} unchanged` },
+      { cls: 'seg-modified',  n: modifiedElements  ?? 0, title: `${modifiedElements} modified` },
+      { cls: 'seg-added',     n: added.length,           title: `${added.length} added` },
+      { cls: 'seg-removed',   n: removed.length,         title: `${removed.length} removed` },
     ];
-    segs.forEach(({ cls, n, title, segLabel }) => {
+    segs.forEach(({ cls, n, title }) => {
       const pctVal = parseFloat(pct(n));
-      const seg = _ce('div', cls);
+      const seg = _ce('div', `coverage-bar-segment ${cls}`);
       seg.style.width = `${pctVal}%`;
       seg.title = title;
-      if (pctVal > 15) {
-        seg.classList.add('seg--labelled');
-        seg.textContent = segLabel;
-      }
       bar.appendChild(seg);
     });
     section.appendChild(bar);
+
+    const legend = _ce('div', 'coverage-bar-legend');
+    legend.setAttribute('role', 'list');
+    [
+      { cls: 'seg-unchanged', label: 'Unchanged' },
+      { cls: 'seg-modified', label: 'Modified' },
+      { cls: 'seg-added', label: 'Added' },
+      { cls: 'seg-removed', label: 'Removed' },
+    ].forEach(({ cls, label }) => {
+      const item = _ce('div', 'coverage-bar-legend-item');
+      item.setAttribute('role', 'listitem');
+      const sw = _ce('span', `coverage-legend-swatch ${cls}`);
+      sw.setAttribute('aria-hidden', 'true');
+      item.appendChild(sw);
+      item.appendChild(_text('span', 'coverage-legend-label', label));
+      legend.appendChild(item);
+    });
+    section.appendChild(legend);
 
     return section;
   }
@@ -297,10 +324,59 @@ export class ResultPanel {
     return bar;
   }
 
-  clear() {
+  showIdle() {
     this._removeListeners();
     this._container.replaceChildren();
-    this._container.appendChild(_text('p', 'result-empty-state', 'Select two reports and click Compare'));
+    const root = _ce('div', 'result-empty-state result-empty-state--idle');
+    root.setAttribute('role', 'status');
+    root.innerHTML = `
+      <div class="result-empty-icon" aria-hidden="true">${iconGitCompare(40)}</div>
+      <p class="result-empty-title">No comparison yet</p>
+      <p class="result-empty-hint">Extract two pages and compare them to see results here.</p>`;
+    this._container.appendChild(root);
+  }
+
+  showComparing() {
+    this._removeListeners();
+    this._container.replaceChildren();
+    const root = _ce('div', 'result-empty-state result-empty-state--comparing');
+    root.setAttribute('role', 'status');
+    root.setAttribute('aria-busy', 'true');
+    root.innerHTML = `
+      <div class="result-empty-spinner" aria-hidden="true"></div>
+      <p class="result-empty-title">Running comparison…</p>`;
+    this._container.appendChild(root);
+  }
+
+  showError(message) {
+    this._removeListeners();
+    this._container.replaceChildren();
+    const root = _ce('div', 'result-empty-state result-empty-state--error');
+    root.setAttribute('role', 'alert');
+    const raw =
+      message == null
+        ? 'Unknown error'
+        : typeof message === 'string'
+          ? message
+          : typeof message === 'object' && message.message != null
+            ? String(message.message)
+            : String(message);
+    const short = raw.length > 80 ? `${raw.slice(0, 80)}…` : raw;
+    root.innerHTML = `
+      <div class="result-empty-icon result-empty-icon--error" aria-hidden="true">${iconAlertCircle(40)}</div>
+      <p class="result-empty-title">Comparison failed</p>
+      <p class="result-empty-msg"></p>
+      <button type="button" class="btn-ghost btn-sm result-empty-dismiss">Dismiss</button>`;
+    root.querySelector('.result-empty-msg').textContent = short;
+    const btn = root.querySelector('.result-empty-dismiss');
+    const onDismiss = () => dispatch('DISMISS_ERROR');
+    btn.addEventListener('click', onDismiss);
+    this._listeners.push({ el: btn, type: 'click', fn: onDismiss });
+    this._container.appendChild(root);
+  }
+
+  clear() {
+    this.showIdle();
   }
 
   destroy() {

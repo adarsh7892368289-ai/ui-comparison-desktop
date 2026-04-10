@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, protocol, nativeTheme } = require('electron');
+const { app, BrowserWindow, protocol, Menu, ipcMain } = require('electron');
 const path = require('path');
 const log  = require('electron-log');
 
@@ -10,6 +10,7 @@ const { shutdownPlaywright, recoverFrozenSessions }                = require('./
 
 const { init: configInit, get: configGet } = require('../config/defaults');
 const { validateConfig }                   = require('../config/validator');
+const IPC                                  = require('./ipc-channels');
 
 app.enableSandbox();
 
@@ -27,6 +28,49 @@ protocol.registerSchemesAsPrivileged([
 
 let mainWindow = null;
 let _handlersRegistered = false;
+let _windowTitleListenerRegistered = false;
+let _contextMenuListenerRegistered = false;
+
+function buildApplicationMenu() {
+  const isMac = process.platform === 'darwin';
+
+  const template = [
+    ...(isMac
+      ? [{
+          label: app.name,
+          submenu: [
+            { role: 'about' },
+            { type: 'separator' },
+            { role: 'quit' },
+          ],
+        }]
+      : [{
+          label: 'File',
+          submenu: [{ role: 'quit', label: 'Exit' }],
+        }]),
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' },
+      ],
+    },
+  ];
+
+  if (!app.isPackaged) {
+    template.push({
+      label: 'Developer',
+      submenu: [
+        { role: 'toggleDevTools' },
+        { role: 'reload' },
+      ],
+    });
+  }
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
 
 app.on('ready', () => {
   log.initialize({ preload: true });
@@ -71,6 +115,41 @@ app.on('ready', () => {
 
   log.info('[BOOT] config tolerances:', configGet('comparison.tolerances'));
 
+  buildApplicationMenu();
+
+  if (!_windowTitleListenerRegistered) {
+    ipcMain.on(IPC.SET_WINDOW_TITLE, (event, title) => {
+      if (typeof title !== 'string') { return; }
+      BrowserWindow.fromWebContents(event.sender)?.setTitle(title);
+    });
+    _windowTitleListenerRegistered = true;
+  }
+
+  if (!_contextMenuListenerRegistered) {
+    ipcMain.on(IPC.SHOW_CONTEXT_MENU, (event, payload) => {
+      if (!payload || typeof payload.reportId !== 'string') { return; }
+      const win = BrowserWindow.fromWebContents(event.sender);
+      if (!win) { return; }
+      const { reportId } = payload;
+      const send = (data) => {
+        if (!event.sender.isDestroyed()) {
+          event.sender.send(IPC.CONTEXT_ACTION, data);
+        }
+      };
+      const template = [
+        { label: 'Set as Baseline', click: () => send({ action: 'setBaseline', reportId }) },
+        { label: 'Set as Compare', click: () => send({ action: 'compare', reportId }) },
+        { type: 'separator' },
+        { label: 'Export as JSON', click: () => send({ action: 'export', format: 'json', reportId }) },
+        { label: 'Export as HTML', click: () => send({ action: 'export', format: 'html', reportId }) },
+        { type: 'separator' },
+        { label: 'Delete', click: () => send({ action: 'delete', reportId }) },
+      ];
+      Menu.buildFromTemplate(template).popup({ window: win });
+    });
+    _contextMenuListenerRegistered = true;
+  }
+
   registerProtocolHandler();
 
   mainWindow = createMainWindow();
@@ -105,7 +184,15 @@ function createMainWindow() {
       webSecurity:      true,
     },
     title:           'UI Comparison',
-    backgroundColor: '#ffffff',
+    /* Match --color-surface-base (tokens.css); avoids white flash before renderer CSS */
+    backgroundColor: '#0f1523',
+    ...(process.platform === 'darwin'
+      ? {
+          titleBarStyle: 'hiddenInset',
+          /* y:14 centers ~12px traffic lights in a 44px toolbar (audit: default y:22 targets 48px) */
+          trafficLightPosition: { x: 12, y: 14 },
+        }
+      : {}),
   });
 
   win.once('ready-to-show', () => win.show());

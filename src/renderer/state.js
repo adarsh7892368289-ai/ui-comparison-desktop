@@ -98,6 +98,17 @@ function reduce(state, type, payload) {
     case 'RESET_COMPARISON':
       return { ...state, comparison: null, phase: 'idle', error: null, cachedAt: null };
 
+    case 'DISMISS_ERROR':
+      /* Full shape like initialState; preserve list/selections so sidebar does not empty */
+      return {
+        ...initialState,
+        reports:          state.reports,
+        selectedBaseline: state.selectedBaseline,
+        selectedCompare:  state.selectedCompare,
+        compareMode:      state.compareMode,
+        filters:          state.filters,
+      };
+
     case 'FILTERS_UPDATED':
       return { ...state, filters: { ...state.filters, ...payload.filters } };
 

@@ -18,6 +18,14 @@ import storage from '../../infrastructure/idb-repository.js';
 
 const api = window.electronAPI;
 
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 function timedExport(promise, timeoutMs = 120_000) {
   return Promise.race([
     promise,
@@ -44,6 +52,19 @@ async function handleExportReport(report, format) {
       const json         = buildExtractedReportJson(fullReport);
       const safeFilename = sanitizeFilename(`report-${host}-${safeId}.json`);
       const res = await timedExport(api.exportFile({ format: 'json', data: json, filename: safeFilename }));
+      if (res.success)                   { Toast.success(`Saved to ${res.filePath}`); }
+      else if (res.reason !== 'cancelled') { Toast.error(res.error ?? 'Export failed'); }
+      return;
+    }
+
+    if (format === 'html') {
+      const json         = buildExtractedReportJson(fullReport);
+      const pageTitle    = escapeHtml(`${host} — report`);
+      const htmlDoc =
+        `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><title>${pageTitle}</title></head>` +
+        `<body><h1>Extracted report</h1><pre>${escapeHtml(json)}</pre></body></html>`;
+      const safeFilename = sanitizeFilename(`report-${host}-${safeId}.html`);
+      const res = await timedExport(api.exportFile({ format: 'html', data: htmlDoc, filename: safeFilename }));
       if (res.success)                   { Toast.success(`Saved to ${res.filePath}`); }
       else if (res.reason !== 'cancelled') { Toast.error(res.error ?? 'Export failed'); }
       return;

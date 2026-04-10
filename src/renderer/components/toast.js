@@ -1,3 +1,8 @@
+import { iconX } from '../utils/icons.js';
+
+/** Match `.toast` transition in components.css (`--dur-base` = 200ms). */
+const TOAST_TRANSITION_MS = 200;
+
 const Toast = {
   _root: null,
   _init() {
@@ -9,7 +14,11 @@ const Toast = {
     if (!this._root) { return; }
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
-    toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
+    if (type === 'error') {
+      toast.setAttribute('role', 'alert');
+    } else {
+      toast.setAttribute('role', 'status');
+    }
 
     const msg = document.createElement('span');
     msg.textContent = message;
@@ -17,7 +26,7 @@ const Toast = {
     const close = document.createElement('button');
     close.className = 'toast-close';
     close.setAttribute('aria-label', 'Dismiss notification');
-    close.textContent = '×';
+    close.innerHTML = iconX(14);
     close.addEventListener('click', () => this._dismiss(toast));
 
     toast.append(msg, close);
@@ -29,9 +38,18 @@ const Toast = {
     }
   },
   _dismiss(toast) {
-    if (!toast.isConnected) { return; }
+    if (!toast.isConnected || toast.dataset.toastDismissing) { return; }
+    toast.dataset.toastDismissing = '1';
     toast.classList.remove('visible');
-    toast.addEventListener('transitionend', () => toast.remove(), { once: true });
+    let removed = false;
+    const remove = () => {
+      if (!removed) {
+        removed = true;
+        toast.remove();
+      }
+    };
+    toast.addEventListener('transitionend', remove, { once: true });
+    setTimeout(remove, TOAST_TRANSITION_MS + 100);
   },
   success(message, duration = 4000) { this.show(message, 'success', duration); },
   error(message,   duration = 6000) { this.show(message, 'error',   duration); },

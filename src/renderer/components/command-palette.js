@@ -134,8 +134,8 @@ export class CommandPalette {
 
       const icon = document.createElement('span');
       icon.className = 'cmd-palette__item-icon';
-      icon.textContent = cmd.icon ?? '';
       icon.setAttribute('aria-hidden', 'true');
+      icon.innerHTML = cmd.icon ?? '';
 
       const label = document.createElement('span');
       label.className = 'cmd-palette__item-label';

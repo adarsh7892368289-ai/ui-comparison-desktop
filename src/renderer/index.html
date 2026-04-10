@@ -17,7 +17,7 @@
 </head>
 <body>
 
-  <div id="toast-container" class="toast-container" aria-live="assertive" role="alert"></div>
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
   <div id="modal-overlay" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <div class="modal-box" id="modal-box"></div>
@@ -25,16 +25,13 @@
 
   <div id="app-root">
 
-    <div id="app-toolbar">
+    <div id="app-toolbar" role="banner" aria-label="Application toolbar">
       <div class="header-brand">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="2.5" aria-hidden="true">
           <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
         </svg>
-        UI Comparison
       </div>
       <div class="toolbar-breadcrumb" id="toolbar-breadcrumb">
-        <span class="breadcrumb-link">UI Comparison</span>
-        <span class="breadcrumb-sep">/</span>
         <span class="breadcrumb-current">Extract</span>
       </div>
       <button class="btn-ghost btn-sm" id="cmd-palette-trigger" aria-label="Command palette (Ctrl+K)">
@@ -44,8 +41,8 @@
 
     <div id="system-banner-slot" aria-live="assertive"></div>
 
-    <div id="left-panel">
-      <button class="panel-toggle-btn" id="panel-toggle-btn" aria-label="Toggle left panel" aria-expanded="true">&#x2039;</button>
+    <div id="left-panel" role="complementary" aria-label="Saved reports">
+      <button type="button" class="panel-toggle-btn" id="panel-toggle-btn" aria-label="Collapse sidebar" aria-expanded="true"></button>
 
       <div class="card card--toolbar">
         <h2 class="section-title">Saved Reports</h2>
@@ -61,12 +58,12 @@
             </svg>
             Export All
           </button>
-          <button class="btn-destructive btn-sm" id="delete-all-btn" title="Delete all reports" aria-label="Delete all reports">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" aria-hidden="true">
-              <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/>
-            </svg>
-            Delete All
-          </button>
+          <details class="export-dropdown sidebar-toolbar-overflow">
+            <summary class="btn-ghost btn-sm sidebar-overflow__summary" aria-label="More actions">&#x22EF;</summary>
+            <div class="export-menu" role="menu">
+              <button type="button" class="export-menu-item export-menu-item--danger" id="delete-all-btn" role="menuitem">Delete all reports</button>
+            </div>
+          </details>
         </div>
       </div>
 
@@ -87,11 +84,11 @@
             <option value="name">Name</option>
           </select>
           <button class="filter-rail__density-btn" id="density-toggle-btn"
-                  aria-label="Toggle density" title="Toggle display density">⊞</button>
+                  aria-label="Toggle display density" title="Toggle display density">⊞</button>
         </div>
       </div>
 
-      <div id="reports-list" class="reports-list" role="list" aria-label="Saved reports"></div>
+      <div id="reports-list" class="reports-list" aria-label="Saved reports"></div>
 
       <div id="reports-empty" class="empty-state hidden" aria-live="polite">
         <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-tertiary)" stroke-width="1.5" aria-hidden="true">
@@ -99,14 +96,12 @@
           <polyline points="14 2 14 8 20 8"/>
         </svg>
         <p class="empty-title">No reports yet</p>
-        <p class="empty-hint">Enter a URL above and click Extract Elements to create your first report</p>
+        <p class="empty-hint">Enter a URL in the Extract section and click Extract Elements to create your first report</p>
       </div>
-
-      <footer class="reports-footer" id="reports-footer" aria-live="polite"></footer>
 
     </div>
 
-    <div id="main-content">
+    <div id="main-content" role="main">
 
       <div id="main-controls">
 
@@ -122,6 +117,10 @@
           <section id="panel-extract" class="panel active">
 
             <div class="card">
+              <div class="form-field">
+                <label class="label" for="url-input">Page URL</label>
+                <input class="input" id="url-input" type="url" placeholder="https://example.com" autocomplete="off">
+              </div>
               <div class="card-header">
                 <h2 class="card-title">Filters</h2>
                 <span class="badge-optional">optional</span>
@@ -139,10 +138,6 @@
                   <label class="label" for="filter-tag">Tag</label>
                   <input class="input" id="filter-tag" type="text" placeholder="e.g. button">
                 </div>
-              </div>
-              <div class="form-field">
-                <label class="label" for="url-input">Page URL</label>
-                <input class="input" id="url-input" type="url" placeholder="https://example.com" autocomplete="off">
               </div>
             </div>
 
@@ -213,10 +208,10 @@
               <hr class="card-sep">
 
               <div class="form-field">
-                <label class="label">Mode</label>
-                <div class="segmented-control" role="group" aria-label="Comparison mode">
+                <label class="label" id="compare-mode-label" for="compare-mode-dynamic">Mode</label>
+                <div class="segmented-control" role="group" aria-labelledby="compare-mode-label">
                   <label class="seg-option">
-                    <input type="radio" name="compare-mode" value="dynamic" checked aria-label="Dynamic mode">
+                    <input type="radio" name="compare-mode" id="compare-mode-dynamic" value="dynamic" checked aria-label="Dynamic mode">
                     <span class="seg-label">
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
                         <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
@@ -225,7 +220,7 @@
                     </span>
                   </label>
                   <label class="seg-option">
-                    <input type="radio" name="compare-mode" value="static" aria-label="Static mode">
+                    <input type="radio" name="compare-mode" id="compare-mode-static" value="static" aria-label="Static mode">
                     <span class="seg-label">
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
                         <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>
@@ -278,7 +273,7 @@
 
     </div>
 
-    <div id="status-bar" aria-label="Application status">
+    <div id="status-bar" role="contentinfo" aria-label="Application status">
       <div class="status-left"></div>
       <div class="status-center" aria-live="polite" role="status"></div>
       <div class="status-right"></div>

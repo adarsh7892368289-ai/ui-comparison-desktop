@@ -4,26 +4,42 @@
 
 UI Comparison Desktop is an Electron application that captures the complete DOM structure and computed CSS of any web page using Playwright, then pairs elements across two captures and diffs every tracked CSS property to produce a severity-ranked comparison report. It exists because screenshot-based visual regression tools cannot tell you *which element changed* or *which CSS property caused the change* — this tool operates at the semantic DOM level, producing per-element, per-property diffs with configurable tolerances, confidence-scored matching, and automatic cascade suppression to eliminate false positives caused by CSS inheritance.
 
-A comparison begins when the user enters a URL and triggers extraction. Playwright launches a headless Chromium instance, navigates to the page, waits for DOM stability (skeleton screens gone, images loaded, MutationObserver quiet), then injects a webpack-bundled extraction script (`extractor-bundle.js`) into the page context. That script walks the DOM via TreeWalker, computes a Hierarchical Position Identifier (HPID) for every element, reads `getComputedStyle` for 70+ CSS properties, collects bounding rects, generates both CSS and XPath selectors, classifies each element into tiers, detects page sections, and returns the full element inventory to the main process. The user repeats this for a second page (or environment). When they click Compare, the renderer process loads both element arrays from IndexedDB, sends them to the main process over IPC, where the Comparator runs a four-phase matching pipeline (test-attribute anchoring → sequence alignment → HPID suffix realignment → legacy strategy pool), then the PropertyDiffer normalizes and diffs every CSS property with tolerance-aware comparisons. A SeverityAnalyzer classifies each diff as critical/high/medium/low, and a cascade suppression pass removes inherited property echoes. If screenshots are requested, Playwright opens both pages, groups changed elements into keyframes by scroll position, freezes animations, captures WebP screenshots via CDP, and maps element bounding rects onto the screenshots. The final result flows back to the renderer where it is persisted in IndexedDB (with WAL crash recovery) and rendered in the result panel.
+A comparison begins when the user enters a URL and triggers extraction. Playwright launches a headless browser (default **Chromium**; **Firefox** and **WebKit** are also supported when `extractElements` is called with `options.browserType`), navigates to the page, waits for DOM stability (skeleton screens gone, images loaded, MutationObserver quiet), then injects a webpack-bundled extraction script (`extractor-bundle.js`) into the page context. That script walks the DOM via TreeWalker, computes a Hierarchical Position Identifier (HPID) for every element, reads `getComputedStyle` for 70+ CSS properties, collects bounding rects, generates both CSS and XPath selectors, classifies each element into tiers, detects page sections, and returns the full element inventory to the main process. The user repeats this for a second page (or environment). When they click Compare, the renderer process loads both element arrays from IndexedDB, sends them to the main process over IPC, where the Comparator runs a four-phase matching pipeline (test-attribute anchoring → sequence alignment → HPID suffix realignment → legacy strategy pool), then the PropertyDiffer normalizes and diffs every CSS property with tolerance-aware comparisons. A SeverityAnalyzer classifies each diff as critical/high/medium/low, and a cascade suppression pass removes inherited property echoes. If screenshots are requested, Playwright opens both pages, groups changed elements into keyframes by scroll position, freezes animations, captures WebP screenshots via CDP, and maps element bounding rects onto the screenshots. The final result flows back to the renderer where it is persisted in IndexedDB (with WAL crash recovery) and rendered in the result panel.
 
 ## Architecture Overview
 
-### Four-Layer Architecture
+### Layered architecture
 
-The codebase enforces a strict one-way dependency rule across four layers:
+Rough dependency direction (keep **core** free of Electron/renderer imports so the same modules work in the main process, in-page extractor bundle, and webpack bundles):
 
 ```
-presentation  →  application  →  core  →  infrastructure
+presentation (components, HTML, CSS)
+       ↓
+application (workflows, state, app entry)
+       ↓
+core (extraction, comparison, normalization, export)     infrastructure (IDB, logging, perf, errors)
 ```
 
-**Dependencies flow downward only.** A module in `core` must never import from `application` or `presentation`. A module in `infrastructure` must never import from any upper layer. Violations of this rule will create circular dependencies that break the webpack build.
+**Rules that hold in practice:**
 
-| Layer | Directory | Owns | Cannot Touch |
-|---|---|---|---|
-| **Presentation** | `src/renderer/components/`, `src/renderer/index.html`, `src/renderer/styles/` | DOM rendering, CSS, user interaction, component lifecycle | IPC handlers, Playwright, business logic |
-| **Application** | `src/renderer/application/`, `src/renderer/state.js`, `src/renderer/app.js` | Workflow orchestration, state management, IPC invocation | DOM traversal, CSS diffing, element matching |
-| **Core** | `src/core/` | Extraction engine, comparison/matching/diffing, normalization, selector generation, export formatters | IndexedDB, Electron APIs, DOM rendering |
-| **Infrastructure** | `src/infrastructure/` | IndexedDB repository, logger, error tracker, performance monitor | Everything above it |
+- **`src/core/`** must not import Electron, preload APIs, or renderer-only code. It is shared by the main process, the in-page extractor (`window.__uiCompare`), and the renderer bundle (via `@core/...` aliases where workflows need a small surface, e.g. `url-compatibility.js`).
+- **`src/infrastructure/`** must not import from `application` or UI components. It is imported by the renderer bundle (IndexedDB, logger, error tracker) and must stay usable in that context.
+- **`src/renderer/components/`** should stay thin: DOM, styles, and `window.electronAPI` only where needed (e.g. context menu). Avoid pulling in the full comparator or extractor.
+- **`src/renderer/application/`** orchestrates workflows: it calls `window.electronAPI`, uses `src/infrastructure/idb-repository.js`, and may import specific modules under `@core/` (see `compare-workflow.js` → `url-compatibility.js`). Heavy comparison still runs in the **main** process inside `playwright-manager.js` (Node `require` of `Comparator`), not in the renderer.
+
+### Webpack entry points and aliases
+
+| Bundle | Config | Output | Notes |
+|--------|--------|--------|--------|
+| Main + preload | `webpack.main.config.js` | `dist/index.js`, `dist/preload.js` | `target: electron-main`, Playwright externalized |
+| Renderer app | `webpack.renderer.config.js` | `dist/renderer/app.js` | `target: web`, copies `index.html` + `styles/` |
+| Extractor (in-page) | `webpack.extractor.config.js` | `dist/extractor-bundle.js` | UMD → `window.__uiCompare` |
+
+**Renderer resolve aliases** (`webpack.renderer.config.js`): `@core` → `src/core`, `@config` → `src/config`, `@infra` → `src/infrastructure`, `electron` → renderer stub, `electron-log` → `electron-log/renderer`.
+
+**Main resolve aliases:** `@core`, `@config`, `@infra` (same folders).
+
+The renderer entry `src/renderer/app.js` is written as **ES modules**; it imports `logger` and `errorTracker` from infrastructure on startup, then wires components and workflows on `DOMContentLoaded`.
 
 ### Dual-Process Electron Split
 
@@ -47,7 +63,8 @@ presentation  →  application  →  core  →  infrastructure
 │  src/renderer/state.js     State machine        │
 │  src/renderer/application/ Workflow orchestr.   │
 │  src/renderer/components/  UI components        │
-│  src/infrastructure/idb-repository.js  Storage  │
+│  src/infrastructure/*      IDB, logger, errors  │
+│    (bundled into renderer via webpack)          │
 │                                                 │
 │  Owns: IndexedDB, DOM rendering, CSS,           │
 │        state management, export formatting      │
@@ -56,7 +73,7 @@ presentation  →  application  →  core  →  infrastructure
 └─────────────────────────────────────────────────┘
 ```
 
-**Why this split matters:** IndexedDB is a Chromium/Blink API — it does not exist in Node.js. All storage operations execute in the renderer process. The main process never reads from or writes to IndexedDB. When a comparison runs, the renderer loads both element arrays from IndexedDB, sends them to main over IPC, main runs the comparison via Playwright, and sends results back. The renderer then persists the results into IndexedDB.
+**Why this split matters:** IndexedDB is a Chromium/Blink API — it does not exist in Node.js. All persistence goes through the renderer’s `idb-repository` (bundled by webpack). The main process does not open IndexedDB. For a comparison, the renderer loads both element arrays from IndexedDB, sends them to main over IPC; main runs the `Comparator` pipeline in Node and optionally uses Playwright for screenshots; results return to the renderer for saving (including visual blob side stores when enabled).
 
 ### IPC Contract
 
@@ -164,8 +181,8 @@ src/
 │   ├── application/
 │   │   ├── compare-workflow.js  # Loads elements from IDB, invokes IPC, persists results.
 │   │   ├── export-workflow.js   # Format-specific export handlers (HTML/CSV/JSON/Excel).
-│   │   ├── import-workflow.js   # File import (JSON/CSV/Excel) → parse → save to IDB.
-│   │   └── report-manager.js   # Report CRUD, list rendering, extraction trigger, selectors.
+│   │   ├── import-workflow.js   # Per-slot file import (JSON/CSV/Excel) → parse → save to IDB.
+│   │   └── report-manager.js    # Init, WAL replay, report list, extraction, context-menu actions, filters.
 │   ├── components/
 │   │   ├── app-shell.js         # Accordion navigation, breadcrumb, panel toggle.
 │   │   ├── command-palette.js   # Ctrl+K command palette with fuzzy search.
@@ -187,6 +204,7 @@ src/
 │   │   ├── report-list.css      # Virtual scroll viewport, report cards, export dropdowns.
 │   │   └── result-panel.css     # Result panel: severity bars, coverage meters, element rows.
 │   ├── utils/
+│   │   ├── icons.js             # Inline SVG icon helpers for toolbar, lists, and commands.
 │   │   ├── sanitize.js          # XSS-safe HTML escaping via textContent → innerHTML.
 │   │   └── time.js              # Relative time formatting (just now, 5m ago, 2h ago, 3d ago).
 │   └── index.html               # Main HTML template with all section markup.
@@ -210,9 +228,9 @@ This traces a single comparison operation from user action to rendered result.
 1. User types a URL into `#url-input` and clicks `#extract-btn`.
 2. `report-manager.js` → `handleExtraction()` reads the URL and optional filter inputs (`filter-class`, `filter-id`, `filter-tag`).
 3. `dispatch('EXTRACTION_PROGRESS', ...)` updates state; `showProgress('extract', ...)` shows the progress bar.
-4. `window.electronAPI.extractElements({ url, options: { filters } })` invokes IPC.
+4. `window.electronAPI.extractElements({ url, options })` invokes IPC. The live UI passes `options.filters` when class/id/tag filters are set; `options.browserType` (`chromium` \| `firefox` \| `webkit`) is optional and defaults to `chromium` in `playwright-manager.js`.
 5. **Main process** `ipc-handlers.js` → `_registerExtractionHandlers()` → `ipcMain.handle(CH.EXTRACT_ELEMENTS, ...)` calls `playwrightManager.runExtraction()`.
-6. `playwright-manager.js` → `getBrowser('chromium')` launches or reuses a headless Chromium instance.
+6. `playwright-manager.js` → `getBrowser(browserType)` launches or reuses a headless Playwright browser of that type.
 7. A new browser context and page are created. `page.goto(url, { waitUntil: 'load' })`.
 8. If filters are provided, `buildSelectorFromFilters(filters)` constructs a compound CSS selector. The manager waits for the selector to become visible and for descendant count to stabilize.
 9. `page.addScriptTag({ content: getExtractorBundleSource() })` injects the extractor bundle (built by `webpack.extractor.config.js` from `src/core/extraction/extractor.js`).
@@ -263,37 +281,38 @@ This traces a single comparison operation from user action to rendered result.
 
 ### Phase 2: Comparison (Two Reports → Diff Report)
 
-19. User selects baseline and compare reports from dropdowns, selects mode (dynamic/static), clicks `#compare-btn`.
-20. `compare-workflow.js` → `handleComparison()` runs `assessUrlCompatibility()` — if paths differ, comparison is blocked (`INCOMPATIBLE`). If query/hash differs, a warning toast fires (`CAUTION`).
-21. `storage.loadReportElements(baselineId)` and `storage.loadReportElements(compareId)` load both element arrays from IndexedDB.
-22. `window.electronAPI.startComparison({ baselineId, compareId, mode, baselineUrl, compareUrl, baselineElements, compareElements, includeScreenshots })` sends elements to main process.
-23. **Main process:** `playwrightManager.runComparison()` creates a `Comparator` instance and calls `comparator.compare(baselineReport, compareReport, mode)`.
+19. User selects baseline and compare reports from `#baseline-report` / `#compare-report`, chooses **dynamic** or **static** mode (`[name="compare-mode"]`), and optionally turns **Visual Diff** off via `#visual-diff-toggle` (maps to `includeScreenshots`). They can **Import file** per slot (`#baseline-upload`, `#compare-upload`) through `import-workflow.js` instead of using a saved extraction.
+20. When selections or mode change, `tryLoadCachedComparison()` in `compare-workflow.js` looks up an existing comparison by `(baselineId, compareId, mode)` in IndexedDB and, if found, dispatches `COMPARISON_COMPLETE` with `cachedAt` so the result panel shows stored diffs without re-running main-process work.
+21. User clicks `#compare-btn`. `compare-workflow.js` → `handleComparison()` runs `assessUrlCompatibility()` (from `@core/comparison/url-compatibility.js` in the renderer) — if paths differ, comparison is blocked (`INCOMPATIBLE`). If query/hash differs, a warning toast fires (`CAUTION`).
+22. `storage.loadReportElements(baselineId)` and `storage.loadReportElements(compareId)` load both element arrays from IndexedDB.
+23. `window.electronAPI.startComparison({ baselineId, compareId, mode, baselineUrl, compareUrl, baselineElements, compareElements, includeScreenshots })` sends elements to main process.
+24. **Main process:** `playwrightManager.runComparison()` builds synthetic report objects, instantiates `Comparator` from `src/core/comparison/comparator.js`, and runs `comparator.compare(...)`. Matching and diffing are pure Node logic; Playwright is used again for optional screenshot capture and visual pipeline steps.
 
 **Matching pipeline (matcher.js):**
 
-24. **Phase 0 — Test attribute anchoring:** Builds a multimap of compare elements keyed by `data-testid`/`data-qa`/etc. values. Matches baseline elements with identical attribute values. Confidence: 1.00.
-25. **Phase 1 — Sequence alignment:** Walks baseline and compare arrays in parallel. At each position, first checks if HPIDs match but tagNames differ (`isReplacement`) — marks both as removed/added. Then checks if `tagName` and HPID segments match (`passesIdentityTriad`) — pairs them (confidence: 0.99). If neither, looks ahead up to 5 positions for a match. Unmatched elements in the gap are classified as added/removed.
-26. **Phase 2 — HPID suffix realignment:** For orphaned elements from Phase 1, builds a suffix index (last 5 HPID segments + tagName). Elements with a unique suffix match are paired (confidence: 0.85). This handles cases where wrapper elements were inserted/removed, shifting HPIDs.
-27. **Phase 3 — Legacy strategies:** Runs remaining orphans through classifiers in descending confidence order: `absolute-hpid` (0.95) → `id` (0.90) → `css-selector` (0.80) → `xpath` (0.78) → `position` (0.30, using a spatial grid with 50px cells).
+25. **Phase 0 — Test attribute anchoring:** Builds a multimap of compare elements keyed by `data-testid`/`data-qa`/etc. values. Matches baseline elements with identical attribute values. Confidence: 1.00.
+26. **Phase 1 — Sequence alignment:** Walks baseline and compare arrays in parallel. At each position, first checks if HPIDs match but tagNames differ (`isReplacement`) — marks both as removed/added. Then checks if `tagName` and HPID segments match (`passesIdentityTriad`) — pairs them (confidence: 0.99). If neither, looks ahead up to 5 positions for a match. Unmatched elements in the gap are classified as added/removed.
+27. **Phase 2 — HPID suffix realignment:** For orphaned elements from Phase 1, builds a suffix index (last 5 HPID segments + tagName). Elements with a unique suffix match are paired (confidence: 0.85). This handles cases where wrapper elements were inserted/removed, shifting HPIDs.
+28. **Phase 3 — Legacy strategies:** Runs remaining orphans through classifiers in descending confidence order: `absolute-hpid` (0.95) → `id` (0.90) → `css-selector` (0.80) → `xpath` (0.78) → `position` (0.30, using a spatial grid with 50px cells).
 
 **Diffing pipeline (comparison-modes.js + differ.js):**
 
-28. For each matched pair, `PropertyDiffer.compareElements()` normalizes both elements' styles through `normalizerEngine.normalize()` (shorthand expansion → color/unit/font normalization with LRU cache), then compares every property. Tolerance strategies apply: color ±5 (static) or ±8 (dynamic) channel delta, size ±3px or ±5px, opacity ±0.01 or ±0.05.
-29. Text content and attributes are compared (static mode includes text; dynamic mode excludes text, compares only structural attributes like `role`, `aria-label`).
-30. `SeverityAnalyzer.analyzeDifferences()` classifies each diff. Layout-breaking changes (display none toggle, 50%+ size delta) → critical. High visual impact (opacity >0.3 delta, font-size >25% delta, luminance contrast >0.4) → high. Spacing properties → medium. Everything else → low.
-31. `BaseComparisonMode.#suppressInheritedCascades()` walks the HPID tree. If a parent changed `color: red → blue` and a child has the identical change on an inheritable property, the child's diff is suppressed.
+29. For each matched pair, `PropertyDiffer.compareElements()` normalizes both elements' styles through `normalizerEngine.normalize()` (shorthand expansion → color/unit/font normalization with LRU cache), then compares every property. Tolerance strategies apply: color ±5 (static) or ±8 (dynamic) channel delta, size ±3px or ±5px, opacity ±0.01 or ±0.05.
+30. Text content and attributes are compared (static mode includes text; dynamic mode excludes text, compares only structural attributes like `role`, `aria-label`).
+31. `SeverityAnalyzer.analyzeDifferences()` classifies each diff. Layout-breaking changes (display none toggle, 50%+ size delta) → critical. High visual impact (opacity >0.3 delta, font-size >25% delta, luminance contrast >0.4) → high. Spacing properties → medium. Everything else → low.
+32. `BaseComparisonMode.#suppressInheritedCascades()` walks the HPID tree. If a parent changed `color: red → blue` and a child has the identical change on an inheritable property, the child's diff is suppressed.
 
 **Visual capture (playwright-manager.js):**
 
-32. If `includeScreenshots` is true, Playwright opens both URLs in new pages.
-33. `captureVisualDiffs()` extracts modified elements, builds selector pairs, and for each page: locks scrollbar, freezes animations via CSS injection and `requestAnimationFrame` patching, suppresses fixed/sticky elements that aren't diff targets.
-34. `groupIntoKeyframes()` clusters elements by vertical position and groups them into scroll-position keyframes that fit within the viewport.
-35. For each keyframe: scroll to position, verify scroll via `window.scrollY`, remeasure element rects, freeze JS execution (CDP `Emulation.setScriptExecutionDisabled` on Chromium, shim on Firefox/WebKit), capture full-viewport screenshot (WebP via CDP, PNG via Playwright API), unfreeze.
-36. Screenshots are stored in the main process blob cache (`protocol-handler.js`, 512MB LRU eviction by comparison group).
+33. If `includeScreenshots` is true, Playwright opens both URLs in new pages.
+34. `captureVisualDiffs()` extracts modified elements, builds selector pairs, and for each page: locks scrollbar, freezes animations via CSS injection and `requestAnimationFrame` patching, suppresses fixed/sticky elements that aren't diff targets.
+35. `groupIntoKeyframes()` clusters elements by vertical position and groups them into scroll-position keyframes that fit within the viewport.
+36. For each keyframe: scroll to position, verify scroll via `window.scrollY`, remeasure element rects, freeze JS execution (CDP `Emulation.setScriptExecutionDisabled` on Chromium, shim on Firefox/WebKit), capture full-viewport screenshot (WebP via CDP, PNG via Playwright API), unfreeze.
+37. Screenshots are stored in the main process blob cache (`protocol-handler.js`, 512MB LRU eviction by comparison group).
 
 **Result assembly:**
 
-37. `runComparison()` assembles the final result:
+38. `runComparison()` assembles the final result:
 
 ```javascript
 {
@@ -318,8 +337,8 @@ This traces a single comparison operation from user action to rendered result.
 }
 ```
 
-38. **Renderer receives result:** Saves comparison metadata and diffs to IndexedDB (`saveComparison(meta, slimResults)`). Saves visual blobs, keyframes, and rect records separately. Dispatches `COMPARISON_COMPLETE` to state.
-39. `ResultPanel.render()` builds the result panel: match rate circle, element coverage bar (unchanged/modified/added/removed segments), severity breakdown bars, unmatched element sections, export/report action buttons.
+39. **Renderer receives result:** Saves comparison metadata and diffs to IndexedDB (`saveComparison(meta, slimResults)`). Saves visual blobs, keyframes, and rect records separately. Dispatches `COMPARISON_COMPLETE` to state.
+40. `ResultPanel.render()` builds the result panel: match rate circle, element coverage bar (unchanged/modified/added/removed segments), severity breakdown bars, unmatched element sections, export/report action buttons.
 
 ## Core Subsystems — Deep Dives
 
@@ -389,11 +408,11 @@ The matcher (`src/core/comparison/matcher.js`) uses an async generator pattern, 
 2. Execute the actual write (report save, comparison save).
 3. Delete the WAL entry (marking it complete).
 
-On application startup, `applyPendingOperations()` scans for `PENDING` entries. For each: if it's a known operation (`SAVE_REPORT` or `SAVE_COMPARISON`), replay it (up to 3 attempts). Visual blob operations are not replayed (marked `FAILED`) because blob data may not survive a crash. Entries that exhaust retries dispatch a `storage-degraded` custom event that triggers a `SystemBanner` warning.
+On renderer startup, `initializeApp()` in `report-manager.js` calls `storage.applyPendingOperations()`, which scans `PENDING` WAL entries. **`SAVE_REPORT`** and **`SAVE_COMPARISON`** are replayed (each entry tracks `replayCount`; attempts stop after **3** failures, the entry is marked `FAILED`, and a `storage-degraded` event with reason **`WAL_REPLAY_EXHAUSTED`** is dispatched — `app.js` shows `SystemBanner.warning` for that case). **`SAVE_VISUAL_BLOB`** entries are never replayed (immediately marked `FAILED`) because binary payload may be missing after a crash. Other unknown operation types are failed the same way.
 
-**Why WAL, not just write-and-hope:** IndexedDB transactions can silently fail if the browser crashes mid-transaction, if quota is exceeded, or if the DB version changes. Without WAL, a crash during `saveReport` could leave the `reports` store updated but the `elements` store empty — the report would appear in the list but contain no data. The WAL ensures that either both writes succeed or the operation is replayed on next startup. The system does not auto-replay (it marks and reports), because eviction state may have changed between crash and recovery.
+**Why WAL, not just write-and-hope:** IndexedDB transactions can fail or be torn if the app crashes mid-flight, quota is exceeded, or the DB is blocked. Without WAL, a crash between writing report metadata and element blobs could leave inconsistent rows. WAL records intent first; successful completion removes the entry. Replay on next launch recovers **report** and **comparison** writes when possible; when replay is unsafe or exhausted, the UI is notified instead of silently dropping data.
 
-**Circuit Breaker:** The `IDBRepository` tracks consecutive write failures. After `CIRCUIT_BREAKER_LIMIT` (3) consecutive failures, the circuit opens: all subsequent writes are rejected immediately with an error. This prevents a cascade where repeated write failures (e.g., quota exceeded) cause the write queue to back up indefinitely, consuming memory. The circuit breaker dispatches a `storage-degraded` event with reason `CIRCUIT_OPEN`, which triggers a persistent error banner in the UI telling the user to restart.
+**Circuit Breaker:** The `IDBRepository` tracks consecutive write failures. After `CIRCUIT_BREAKER_LIMIT` (3) consecutive failures, the circuit opens: all subsequent writes are rejected immediately with an error. This prevents a cascade where repeated write failures (e.g., quota exceeded) cause the write queue to back up indefinitely, consuming memory. The circuit breaker dispatches a `storage-degraded` event (without `WAL_REPLAY_EXHAUSTED` in the detail), which `app.js` maps to `SystemBanner.error` (“Storage failure — too many consecutive write errors…”).
 
 **Eviction:** Reports are capped at `config.storage.maxReports` (50). When saving a new report would exceed the cap, the oldest reports (by timestamp index) are deleted in the same transaction. Comparisons are capped at `MAX_COMPARISONS` (20). Duplicate pair-key comparisons (same baseline+compare+mode) replace the existing one.
 
@@ -415,22 +434,35 @@ Every IPC handler is registered in `src/main/ipc-handlers.js`. Every handler exp
 | `GET_PERF_METRICS` | invoke | `_registerMetaHandlers` | `electronAPI.getPerfMetrics()` | (none) | `{ success, metrics, timestamp }` |
 | `COMPARISON_PROGRESS` | push (main→renderer) | `_pushToWindow` | `electronAPI.onComparisonProgress(cb)` | — | `{ label, pct }` |
 | `EXTRACTION_PROGRESS` | push (main→renderer) | `_pushToWindow` | `electronAPI.onExtractionProgress(cb)` | — | `{ label, pct }` |
+| `SET_WINDOW_TITLE` | send (renderer→main) | `ipcMain.on` in `index.js` | `electronAPI.setWindowTitle(title)` | `title` (string) | — |
+| `SHOW_CONTEXT_MENU` | send (renderer→main) | `ipcMain.on` in `index.js` | `electronAPI.showContextMenu(payload)` | `{ reportId }` | — |
+| `CONTEXT_ACTION` | push (main→renderer) | `webContents.send` from context menu | `electronAPI.onContextAction(cb)` | — | `{ action, reportId, format? }` |
 
-All channel names are verified to match between `ipc-channels.js`, `ipc-handlers.js`, and `preload.js`. No mismatches found.
+Channel string values are defined in `src/main/ipc-channels.js` and must stay aligned across `ipc-handlers.js`, `preload.js`, and any `ipcMain.on` / `send` usage in `index.js`. Note: `SHOW_CONTEXT_MENU` and `CONTEXT_ACTION` use lowercase hyphenated runtime strings (`show-context-menu`, `context-action`) while other channels use `SCREAMING_SNAKE` names matching their constant values.
 
-### Renderer UI System
+Renderer subscriptions: `report-manager.js` registers `onContextAction` during `initializeApp()` to connect menu actions to baseline/compare selection, export, and delete.
 
-**Token System:** `src/renderer/styles/tokens.css` defines CSS custom properties for colors (primary, neutral, semantic), spacing (4px base scale), typography (Inter + JetBrains Mono), border-radius, shadows, and z-index layers. All component styles reference tokens exclusively — no hardcoded color values.
+### Renderer UI and client state
 
-**CSS Grid Shell:** `src/renderer/styles/shell.css` defines the app layout as a CSS Grid with four rows (toolbar 48px, system banner auto, main content 1fr, status bar) and two columns (left panel 280px, main content 1fr). The left panel is collapsible via a `left-panel--collapsed` class that sets `width: 48px; overflow: hidden` with a CSS transition.
+**Bridge hard fail:** If `window.electronAPI` is missing (misconfigured preload), `app.js` replaces the body with a fatal message and throws — the app does not run half-connected.
 
-**Virtual Scroll:** `src/renderer/components/report-list.js` implements a virtual scroll list. A viewport div clips a spacer div whose height equals `totalItems × rowHeight`. Only visible rows (plus 3 overscan rows above/below) are rendered into a window div positioned via `style.top`. Scroll events trigger re-render. Three density modes (compact: 44px, default: 64px, comfortable: 80px) adjust row height. Group headers are 28px. Keyboard navigation (ArrowUp/Down/Enter/Delete) is supported.
+**State (`src/renderer/state.js`):** Single store with `dispatch` / `subscribe` / `getState`. Notable actions include `REPORTS_LOADED`, `REPORT_DELETED`, `EXTRACTION_PROGRESS`, `COMPARISON_STARTED` / `COMPARISON_PROGRESS` / `COMPARISON_COMPLETE` / `COMPARISON_ERROR`, `BASELINE_SELECTED`, `COMPARE_SELECTED`, `MODE_CHANGED`, `RESET_COMPARISON`, `DISMISS_ERROR` (resets phase while preserving reports and selections), `FILTERS_UPDATED`, and export lifecycle actions. `phase` drives window title updates via `electronAPI.setWindowTitle` in the `subscribe` callback in `app.js`.
 
-**Accordion Navigation:** `src/renderer/components/app-shell.js` manages Extract and Compare sections as collapsible accordion panels. Only one section is expanded at a time. Clicking a section header collapses others and expands the target. `aria-expanded` attributes are maintained for accessibility.
+**Toolbar and shell:** `app-shell.js` drives the Extract / Compare accordion, breadcrumb (including “Results” when `phase === 'done'`), and left panel collapse (`#panel-toggle-btn`). `status-bar.js` shows phase and report count.
 
-**Command Palette:** `src/renderer/components/command-palette.js` provides a Ctrl+K activated command palette. Commands are registered at app startup with labels, keywords, shortcuts, and action callbacks. The palette supports fuzzy keyword search, arrow key navigation, Enter to execute, and Escape to dismiss. Focus is trapped within the palette dialog while open.
+**Sidebar list:** `report-list.js` virtual-scrolls saved reports with **group by** (none / host / date / environment), **sort by** (date / elements / name), **density** toggle (compact 44px, default 64px, comfortable 80px), and **search** (`#search-reports`, debounced). Right-click (when available) calls `electronAPI.showContextMenu({ reportId })`; the native menu sends actions back through `electronAPI.onContextAction`, handled in `initializeApp()` to set baseline/compare, export JSON/HTML, or delete.
 
-**Result Panel:** `src/renderer/components/result-panel.js` renders comparison results as a match-rate circle, a multi-segment coverage bar (unchanged/modified/added/removed), severity breakdown with bar-chart rows, expandable sections for added/removed elements, and an actions bar with format selector and Full Report button.
+**Bulk actions:** Export all reports (`#export-all-btn` + `#export-all-format`) and delete all (`#delete-all-btn` in overflow menu) live in the sidebar card.
+
+**Compare UX:** Segmented **dynamic** vs **static** mode, **Visual Diff** checkbox (`#visual-diff-toggle` → `includeScreenshots`), per-slot **Import file** inputs.
+
+**Command palette and shortcuts (`app.js`):** **Ctrl+K** / **⌘K** toggles the palette. With focus outside inputs: **E** / **C** switch sections, **/** focuses search, **Escape** clears search text and re-renders the list. **Ctrl+Shift+D** (Cmd not used for diagnostics) opens a performance overlay fed by `getPerfMetrics()`. **Enter** dismisses error phase when not in an input.
+
+**Token System:** `src/renderer/styles/tokens.css` defines CSS custom properties for colors (primary, neutral, semantic), spacing (4px base scale), typography (Inter + JetBrains Mono), border-radius, shadows, and z-index layers. Component styles are expected to use these tokens.
+
+**CSS Grid Shell:** `src/renderer/styles/shell.css` defines the app layout as a CSS Grid (toolbar, system banner slot, main content, status bar; sidebar + main column).
+
+**Result Panel:** `src/renderer/components/result-panel.js` renders comparison results (match rate, coverage, severity, unmatched sections, exports / full report).
 
 ## Getting Started
 
@@ -492,13 +524,18 @@ This compiles `src/core/extraction/extractor.js` into `dist/extractor-bundle.js`
 npm run build
 ```
 
+The `prebuild` script runs `scripts/check-env.js`: `PLAYWRIGHT_BROWSERS_PATH` must be set and must contain a Playwright `chromium` directory (run `npx playwright install chromium` or `npm run install:browsers` if needed).
+
 ### Package for Distribution
 
 ```bash
 # Requires PLAYWRIGHT_BROWSERS_PATH to be set (browsers are bundled into the installer)
+npm run dist       # electron-builder for the current host OS
 npm run dist:win   # Windows NSIS installer
 npm run dist:mac   # macOS DMG
 ```
+
+Installers and artifacts are written under `dist-installer/` (see `electron-builder.config.js`).
 
 ### Smoke Test
 
@@ -575,7 +612,7 @@ Verifies the extractor bundle exists and `app.getVersion()` returns a valid stri
 4. Export a factory function: `export function createMyComponent(containerEl) { ... }`.
 5. Import and instantiate in `src/renderer/app.js` inside the `DOMContentLoaded` handler.
 
-**Constraint:** Components must not import from `src/main/`. They must not call `ipcRenderer` directly — use `window.electronAPI` methods only. They must not import from `src/core/comparison/` or `src/core/extraction/` (those run in-page or in main process).
+**Constraint:** Components must not import from `src/main/`. They must not call `ipcRenderer` directly — use `window.electronAPI` methods only. Avoid importing heavy `src/core/comparison/` or `src/core/extraction/` modules into presentational components; keep those in `application/` or main process. (Application workflows may import narrow `@core` helpers such as `url-compatibility.js`.)
 
 ### Extending the Matching Pipeline with a New Phase
 
@@ -611,21 +648,21 @@ Verifies the extractor bundle exists and `app.getVersion()` returns a valid stri
 
 ### IPC Message Not Received
 
-**What to check first:** Open DevTools in the Electron window. Check the console for `window.electronAPI` — if it's `undefined`, the preload script path is wrong in `BrowserWindow.webPreferences.preload`. Check `src/main/index.js` line 104: `preload: path.join(__dirname, 'preload.js')` — `__dirname` resolves to `dist/` after webpack.
+**What to check first:** Open DevTools in the Electron window. Check the console for `window.electronAPI` — if it's `undefined`, the preload script path is wrong in `BrowserWindow.webPreferences.preload`. In `createMainWindow()` (`src/main/index.js`), confirm `preload: path.join(__dirname, 'preload.js')` — after webpack, `__dirname` for the main bundle is `dist/`, so this must resolve to `dist/preload.js`.
 
-**Common root cause:** The preload.js entry in `webpack.main.config.js` compiles it to `dist/preload.js`, but the BrowserWindow expects it relative to the main entry (`dist/index.js`). If you rename or move files, this path breaks silently — the window opens but `electronAPI` is `undefined`.
+**Common root cause:** The preload entry in `webpack.main.config.js` compiles to `dist/preload.js`, but the `BrowserWindow` must load that same file. If you rename or move outputs, this path breaks silently — the window opens but `electronAPI` is `undefined`.
 
-**Verification:** In main process console (Terminal where `npm start` runs), look for `registerIpcHandlers` log. In renderer DevTools, run `Object.keys(window.electronAPI)` — should list all 12 methods.
+**Verification:** In the terminal where `npm start` runs, look for `registerIpcHandlers` log. In renderer DevTools, run `Object.keys(window.electronAPI)` — you should see the invoke/send APIs and progress/context subscription helpers (e.g. `startComparison`, `extractElements`, `onComparisonProgress`, `setWindowTitle`, `showContextMenu`, `onContextAction`).
 
-### IndexedDB Circuit Breaker Tripped
+### IndexedDB: circuit breaker or WAL replay
 
-**Symptom:** A persistent red banner appears: "Storage failure — too many consecutive write errors."
+**Circuit breaker (`reason: 'CIRCUIT_OPEN'`):** Symptom is the red banner: “Storage failure — too many consecutive write errors.” After 3 consecutive write failures, new writes are rejected until restart.
 
-**What to check first:** DevTools → Application → IndexedDB → `ui_comparison_db`. Check if the database is accessible. Run `navigator.storage.estimate()` in console to check quota.
+**WAL replay exhausted (`reason: 'WAL_REPLAY_EXHAUSTED'`):** Symptom is the yellow/warning banner from `SystemBanner.warning` about queued writes that could not be replayed.
 
-**Root cause usually:** Storage quota exceeded (large visual blobs fill up quota), or another tab/window has the database open at an incompatible version (triggers `onblocked`). The circuit breaker opens after 3 consecutive write failures.
+**What to check first:** DevTools → Application → IndexedDB → `ui_comparison_db`. Run `navigator.storage.estimate()` for quota. Inspect `operation_log` for `PENDING` / `FAILED` rows.
 
-**Recovery:** Restart the application. The circuit breaker resets to closed state on a new `IDBRepository` instance. If quota is the issue, delete old reports via the UI or clear the database: DevTools → Application → IndexedDB → Delete database.
+**Recovery:** Restart the app (resets the circuit counter on a fresh repository instance). If quota is the issue, delete reports in-app or clear the database from DevTools.
 
 ### Playwright Capture Failing
 

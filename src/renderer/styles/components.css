@@ -199,7 +199,16 @@
 
 /* ── Export dropdown ──────────────────────────────────────── */
 .export-dropdown { position: relative; }
-.export-dropdown summary { list-style: none; cursor: pointer; -webkit-user-select: none; user-select: none; }
+.export-dropdown summary {
+  list-style: none;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.export-dropdown summary svg { flex-shrink: 0; vertical-align: middle; }
 .export-dropdown summary::-webkit-details-marker { display: none; }
 
 .export-menu {
@@ -235,3 +244,12 @@
 }
 
 .export-menu-item:hover { background: var(--color-surface-raised); }
+
+.export-menu-item--danger {
+  color: var(--color-destructive);
+}
+
+.export-menu-item--danger:hover {
+  background: var(--color-destructive-subtle);
+  color: var(--color-destructive);
+}

@@ -18,6 +18,22 @@ let _reportList = null;
 
 const api = window.electronAPI;
 
+function selectBaselineFromReport(report) {
+  dispatch('BASELINE_SELECTED', { id: report.id });
+  const sel = document.getElementById('baseline-report');
+  if (sel) { sel.value = report.id; }
+  syncCompareButton();
+  tryLoadCachedComparison();
+}
+
+function selectCompareFromReport(report) {
+  dispatch('COMPARE_SELECTED', { id: report.id });
+  const sel = document.getElementById('compare-report');
+  if (sel) { sel.value = report.id; }
+  syncCompareButton();
+  tryLoadCachedComparison();
+}
+
 const STAGE_RE = /\b(stage|staging|dev|test|qa|uat|preview|sandbox|canary)\b/i;
 
 function hostFromUrl(url) {
@@ -47,13 +63,22 @@ function envTag(url) {
   return 'PROD';
 }
 
-function displayReportsFooter(count) {
-  const footer = document.getElementById('reports-footer');
-  if (!footer) { return; }
-  footer.textContent = count === 0 ? '' : `${count} report${count !== 1 ? 's' : ''} saved`;
+function insertReportListSkeletonOverlay() {
+  const c = document.getElementById('reports-list');
+  if (!c || c.querySelector('.report-list-skeleton-overlay')) { return; }
+  const o = document.createElement('div');
+  o.className = 'report-list-skeleton-overlay';
+  o.setAttribute('aria-hidden', 'true');
+  for (let i = 0; i < 5; i++) {
+    const d = document.createElement('div');
+    d.className = 'skeleton-card';
+    o.appendChild(d);
+  }
+  c.appendChild(o);
 }
 
 function renderReportList(reports, searchQuery) {
+  document.querySelector('#reports-list .report-list-skeleton-overlay')?.remove();
   _reportList?.setReports(reports, searchQuery ?? '');
   const empty = document.getElementById('reports-empty');
   if (!empty) { return; }
@@ -74,7 +99,6 @@ async function loadAndRenderReports() {
   const query = document.getElementById('search-reports')?.value ?? '';
   renderReportList(reports, query);
   populateReportSelectors(reports);
-  displayReportsFooter(reports.length);
 }
 
 function populateReportSelectors(reports) {
@@ -209,20 +233,35 @@ async function initializeApp() {
         _reportList?.setSelected(report.id);
       },
       onDelete: (report) => handleDeleteReport(report),
-      onBaseline: (report) => {
-        dispatch('BASELINE_SELECTED', { id: report.id });
-        const sel = document.getElementById('baseline-report');
-        if (sel) { sel.value = report.id; }
-        syncCompareButton();
-        tryLoadCachedComparison();
-      },
-      onCompare: (report) => {
-        dispatch('COMPARE_SELECTED', { id: report.id });
-        const sel = document.getElementById('compare-report');
-        if (sel) { sel.value = report.id; }
-        syncCompareButton();
-        tryLoadCachedComparison();
-      },
+      onBaseline: (report) => selectBaselineFromReport(report),
+      onCompare: (report) => selectCompareFromReport(report),
+    });
+  }
+
+  if (typeof api?.onContextAction === 'function') {
+    api.onContextAction((payload) => {
+      if (!payload || typeof payload.reportId !== 'string') { return; }
+      const reports = getState().reports ?? [];
+      const report = reports.find(r => r.id === payload.reportId);
+      if (!report) { return; }
+      switch (payload.action) {
+        case 'setBaseline':
+          selectBaselineFromReport(report);
+          break;
+        case 'compare':
+          selectCompareFromReport(report);
+          break;
+        case 'export':
+          if (payload.format === 'json' || payload.format === 'html') {
+            handleExportReport(report, payload.format);
+          }
+          break;
+        case 'delete':
+          handleDeleteReport(report);
+          break;
+        default:
+          break;
+      }
     });
   }
 
@@ -262,7 +301,7 @@ export {
   lastPathSegment,
   sanitizeFilename,
   envTag,
-  displayReportsFooter,
+  insertReportListSkeletonOverlay,
   renderReportList,
   loadAndRenderReports,
   populateReportSelectors,

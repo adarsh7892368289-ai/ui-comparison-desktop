@@ -12,6 +12,14 @@ import {
 
 const api = window.electronAPI;
 
+function scrollCompareResultsIntoView() {
+  const el = document.getElementById('compare-results');
+  if (!el) { return; }
+  requestAnimationFrame(() => {
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
+
 function normalizeComparisonResult(result) {
   if (!result || typeof result !== 'object') { return null; }
 
@@ -62,10 +70,12 @@ async function tryLoadCachedComparison() {
         duration:          cached.duration ?? 0,
       });
       dispatch('COMPARISON_COMPLETE', { result: { ...normalized, id: cached.id }, cachedAt: cached.timestamp });
+      scrollCompareResultsIntoView();
     } else {
       dispatch('RESET_COMPARISON', {});
     }
   } catch (_) {
+    Toast.show('Previous comparison unavailable', 'warning', 4000);
   }
 }
 
@@ -200,6 +210,7 @@ async function handleComparison() {
     }
 
     dispatch('COMPARISON_COMPLETE', { result: { ...normalized, id: meta.id } });
+    scrollCompareResultsIntoView();
 
     if (sr.visualDiffStatus?.status !== 'completed') {
       Toast.info(`Visual diff did not complete (status: ${sr.visualDiffStatus?.status}) — screenshot comparison may be unavailable`);

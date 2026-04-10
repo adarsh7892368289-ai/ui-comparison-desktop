@@ -46,4 +46,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   getPerfMetrics: () =>
     ipcRenderer.invoke(CH.GET_PERF_METRICS),
+
+  setWindowTitle: (title) =>
+    ipcRenderer.send(CH.SET_WINDOW_TITLE, title),
+
+  showContextMenu: (payload) =>
+    ipcRenderer.send(CH.SHOW_CONTEXT_MENU, payload),
+
+  onContextAction: makePushBridge(CH.CONTEXT_ACTION),
 });

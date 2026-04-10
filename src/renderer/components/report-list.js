@@ -1,5 +1,6 @@
 import { sanitize } from '../utils/sanitize.js';
 import { relativeTime } from '../utils/time.js';
+import { iconArrowUp, iconArrowUpDown, iconChevronDown, iconTarget, iconTrash2 } from '../utils/icons.js';
 import { handleExportReport } from '../application/export-workflow.js';
 import { Modal } from './modal.js';
 
@@ -61,9 +62,10 @@ export class ReportList {
     this._viewport = _el('div', 'vscroll-viewport');
     this._spacer = _el('div', 'vscroll-spacer');
     this._window = _el('div', 'vscroll-window');
+    this._window.setAttribute('role', 'list');
     this._spacer.appendChild(this._window);
     this._viewport.appendChild(this._spacer);
-    this._container.appendChild(this._viewport);
+    this._container.prepend(this._viewport);
 
     this._onScroll = this._render.bind(this);
     this._viewport.addEventListener('scroll', this._onScroll, { passive: true });
@@ -78,6 +80,8 @@ export class ReportList {
     this._reports = reports || [];
     this._query = query || '';
     this._buildRowItems();
+    const firstReportIdx = this._rowItems.findIndex(x => x.type === 'report');
+    this._focusedLogicalIndex = firstReportIdx >= 0 ? firstReportIdx : -1;
     this._render();
   }
 
@@ -85,7 +89,19 @@ export class ReportList {
     Object.assign(this._config, patch);
     this._updateDensityClass();
     this._buildRowItems();
+    this._clampFocusedLogicalIndex();
     this._render();
+  }
+
+  _clampFocusedLogicalIndex() {
+    const reportIdxs = this._reportRowIndices();
+    if (reportIdxs.length === 0) {
+      this._focusedLogicalIndex = -1;
+      return;
+    }
+    if (!reportIdxs.includes(this._focusedLogicalIndex)) {
+      this._focusedLogicalIndex = reportIdxs[0];
+    }
   }
 
   setSelected(reportId) {
@@ -209,6 +225,7 @@ export class ReportList {
     if (n === 0) {
       this._window.textContent = '';
       this._window.style.top = '0px';
+      this._viewport.tabIndex = -1;
       return;
     }
 
@@ -232,12 +249,17 @@ export class ReportList {
     const showEnvBadge = this._reports.some(r =>
       STAGE_RE.test(_hostFromUrl(r.url).toLowerCase()));
 
+    const focusedRow = this._focusedLogicalIndex;
+    const focusedIsReport = focusedRow >= 0 && this._rowItems[focusedRow]?.type === 'report';
+    const focusedInWindow = focusedIsReport && focusedRow >= startIdx && focusedRow < endIdx;
+    this._viewport.tabIndex = focusedIsReport && !focusedInWindow ? 0 : -1;
+
     const frag = document.createDocumentFragment();
     for (let i = startIdx; i < endIdx; i++) {
       const item = this._rowItems[i];
       frag.appendChild(item.type === 'header'
         ? this._renderHeader(item.label)
-        : this._renderCard(item.report, item.displayIndex, showEnvBadge));
+        : this._renderCard(item.report, item.displayIndex, showEnvBadge, i, focusedInWindow && i === focusedRow));
     }
 
     this._window.textContent = '';
@@ -251,7 +273,19 @@ export class ReportList {
     return header;
   }
 
-  _renderCard(report, displayIndex, showEnvBadge) {
+  _totalReportRows() {
+    return this._rowItems.filter(x => x.type === 'report').length;
+  }
+
+  _ariaPosInSetForRow(rowIndex) {
+    let c = 0;
+    for (let j = 0; j <= rowIndex; j++) {
+      if (this._rowItems[j]?.type === 'report') { c++; }
+    }
+    return c;
+  }
+
+  _renderCard(report, displayIndex, showEnvBadge, rowIndex, isRovingFocused) {
     const host = _hostFromUrl(report.url);
     const path = _lastPathSegment(report.url);
     const env = _envTag(report.url);
@@ -261,10 +295,23 @@ export class ReportList {
     const card = _el('div', 'report-card');
     card.dataset.reportId = report.id;
     card.setAttribute('role', 'listitem');
-    card.setAttribute('tabindex', '0');
+    card.setAttribute('tabindex', isRovingFocused ? '0' : '-1');
+    const setSize = this._totalReportRows();
+    const pos = this._ariaPosInSetForRow(rowIndex);
+    card.setAttribute('aria-setsize', String(setSize));
+    card.setAttribute('aria-posinset', String(pos));
 
     const roleLabel = isBaseline ? ' (Baseline)' : isCompare ? ' (Compare)' : '';
     card.setAttribute('aria-label', `Report ${displayIndex}: ${host}${path}, ${report.totalElements ?? 0} elements${roleLabel}`);
+
+    card.addEventListener('contextmenu', (e) => {
+      if (!window.electronAPI?.showContextMenu) { return; }
+      e.preventDefault();
+      window.electronAPI.showContextMenu({
+        reportId: report.id,
+        isBaseline,
+      });
+    });
 
     if (isBaseline) {
       const badge = _el('span', 'report-role-badge report-role-badge--baseline', 'B');
@@ -280,6 +327,7 @@ export class ReportList {
     body.style.cursor = 'pointer';
 
     const headerRow = _el('div', 'report-card-header');
+    headerRow.title = report.url || '';
     headerRow.appendChild(_el('span', 'report-index', `R${displayIndex}`));
     if (showEnvBadge && env) {
       headerRow.appendChild(
@@ -291,9 +339,12 @@ export class ReportList {
     body.appendChild(headerRow);
 
     const meta = _el('div', 'report-card-meta');
+    meta.title = report.url || '';
     meta.appendChild(_el('span', '', `${report.totalElements ?? 0} el`));
     meta.appendChild(_el('span', 'meta-sep', '·'));
-    meta.appendChild(_el('span', 'meta-path', path));
+    const pathSpan = _el('span', 'meta-path', path);
+    pathSpan.title = report.url || '';
+    meta.appendChild(pathSpan);
 
     const filter = _filterLabel(report.filters);
     if (filter) {
@@ -308,7 +359,8 @@ export class ReportList {
 
     if (report.source === 'imported') {
       meta.appendChild(_el('span', 'meta-sep', '·'));
-      const ib = _el('span', 'meta-imported-badge', '↑ imported');
+      const ib = _el('span', 'meta-imported-badge');
+      ib.innerHTML = `${iconArrowUp(12)}<span>imported</span>`;
       ib.title = 'Uploaded from file';
       meta.appendChild(ib);
     }
@@ -322,21 +374,23 @@ export class ReportList {
     const baselineBtn = _el('button', 'btn-ghost btn-sm');
     baselineBtn.title = 'Set as baseline';
     baselineBtn.setAttribute('aria-label', 'Set as baseline');
-    baselineBtn.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M3 12h6M15 12h6"/></svg>`;
+    baselineBtn.innerHTML = iconTarget(16);
     baselineBtn.addEventListener('click', e => { e.stopPropagation(); this._cb.onBaseline?.(report); });
     actions.appendChild(baselineBtn);
 
     const compareBtn = _el('button', 'btn-ghost btn-sm');
     compareBtn.title = 'Set as compare';
     compareBtn.setAttribute('aria-label', 'Set as compare');
-    compareBtn.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" aria-hidden="true"><path d="M8 6l4-4 4 4M16 18l-4 4-4-4M12 2v20"/></svg>`;
+    compareBtn.innerHTML = iconArrowUpDown(16);
     compareBtn.addEventListener('click', e => { e.stopPropagation(); this._cb.onCompare?.(report); });
     actions.appendChild(compareBtn);
 
     const details = document.createElement('details');
     details.className = 'export-dropdown';
-    const summary = _el('summary', 'btn-ghost btn-sm', 'Export ▾');
+    const summary = _el('summary', 'btn-ghost btn-sm');
+    summary.innerHTML = `Export ${iconChevronDown(12)}`;
     summary.title = 'Export options';
+    summary.setAttribute('aria-label', 'Export report options');
     details.appendChild(summary);
     const menu = _el('div', 'export-menu');
     menu.setAttribute('role', 'menu');
@@ -355,7 +409,7 @@ export class ReportList {
     const deleteBtn = _el('button', 'btn-icon-danger');
     deleteBtn.title = 'Delete report';
     deleteBtn.setAttribute('aria-label', `Delete report from ${sanitize(host)}`);
-    deleteBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>`;
+    deleteBtn.innerHTML = iconTrash2(16);
     deleteBtn.addEventListener('click', e => { e.stopPropagation(); this._cb.onDelete?.(report); });
     actions.appendChild(deleteBtn);
 
@@ -385,7 +439,11 @@ export class ReportList {
     if (item?.type !== 'report') return;
     requestAnimationFrame(() => {
       const card = this._window.querySelector(`.report-card[data-report-id="${item.report.id}"]`);
-      card?.focus();
+      if (card) {
+        card.focus();
+      } else if (this._viewport.tabIndex === 0) {
+        this._viewport.focus();
+      }
     });
   }
 
@@ -394,15 +452,23 @@ export class ReportList {
     if (reportIndices.length === 0) return;
 
     const focused = document.activeElement;
-    const focusedId = focused?.dataset?.reportId;
-    if (focusedId) {
-      const logIdx = this._rowItems.findIndex(
-        item => item.type === 'report' && item.report.id === focusedId
-      );
-      if (logIdx >= 0) this._focusedLogicalIndex = logIdx;
+    if (focused === this._viewport) {
+      /* Focus on viewport fallback when roving target row is off-screen; keep _focusedLogicalIndex */
+    } else {
+      const focusedId = focused?.dataset?.reportId;
+      if (focusedId) {
+        const logIdx = this._rowItems.findIndex(
+          item => item.type === 'report' && item.report.id === focusedId
+        );
+        if (logIdx >= 0) this._focusedLogicalIndex = logIdx;
+      }
     }
 
-    const currentPos = reportIndices.indexOf(this._focusedLogicalIndex);
+    let currentPos = reportIndices.indexOf(this._focusedLogicalIndex);
+    if (currentPos < 0) {
+      currentPos = 0;
+      this._focusedLogicalIndex = reportIndices[0];
+    }
 
     if (e.key === 'ArrowDown') {
       e.preventDefault();
@@ -418,16 +484,26 @@ export class ReportList {
       return;
     }
 
-    if (e.key === 'Enter' && focusedId) {
+    if (e.key === 'Enter') {
+      const id = focusedId
+        ?? (this._rowItems[this._focusedLogicalIndex]?.type === 'report'
+          ? this._rowItems[this._focusedLogicalIndex].report.id
+          : null);
+      if (!id) { return; }
       e.preventDefault();
-      const report = this._reports.find(r => r.id === focusedId);
+      const report = this._reports.find(r => r.id === id);
       if (report) this._cb.onSelect?.(report);
       return;
     }
 
-    if (e.key === 'Delete' && focusedId) {
+    if (e.key === 'Delete') {
+      const id = focusedId
+        ?? (this._rowItems[this._focusedLogicalIndex]?.type === 'report'
+          ? this._rowItems[this._focusedLogicalIndex].report.id
+          : null);
+      if (!id) { return; }
       e.preventDefault();
-      const report = this._reports.find(r => r.id === focusedId);
+      const report = this._reports.find(r => r.id === id);
       if (!report) return;
       Modal.confirm('Delete report', 'This cannot be undone.', { confirmText: 'Delete', destructive: true })
         .then(confirmed => { if (confirmed) this._cb.onDelete?.(report); });

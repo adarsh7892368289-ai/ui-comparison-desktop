@@ -1,6 +1,12 @@
 'use strict';
 
+import { getState } from '../state.js';
+
 const STATUS_CLASSES = ['status--active', 'status--success', 'status--error'];
+
+function _isMacPlatform() {
+  return typeof navigator !== 'undefined' && navigator.platform.startsWith('Mac');
+}
 
 export class StatusBar {
   constructor() {
@@ -10,8 +16,66 @@ export class StatusBar {
     this._successTimer = null;
 
     if (this._right) {
-      this._right.innerHTML =
-        '<kbd>/</kbd> search &nbsp; <kbd>Ctrl+K</kbd> actions &nbsp; <kbd>E</kbd> extract &nbsp; <kbd>C</kbd> compare';
+      this._right.replaceChildren();
+    }
+  }
+
+  _kbd(text) {
+    const k = document.createElement('kbd');
+    k.textContent = text;
+    return k;
+  }
+
+  _appendModPlusKey(frag, keyLetter) {
+    const isMac = _isMacPlatform();
+    frag.appendChild(this._kbd(isMac ? '⌘' : 'Ctrl'));
+    frag.appendChild(document.createTextNode('+'));
+    frag.appendChild(this._kbd(keyLetter));
+  }
+
+  /** Single phase-aware shortcut hint (right region). */
+  updateRightHint(state) {
+    if (!this._right) { return; }
+    this._right.replaceChildren();
+
+    const phase = state?.phase ?? 'idle';
+    const reportCount = state?.reports?.length ?? 0;
+
+    if (phase === 'idle' && reportCount === 0) {
+      return;
+    }
+
+    const frag = document.createDocumentFragment();
+
+    if (phase === 'idle' && reportCount > 0) {
+      this._appendModPlusKey(frag, 'K');
+      frag.appendChild(document.createTextNode(' Open commands'));
+      this._right.appendChild(frag);
+      return;
+    }
+
+    if (phase === 'extracting') {
+      /* No Esc cancel wired for extraction — omit shortcut hint. */
+      return;
+    }
+
+    if (phase === 'comparing') {
+      frag.appendChild(document.createTextNode('Comparing…'));
+      this._right.appendChild(frag);
+      return;
+    }
+
+    if (phase === 'done') {
+      this._appendModPlusKey(frag, 'K');
+      frag.appendChild(document.createTextNode(' Export or compare again'));
+      this._right.appendChild(frag);
+      return;
+    }
+
+    if (phase === 'error') {
+      frag.appendChild(this._kbd('Enter'));
+      frag.appendChild(document.createTextNode(' Dismiss'));
+      this._right.appendChild(frag);
     }
   }
 
@@ -33,12 +97,13 @@ export class StatusBar {
     const count = reports?.length ?? 0;
     if (count === 0) {
       this._left.textContent = 'No reports';
-      return;
+    } else {
+      const hosts = new Set(reports.map(r => {
+        try { return new URL(r.url).hostname; } catch { return r.url; }
+      }));
+      this._left.textContent = `${count} report${count !== 1 ? 's' : ''} \u00b7 ${hosts.size} host${hosts.size !== 1 ? 's' : ''}`;
     }
-    const hosts = new Set(reports.map(r => {
-      try { return new URL(r.url).hostname; } catch { return r.url; }
-    }));
-    this._left.textContent = `${count} report${count !== 1 ? 's' : ''} \u00b7 ${hosts.size} host${hosts.size !== 1 ? 's' : ''}`;
+    this.updateRightHint(getState());
   }
 
   updatePhase(state) {

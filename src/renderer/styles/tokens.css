@@ -19,6 +19,7 @@
   --color-surface-raised:     #1a2236;
   --color-surface-overlay:    #232f47;
   --color-surface-sunken:     #080d17;
+  --color-surface-hover:      #283550;
 
   /* Short aliases */
   --surface-base:             var(--color-surface-base);
@@ -35,48 +36,50 @@
   --border-default:           1px solid var(--color-border-default);
   --border-focus:             2px solid var(--color-brand);
 
-  /* ── Text ───────────────────────────────────────────────── */
-  --color-text-primary:       #e2e8f0;
-  --color-text-secondary:     #94a3b8;
-  --color-text-tertiary:      #64748b;
-  --color-text-disabled:      #4a5568;
+  /* ── Text (WCAG AA verified on #0f1523 and #1a2236) ─────── */
+  --color-text-primary:       #E8ECF2;
+  --color-text-secondary:     #A0AEC0;
+  --color-text-tertiary:      #7E8FA6;
+  --color-text-disabled:      #546378;
 
-  /* Neutral scale aliases (used by some stylesheets) */
+  /* Neutral scale aliases (used by some stylesheets) — [BONUS] chained to text tokens so one source of truth */
   --color-neutral-900:        #0a0e1a;
   --color-neutral-800:        #1c2333;
   --color-neutral-700:        #2d3748;
-  --color-neutral-500:        #64748b;
-  --color-neutral-400:        #94a3b8;
-  --color-neutral-200:        #e2e8f0;
+  --color-neutral-500:        var(--color-text-tertiary);
+  --color-neutral-400:        var(--color-text-secondary);
+  --color-neutral-200:        var(--color-text-primary);
   --color-neutral-100:        #f1f5f9;
   --color-neutral-50:         #f8fafc;
 
   /* ── Semantic colours ───────────────────────────────────── */
-  --color-success:            hsl(142 65% 32%);
-  --color-success-subtle:     hsl(142 65% 32% / 0.15);
-  --color-success-border:     hsl(142 65% 32% / 0.25);
+  --color-success:            hsl(142 65% 45%);
+  --color-success-fg:         hsl(142 60% 55%);
+  --color-success-subtle:     hsl(142 65% 45% / 0.12);
+  --color-success-border:     hsl(142 65% 45% / 0.30);
 
-  --color-warning:            hsl(38 90% 44%);
-  --color-warning-subtle:     hsl(38 90% 44% / 0.15);
-  --color-warning-border:     hsl(38 90% 44% / 0.25);
+  --color-warning:            hsl(38 90% 58%);
+  --color-warning-fg:         hsl(38 85% 60%);
+  --color-warning-subtle:     hsl(38 90% 58% / 0.12);
+  --color-warning-border:     hsl(38 90% 58% / 0.30);
 
   --color-destructive:        hsl(0 84% 54%);
   --color-destructive-subtle: hsl(0 84% 54% / 0.15);
   --color-destructive-border: hsl(0 84% 54% / 0.25);
 
   --color-white:              hsl(0 0% 100%);
-  --color-scrim:              hsl(0 0% 0% / 0.45);
+  --color-scrim:              hsl(220 40% 5% / 0.60);
   --color-shadow-dark:        hsl(0 0% 0% / 0.20);
 
   /* ── Severity ───────────────────────────────────────────── */
   --color-sev-critical:       hsl(0 84% 54%);
-  --color-sev-critical-bg:    hsl(0 84% 54% / 0.15);
+  --color-sev-critical-bg:    var(--color-destructive-subtle);
   --color-sev-high:           hsl(25 95% 50%);
   --color-sev-high-bg:        hsl(25 95% 50% / 0.15);
-  --color-sev-medium:         hsl(38 90% 44%);
-  --color-sev-medium-bg:      hsl(38 90% 44% / 0.15);
-  --color-sev-low:            hsl(142 65% 32%);
-  --color-sev-low-bg:         hsl(142 65% 32% / 0.15);
+  --color-sev-medium:         var(--color-warning);
+  --color-sev-medium-bg:      hsl(38 90% 58% / 0.15);
+  --color-sev-low:            var(--color-success);
+  --color-sev-low-bg:         var(--color-success-subtle);
 
   /* Short aliases (used by result-panel.css) */
   --severity-critical:        var(--color-sev-critical);
@@ -89,11 +92,12 @@
   --severity-low-subtle:      var(--color-sev-low-bg);
 
   /* Badge colours */
-  --color-badge-added-bg:     hsl(142 65% 32% / 0.15);
-  --color-badge-removed-bg:   hsl(0 84% 54% / 0.15);
+  --color-badge-added-bg:     var(--color-success-subtle);
+  --color-badge-removed-bg:   var(--color-destructive-subtle);
 
   --color-brand-subtle-strong: hsl(221 83% 53% / 0.12);
-  --color-success-text:       hsl(142 65% 48%);
+  /* [BONUS] Single success-on-text token: alias legacy --color-success-text to --color-success-fg */
+  --color-success-text:       var(--color-success-fg);
 
   --color-coverage-matched:   var(--color-success);
   --color-coverage-modified:  var(--color-warning);
@@ -102,14 +106,16 @@
 
   /* ── Typography ─────────────────────────────────────────── */
   --font-sans: -apple-system, BlinkMacSystemFont, 'Inter', system-ui, sans-serif;
-  --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
 
-  --text-xs:   10px;
-  --text-sm:   11px;
+  --text-2xs:  10px;
+  --text-xs:   11px;
+  --text-sm:   12px;
   --text-base: 13px;
-  --text-lg:   15px;
+  --text-md:   14px;
+  --text-lg:   16px;
   --text-xl:   20px;
-  --text-2xl:  24px;
+  --text-2xl:  28px;
 
   --weight-regular:  400;
   --weight-medium:   500;
@@ -131,7 +137,7 @@
   --space-8:  32px;
   --space-10: 40px;
   --space-12: 48px;
-  --space-section: 24px;
+  --space-section: var(--space-6);
 
   /* ── Radii ──────────────────────────────────────────────── */
   --radius-xs:   4px;
@@ -142,14 +148,17 @@
   --radius-full: 9999px;
 
   /* ── Shadows ────────────────────────────────────────────── */
-  --shadow-sm: 0 1px 2px hsl(240 10% 10% / 0.06), 0 1px 3px hsl(240 10% 10% / 0.04);
-  --shadow-md: 0 4px 12px hsl(240 10% 10% / 0.08), 0 2px 6px hsl(240 10% 10% / 0.05);
-  --shadow-lg: 0 8px 24px hsl(240 10% 10% / 0.10), 0 2px 6px hsl(240 10% 10% / 0.06);
-  --shadow-up-md: 0 -4px 12px hsl(240 10% 10% / 0.12), 0 -1px 3px hsl(240 10% 10% / 0.06);
+  --shadow-sm:  0 1px 2px hsl(220 40% 5% / 0.32);
+  --shadow-md:  0 4px 8px hsl(220 40% 5% / 0.40), 0 1px 3px hsl(220 40% 5% / 0.24);
+  --shadow-lg:  0 8px 24px hsl(220 40% 5% / 0.48), 0 2px 6px hsl(220 40% 5% / 0.32);
+  /* [BONUS] Match upward shadow to functional opacity (was ~0.12 max, invisible on dark UI) */
+  --shadow-up-md: 0 -4px 8px hsl(220 40% 5% / 0.40), 0 -1px 3px hsl(220 40% 5% / 0.24);
 
   /* ── Motion ─────────────────────────────────────────────── */
-  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
-  --ease-spring:   cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-standard:    cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-decelerate:  cubic-bezier(0, 0, 0.2, 1);
+  --ease-accelerate:  cubic-bezier(0.4, 0, 1, 1);
+  --ease-spring:      cubic-bezier(0.34, 1.56, 0.64, 1);
 
   --dur-instant: 80ms;
   --dur-fast:    120ms;
@@ -159,8 +168,8 @@
 
   --status-bar-height: 28px;
 
-  /* Short aliases */
-  --transition-fast:   var(--dur-fast) ease;
-  --transition-normal: var(--dur-base) ease;
-  --transition-slow:   var(--dur-slow) ease;
+  /* Short aliases — use --ease-standard instead of keyword ease */
+  --transition-fast:   var(--dur-fast) var(--ease-standard);
+  --transition-normal: var(--dur-base) var(--ease-standard);
+  --transition-slow:   var(--dur-slow) var(--ease-standard);
 }
