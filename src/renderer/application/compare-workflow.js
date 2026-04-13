@@ -2,6 +2,7 @@ import { dispatch, getState } from '../state.js';
 import storage from '../../infrastructure/idb-repository.js';
 import { buildPairKey } from '../../infrastructure/idb-repository.js';
 import { assessUrlCompatibility } from '@core/comparison/url-compatibility.js';
+import { iconSpinner } from '../utils/icons.js';
 import {
   Toast,
   setError,
@@ -15,8 +16,11 @@ const api = window.electronAPI;
 function scrollCompareResultsIntoView() {
   const el = document.getElementById('compare-results');
   if (!el) { return; }
+  /* Double rAF: layout + result-panel paint after synchronous render (Session 9) */
   requestAnimationFrame(() => {
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    requestAnimationFrame(() => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
   });
 }
 
@@ -97,8 +101,10 @@ async function handleComparison() {
 
   setError('compare', '');
   const compareBtn = document.getElementById('compare-btn');
-  compareBtn.disabled    = true;
-  compareBtn.textContent = 'Comparing…';
+  const originalHTML = compareBtn.innerHTML;
+  compareBtn.style.minWidth = compareBtn.offsetWidth + 'px';   // lock width BEFORE innerHTML change
+  compareBtn.disabled  = true;
+  compareBtn.innerHTML = `${iconSpinner(14)} <span>Comparing…</span>`;
 
   try {
     const compat = assessUrlCompatibility(baselineReport.url, compareReport.url);
@@ -110,7 +116,8 @@ async function handleComparison() {
       Toast.error(msg);
       dispatch('RESET_COMPARISON', {});
       compareBtn.disabled    = false;
-      compareBtn.textContent = 'Compare Reports';
+      compareBtn.innerHTML   = originalHTML;
+      compareBtn.style.minWidth = '';
       return;
     }
     if (compat.classification === 'CAUTION') {
@@ -228,7 +235,8 @@ async function handleComparison() {
   } finally {
     off();
     compareBtn.disabled    = false;
-    compareBtn.textContent = 'Compare Reports';
+    compareBtn.innerHTML   = originalHTML;
+    compareBtn.style.minWidth = '';
     hideProgress('compare');
   }
 }

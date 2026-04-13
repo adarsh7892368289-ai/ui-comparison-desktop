@@ -13,6 +13,12 @@ import { handleExportReport } from './export-workflow.js';
 import { tryLoadCachedComparison } from './compare-workflow.js';
 import { relativeTime } from '../utils/time.js';
 import { createReportList } from '../components/report-list.js';
+import {
+  wireReportSelect,
+  refreshReportSelectPanel,
+  syncReportSelectTrigger,
+} from '../components/report-select-combobox.js';
+import { iconSpinner } from '../utils/icons.js';
 
 let _reportList = null;
 
@@ -21,7 +27,10 @@ const api = window.electronAPI;
 function selectBaselineFromReport(report) {
   dispatch('BASELINE_SELECTED', { id: report.id });
   const sel = document.getElementById('baseline-report');
-  if (sel) { sel.value = report.id; }
+  if (sel) {
+    sel.value = report.id;
+    syncReportSelectTrigger(sel);
+  }
   syncCompareButton();
   tryLoadCachedComparison();
 }
@@ -29,7 +38,10 @@ function selectBaselineFromReport(report) {
 function selectCompareFromReport(report) {
   dispatch('COMPARE_SELECTED', { id: report.id });
   const sel = document.getElementById('compare-report');
-  if (sel) { sel.value = report.id; }
+  if (sel) {
+    sel.value = report.id;
+    syncReportSelectTrigger(sel);
+  }
   syncCompareButton();
   tryLoadCachedComparison();
 }
@@ -49,7 +61,7 @@ function lastPathSegment(url) {
 
 function sanitizeFilename(name) {
   const cleaned = String(name ?? 'export')
-    .replace(/[^a-zA-Z0-9_.\-]+/g, '-')
+    .replace(/[^a-zA-Z0-9_.-]+/g, '-')
     .replace(/[-_.]{2,}/g, '-')
     .replace(/^[-_.]+|[-_.]+$/g, '')
     .slice(0, 200);
@@ -78,6 +90,7 @@ function insertReportListSkeletonOverlay() {
 }
 
 function renderReportList(reports, searchQuery) {
+  /* Remove skeleton before virtual list paints so skeleton + first card never overlap (Session 9) */
   document.querySelector('#reports-list .report-list-skeleton-overlay')?.remove();
   _reportList?.setReports(reports, searchQuery ?? '');
   const empty = document.getElementById('reports-empty');
@@ -121,9 +134,13 @@ function populateReportSelectors(reports) {
       const label       = `${importedPfx}R${displayIdx} · ${envPrefix}${host}${path}`;
       const opt         = new Option(label, r.id);
       opt.title         = `${r.url} · ${r.totalElements ?? 0} elements · ${relativeTime(r.timestamp)}`;
+      opt.dataset.reportUrl       = r.url || '';
+      opt.dataset.reportElements  = String(r.totalElements ?? 0);
+      opt.dataset.reportTime      = relativeTime(r.timestamp);
       if (r.id === current) { opt.selected = true; }
       sel.appendChild(opt);
     });
+    refreshReportSelectPanel(sel);
   });
   syncCompareButton();
 }
@@ -175,8 +192,10 @@ async function handleExtraction() {
     return;
   }
   setError('extract', '');
-  extractBtn.disabled    = true;
-  extractBtn.textContent = 'Extracting…';
+  const originalHTML = extractBtn.innerHTML;
+  extractBtn.style.minWidth = extractBtn.offsetWidth + 'px';   // lock width BEFORE innerHTML change
+  extractBtn.disabled  = true;
+  extractBtn.innerHTML = `${iconSpinner(14)} <span>Extracting…</span>`;
   showProgress('extract', 'Starting…');
 
   const offExtraction = api.onExtractionProgress((data) => {
@@ -218,7 +237,8 @@ async function handleExtraction() {
   } finally {
     offExtraction();
     extractBtn.disabled    = false;
-    extractBtn.textContent = 'Extract Elements';
+    extractBtn.innerHTML   = originalHTML;
+    extractBtn.style.minWidth = '';
     hideProgress('extract');
   }
 }
@@ -252,7 +272,7 @@ async function initializeApp() {
           selectCompareFromReport(report);
           break;
         case 'export':
-          if (payload.format === 'json' || payload.format === 'html') {
+          if (['json', 'html', 'csv', 'excel'].includes(payload.format)) {
             handleExportReport(report, payload.format);
           }
           break;
@@ -292,6 +312,11 @@ async function initializeApp() {
       renderReportList(getState().reports ?? [], e.target.value);
     }, 200);
   });
+
+  const baselineSelect = document.getElementById('baseline-report');
+  const compareSelect = document.getElementById('compare-report');
+  if (baselineSelect) { wireReportSelect(baselineSelect); }
+  if (compareSelect) { wireReportSelect(compareSelect); }
 
   await loadAndRenderReports();
 }

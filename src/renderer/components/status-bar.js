@@ -1,10 +1,12 @@
 'use strict';
 
-import { getState } from '../state.js';
-
 const STATUS_CLASSES = ['status--active', 'status--success', 'status--error'];
 
 function _isMacPlatform() {
+  const p = typeof window !== 'undefined' ? window.electronAPI?.platform : undefined;
+  if (typeof p === 'string') {
+    return p === 'darwin';
+  }
   return typeof navigator !== 'undefined' && navigator.platform.startsWith('Mac');
 }
 
@@ -103,15 +105,14 @@ export class StatusBar {
       }));
       this._left.textContent = `${count} report${count !== 1 ? 's' : ''} \u00b7 ${hosts.size} host${hosts.size !== 1 ? 's' : ''}`;
     }
-    this.updateRightHint(getState());
   }
 
   updatePhase(state) {
-    if (!this._center) return;
     this._clearSuccessTimer();
     const { phase, progress, comparison } = state;
 
-    switch (phase) {
+    if (this._center) {
+      switch (phase) {
       case 'idle':
         this._center.textContent = '';
         this._setStatusClass(null);
@@ -147,7 +148,10 @@ export class StatusBar {
       default:
         this._center.textContent = '';
         this._setStatusClass(null);
+      }
     }
+
+    this.updateRightHint(state);
   }
 }
 

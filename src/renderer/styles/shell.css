@@ -1,7 +1,7 @@
 #app-root {
   display: grid;
   grid-template-rows: 48px auto 1fr var(--status-bar-height);
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: 260px 1fr;
   grid-template-areas:
     "toolbar    toolbar"
     "banner     banner"
@@ -9,7 +9,7 @@
     "statusbar  statusbar";
   height: 100vh;
   overflow: hidden;
-  background: var(--surface-base);
+  background: var(--color-surface-base);
 }
 
 #system-banner-slot {
@@ -23,13 +23,18 @@
 #app-toolbar {
   grid-area: toolbar;
   height: 48px;
-  background: var(--surface-raised);
-  border-bottom: var(--border-subtle);
+  background: var(--color-surface-raised);
+  border-bottom: 1px solid var(--color-border-subtle);
   display: flex;
   align-items: center;
   padding: 0 var(--space-4);
   gap: var(--space-4);
   flex-shrink: 0;
+}
+
+/* macOS hiddenInset: traffic lights at x≈12 span ~52px — inset keeps brand/breadcrumb clear */
+html.platform-darwin #app-toolbar {
+  padding-left: 72px;
 }
 
 #app-toolbar .header-brand {
@@ -38,9 +43,9 @@
 
 #left-panel {
   grid-area: left-panel;
-  width: 280px;
-  background: var(--surface-raised);
-  border-right: var(--border-subtle);
+  width: 260px;
+  background: var(--color-surface-raised);
+  border-right: 1px solid var(--color-border-subtle);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -71,9 +76,14 @@
   min-width: 32px;
   padding-left: var(--space-2);
   padding-right: var(--space-2);
-  font-size: var(--text-lg);
   line-height: 1;
   letter-spacing: 0;
+  justify-content: center;
+}
+
+#left-panel .sidebar-overflow__summary svg {
+  display: block;
+  flex-shrink: 0;
 }
 
 #left-panel .search-bar-wrap {
@@ -88,21 +98,23 @@
 
 #main-content {
   grid-area: main-content;
-  display: grid;
-  grid-template-rows: auto 1fr;
-  overflow: hidden;
-  background: var(--surface-base);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  background: var(--color-surface-base);
 }
 
 #main-controls {
-  overflow-y: auto;
   padding: var(--space-6);
+  flex-shrink: 0;
 }
 
 #compare-results {
-  overflow-y: auto;
   padding: var(--space-6);
   border-top: 1px solid var(--color-border-subtle, #2d3748);
+  flex-shrink: 0;
 }
 
 #compare-results:empty {
@@ -117,7 +129,7 @@
   gap: var(--space-3);
   padding: var(--space-2) var(--space-4);
   font-size: var(--text-sm);
-  font-weight: var(--font-semibold, 600);
+  font-weight: var(--weight-semibold);
   border-bottom: 1px solid transparent;
 }
 
@@ -157,14 +169,14 @@
 #status-bar {
   grid-area: statusbar;
   height: var(--status-bar-height);
-  background: var(--surface-overlay);
-  border-top: var(--border-subtle);
+  background: var(--color-surface-overlay);
+  border-top: 1px solid var(--color-border-subtle);
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 var(--space-3);
   font-size: var(--text-xs);
-  color: var(--color-neutral-400);
+  color: var(--color-text-secondary);
   flex-shrink: 0;
 }
 
@@ -185,8 +197,8 @@
 .status-right kbd {
   display: inline-block;
   padding: 0 4px;
-  background: var(--surface-base, #0f1523);
-  border: 1px solid var(--color-neutral-700, #2d3748);
+  background: var(--color-surface-base, #0f1523);
+  border: 1px solid var(--color-border-subtle);
   border-radius: 3px;
   font-family: var(--font-mono, monospace);
   font-size: 9px;

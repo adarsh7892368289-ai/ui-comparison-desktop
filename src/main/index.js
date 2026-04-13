@@ -141,6 +141,8 @@ app.on('ready', () => {
         { label: 'Set as Compare', click: () => send({ action: 'compare', reportId }) },
         { type: 'separator' },
         { label: 'Export as JSON', click: () => send({ action: 'export', format: 'json', reportId }) },
+        { label: 'Export as Excel', click: () => send({ action: 'export', format: 'excel', reportId }) },
+        { label: 'Export as CSV', click: () => send({ action: 'export', format: 'csv', reportId }) },
         { label: 'Export as HTML', click: () => send({ action: 'export', format: 'html', reportId }) },
         { type: 'separator' },
         { label: 'Delete', click: () => send({ action: 'delete', reportId }) },

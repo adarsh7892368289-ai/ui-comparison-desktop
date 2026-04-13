@@ -2,6 +2,7 @@
 
 import logger from '../infrastructure/logger.js';
 import errorTracker from '../infrastructure/error-tracker.js';
+import storage from '../infrastructure/idb-repository.js';
 
 logger.init();
 errorTracker.init();
@@ -30,7 +31,9 @@ import {
   iconFileDown,
   iconGitCompare,
   iconGlobe,
+  iconLayoutGrid,
   iconList,
+  iconMoreHorizontal,
   iconPlay,
   iconSearch,
   iconTrash2,
@@ -61,6 +64,23 @@ let _cmdPalette         = null;
 let _statusBar          = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
+  if (api.platform === 'darwin') {
+    document.documentElement.classList.add('platform-darwin');
+  }
+
+  const exportAllToolbarBtn = document.getElementById('export-all-btn');
+  if (exportAllToolbarBtn && !exportAllToolbarBtn.querySelector('svg')) {
+    exportAllToolbarBtn.insertAdjacentHTML('afterbegin', iconFileDown(13));
+  }
+  const densityBtn = document.getElementById('density-toggle-btn');
+  if (densityBtn && !densityBtn.querySelector('svg')) {
+    densityBtn.insertAdjacentHTML('afterbegin', iconLayoutGrid(16));
+  }
+  const overflowSummary = document.querySelector('.sidebar-overflow__summary');
+  if (overflowSummary && !overflowSummary.querySelector('svg')) {
+    overflowSummary.insertAdjacentHTML('afterbegin', iconMoreHorizontal(16));
+  }
+
   insertReportListSkeletonOverlay();
   await initializeApp();
 
@@ -70,8 +90,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     _resultPanel.clear();
   }
 
-  if (localStorage.getItem('ui-compare-v5-upgrade-data-cleared')) {
-    localStorage.removeItem('ui-compare-v5-upgrade-data-cleared');
+  if (await storage.consumeV5UpgradeDataClearedNotice()) {
     Toast.show(
       'A database upgrade cleared your stored reports. Export your data before upgrading in future.',
       'warning',
@@ -98,16 +117,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   _statusBar.updatePhase(getState());
   _statusBar.updateReportCount(getState().reports);
 
+  const isMac =
+    typeof api.platform === 'string'
+      ? api.platform === 'darwin'
+      : typeof navigator !== 'undefined' && navigator.platform.startsWith('Mac');
+
   _cmdPalette.registerCommands([
     { id: 'go-extract',  label: 'Go to Extract',        icon: iconGlobe(), shortcut: 'E',         keywords: ['extract', 'capture', 'dom'],       action: () => _appShell.activateSection('extract') },
     { id: 'go-compare',  label: 'Go to Compare',         icon: iconGitCompare(), shortcut: 'C',         keywords: ['compare', 'diff', 'regression'],   action: () => _appShell.activateSection('compare') },
     { id: 'go-reports',  label: 'Focus Report List',     icon: iconList(), shortcut: 'R',         keywords: ['reports', 'list', 'history'],       action: () => document.getElementById('search-reports')?.focus() },
     { id: 'search',      label: 'Search Reports',        icon: iconSearch(), shortcut: '/',         keywords: ['search', 'filter', 'find'],        action: () => document.getElementById('search-reports')?.focus() },
-    { id: 'extract',     label: 'Start Extraction',      icon: iconPlay(), shortcut: '',          keywords: ['run', 'start', 'capture'],         action: () => document.getElementById('extract-btn')?.click() },
-    { id: 'compare',     label: 'Run Comparison',        icon: iconGitCompare(), shortcut: '',          keywords: ['run', 'compare', 'diff'],          action: () => document.getElementById('compare-btn')?.click() },
-    { id: 'export-html', label: 'Export as HTML',        icon: iconFileDown(), shortcut: '',          keywords: ['export', 'html', 'download'],      action: () => { if (document.getElementById('export-format-select')?.value === 'html') { document.getElementById('export-comparison-btn')?.click(); } } },
-    { id: 'delete-all',  label: 'Delete All Reports',    icon: iconTrash2(), shortcut: '',          keywords: ['delete', 'clear', 'remove all'],   action: () => document.getElementById('delete-all-btn')?.click() },
-    { id: 'diagnostics', label: 'Open Diagnostics Panel',icon: iconActivity(), shortcut: 'Ctrl+⇧+D', keywords: ['perf', 'metrics', 'debug'],        action: () => showDiagnosticsPanel() },
+    { id: 'extract',     label: 'Start Extraction',      icon: iconPlay(), shortcut: '',          keywords: ['run', 'start', 'capture'],         action: () => { const btn = document.getElementById('extract-btn'); if (btn && !btn.disabled) btn.click(); } },
+    { id: 'compare',     label: 'Run Comparison',        icon: iconGitCompare(), shortcut: '',          keywords: ['run', 'compare', 'diff'],          action: () => { const btn = document.getElementById('compare-btn'); if (btn && !btn.disabled) btn.click(); } },
+    { id: 'export-html', label: 'Export as HTML',        icon: iconFileDown(), shortcut: '',          keywords: ['export', 'html', 'download'],      action: () => { const btn = document.getElementById('export-comparison-btn'); if (btn && !btn.disabled && document.getElementById('export-format-select')?.value === 'html') btn.click(); } },
+    { id: 'delete-all',  label: 'Delete All Reports',    icon: iconTrash2(), shortcut: '',          keywords: ['delete', 'clear', 'remove all'],   action: () => { const btn = document.getElementById('delete-all-btn'); if (btn && !btn.disabled) btn.click(); } },
+    { id: 'diagnostics', label: 'Open Diagnostics Panel',icon: iconActivity(), shortcut: isMac ? '⌘⇧D' : 'Ctrl+⇧+D', keywords: ['perf', 'metrics', 'debug'],        action: () => showDiagnosticsPanel() },
   ]);
 
   document.getElementById('cmd-palette-trigger')
@@ -118,16 +142,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   _appShell.activateSection('extract');
 
-  const isMac = typeof navigator !== 'undefined' && navigator.platform.startsWith('Mac');
   const paletteShortcut = isMac ? '⌘K' : 'Ctrl+K';
   const cmdTrigger = document.getElementById('cmd-palette-trigger');
-  const cmdShortcutSpan = cmdTrigger?.querySelector('span');
+  const cmdShortcutSpan = document.getElementById('cmd-palette-shortcut');
   if (cmdShortcutSpan) { cmdShortcutSpan.textContent = paletteShortcut; }
   cmdTrigger?.setAttribute('aria-label', `Command palette (${paletteShortcut})`);
 
   document.getElementById('url-input')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.repeat) {
-      document.getElementById('extract-btn')?.click();
+      const btn = document.getElementById('extract-btn');
+      if (btn && !btn.disabled) btn.click();
     }
   });
 
@@ -161,9 +185,21 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   document.getElementById('extract-btn')?.addEventListener('click', handleExtraction);
 
+  const closeSidebarToolbarOverflow = () => {
+    document.querySelector('.sidebar-toolbar-overflow')?.removeAttribute('open');
+  };
+
   document.getElementById('export-all-btn')?.addEventListener('click', handleExportAllReports);
 
-  document.getElementById('delete-all-btn')?.addEventListener('click', handleDeleteAllReports);
+  document.getElementById('export-all-overflow-btn')?.addEventListener('click', () => {
+    closeSidebarToolbarOverflow();
+    void handleExportAllReports();
+  });
+
+  document.getElementById('delete-all-btn')?.addEventListener('click', async () => {
+    closeSidebarToolbarOverflow();
+    await handleDeleteAllReports();
+  });
 
 
 
@@ -208,7 +244,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('compare-btn')?.addEventListener('click', handleComparison);
 
   document.addEventListener('keydown', async (e) => {
-    if (!e.ctrlKey || !e.shiftKey || e.key !== 'D') { return; }
+    const mod = e.metaKey || e.ctrlKey;
+    if (!mod || !e.shiftKey || e.key.toLowerCase() !== 'd') { return; }
     e.preventDefault();
     showDiagnosticsPanel();
   });

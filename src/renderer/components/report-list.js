@@ -5,7 +5,8 @@ import { handleExportReport } from '../application/export-workflow.js';
 import { Modal } from './modal.js';
 
 const HEADER_HEIGHT = 28;
-const DENSITY_HEIGHTS = { compact: 44, default: 64, comfortable: 80 };
+/* Compact row must fit 44px touch targets on card actions (see base.css .btn-sm) */
+const DENSITY_HEIGHTS = { compact: 52, default: 64, comfortable: 80 };
 const OVERSCAN = 3;
 const STAGE_RE = /\b(stage|staging|dev|test|qa|uat|preview|sandbox|canary)\b/i;
 
@@ -325,10 +326,13 @@ export class ReportList {
 
     const body = _el('div', 'report-card-body');
     body.style.cursor = 'pointer';
+    body.title = report.url || '';
 
     const headerRow = _el('div', 'report-card-header');
     headerRow.title = report.url || '';
-    headerRow.appendChild(_el('span', 'report-index', `R${displayIndex}`));
+    const indexSpan = _el('span', 'report-index', `R${displayIndex}`);
+    indexSpan.title = report.url || '';
+    headerRow.appendChild(indexSpan);
     if (showEnvBadge && env) {
       headerRow.appendChild(
         _el('span', `env-badge env-badge--${env.toLowerCase()}`, env));
@@ -452,10 +456,9 @@ export class ReportList {
     if (reportIndices.length === 0) return;
 
     const focused = document.activeElement;
-    if (focused === this._viewport) {
-      /* Focus on viewport fallback when roving target row is off-screen; keep _focusedLogicalIndex */
-    } else {
-      const focusedId = focused?.dataset?.reportId;
+    let focusedId = null;   // hoisted — must be let, not const
+    if (focused !== this._viewport) {
+      focusedId = focused?.dataset?.reportId ?? null;
       if (focusedId) {
         const logIdx = this._rowItems.findIndex(
           item => item.type === 'report' && item.report.id === focusedId

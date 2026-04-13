@@ -106,3 +106,25 @@ export function iconArrowUpDown(size = 16) {
 export function iconArrowUp(size = 16) {
   return svg('<line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>', size);
 }
+
+/** Density toggle (was ⊞ U+229E) */
+export function iconLayoutGrid(size = 16) {
+  return svg(
+    '<rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/>',
+    size
+  );
+}
+
+/** Overflow / more menu trigger (was ⋯ U+22EF) */
+export function iconMoreHorizontal(size = 16) {
+  return svg('<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>', size);
+}
+
+/** Animated loading spinner — use with .icon-spin CSS class */
+export function iconSpinner(size = 16) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+    aria-hidden="true" class="icon-spin">
+    <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+  </svg>`;
+}

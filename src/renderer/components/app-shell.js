@@ -45,6 +45,10 @@ export class AppShell {
   }
 
   _clearBodyTransitionEnd(body) {
+    if (body._accordionOpenFallback != null) {
+      clearTimeout(body._accordionOpenFallback);
+      body._accordionOpenFallback = null;
+    }
     if (body._accordionTransitionEnd) {
       body.removeEventListener('transitionend', body._accordionTransitionEnd);
       body._accordionTransitionEnd = null;
@@ -80,14 +84,23 @@ export class AppShell {
       body.offsetHeight; /* force reflow so transition runs */
       const targetH = body.scrollHeight;
       body.style.height = `${targetH}px`;
-      const onEnd = (ev) => {
-        if (ev.propertyName !== 'height') { return; }
+      /* transitionend can be skipped (display:none parent, reduced intermediate state) — timeout releases height:auto */
+      const OPEN_FALLBACK_MS = 320;
+      let openSettled = false;
+      const finishOpen = () => {
+        if (openSettled) { return; }
+        openSettled = true;
+        this._clearBodyTransitionEnd(body);
         body.style.height = 'auto';
         body.style.overflow = '';
-        body._accordionTransitionEnd = null;
+      };
+      const onEnd = (ev) => {
+        if (ev.propertyName !== 'height' || ev.target !== body) { return; }
+        finishOpen();
       };
       body._accordionTransitionEnd = onEnd;
-      body.addEventListener('transitionend', onEnd, { once: true });
+      body.addEventListener('transitionend', onEnd);
+      body._accordionOpenFallback = setTimeout(finishOpen, OPEN_FALLBACK_MS);
     } else {
       /* Use layout height (not scrollHeight) so closing mid-open animation does not jump. */
       const startH = Math.max(body.getBoundingClientRect().height, 1);

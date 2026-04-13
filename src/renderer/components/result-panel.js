@@ -173,10 +173,60 @@ export class ResultPanel {
   _buildSummaryBar(matching, mode, duration, cachedAt, rateClass) {
     const bar = _ce('div', 'result-summary-bar');
 
+    const pct   = matching.matchRate ?? 0;
+    const r     = 30;
+    const cx    = 40;
+    const cy    = 40;
+    const circ  = 2 * Math.PI * r;           // ~188.5
+    const filled = (pct / 100) * circ;
+    const gap    = circ - filled;
+
+    const arcColor = rateClass === 'rate-critical' ? 'var(--severity-critical)'
+                   : rateClass === 'rate-high'     ? 'var(--severity-high)'
+                   :                                 'var(--color-success)';
+
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const svgEl = document.createElementNS(svgNS, 'svg');
+    svgEl.setAttribute('width',   '80');
+    svgEl.setAttribute('height',  '80');
+    svgEl.setAttribute('viewBox', '0 0 80 80');
+    svgEl.setAttribute('class',   'match-rate-donut');
+    svgEl.setAttribute('aria-label', `${pct}% match rate`);
+    svgEl.setAttribute('role', 'img');
+
+    // Track arc (unfilled)
+    const track = document.createElementNS(svgNS, 'circle');
+    track.setAttribute('cx', cx); track.setAttribute('cy', cy); track.setAttribute('r', r);
+    track.setAttribute('fill', 'none');
+    track.setAttribute('stroke', 'var(--color-surface-raised)');
+    track.setAttribute('stroke-width', '8');
+
+    // Filled arc — starts at 12 o'clock via transform rotate(-90)
+    const arc = document.createElementNS(svgNS, 'circle');
+    arc.setAttribute('cx', cx); arc.setAttribute('cy', cy); arc.setAttribute('r', r);
+    arc.setAttribute('fill', 'none');
+    arc.setAttribute('stroke', arcColor);
+    arc.setAttribute('stroke-width', '8');
+    arc.setAttribute('stroke-linecap', 'round');
+    arc.setAttribute('stroke-dasharray', `${filled} ${gap}`);
+    arc.setAttribute('transform', `rotate(-90 ${cx} ${cy})`);
+
+    // Center percentage text — 16px keeps "100%" within 44px inner diameter
+    const label = document.createElementNS(svgNS, 'text');
+    label.setAttribute('x', cx); label.setAttribute('y', cy);
+    label.setAttribute('dominant-baseline', 'central');
+    label.setAttribute('text-anchor', 'middle');
+    label.setAttribute('font-size', '16');
+    label.setAttribute('font-weight', '600');
+    label.setAttribute('fill', 'var(--color-text-primary)');
+    label.textContent = `${pct}%`;
+
+    svgEl.appendChild(track);
+    svgEl.appendChild(arc);
+    svgEl.appendChild(label);
+
     const group = _ce('div', 'match-rate-group');
-    const circle = _ce('div', `match-rate-circle ${rateClass}`);
-    circle.appendChild(_text('span', 'match-rate-value', `${matching.matchRate}%`));
-    group.appendChild(circle);
+    group.appendChild(svgEl);
     group.appendChild(_text('span', 'match-rate-label', 'match rate'));
     bar.appendChild(group);
 
@@ -219,7 +269,7 @@ export class ResultPanel {
     statDefs.forEach(({ val, label }) => {
       const stat = _ce('div', 'coverage-stat');
       const dot = _ce('span', 'coverage-dot');
-      dot.style.background = dotColors[label] || 'var(--color-neutral-400)';
+      dot.style.background = dotColors[label] || 'var(--color-text-secondary)';
       const valueRow = _ce('div', 'coverage-stat-value');
       valueRow.textContent = String(val);
       stat.appendChild(dot);

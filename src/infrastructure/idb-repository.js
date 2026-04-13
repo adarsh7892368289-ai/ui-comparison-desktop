@@ -4,7 +4,7 @@ import logger from './logger.js';
 import { performanceMonitor } from './performance-monitor.js';
 
 const DB_NAME                    = 'ui_comparison_db';
-const DB_VERSION                 = 7;
+const DB_VERSION                 = 8;
 const STORE_REPORTS              = 'reports';
 const STORE_ELEMENTS             = 'elements';
 const STORE_COMPARISONS          = 'comparisons';
@@ -14,6 +14,9 @@ const STORE_VISUAL_BLOBS         = 'visual_blobs';
 const STORE_VISUAL_KEYFRAMES     = 'visual_keyframes';
 const STORE_VISUAL_ELEMENT_RECTS = 'visual_element_rects';
 const STORE_OP_LOG               = 'operation_log';
+const STORE_APP_META             = 'app_meta';
+/** Pending user-visible notice after V5 upgrade cleared report data */
+const META_KEY_V5_DATA_CLEARED   = 'v5_upgrade_data_cleared_notice';
 const MAX_COMPARISONS            = 20;
 const OP_STATUS_PENDING          = 'PENDING';
 const OP_STATUS_COMPLETE         = 'COMPLETE';
@@ -134,7 +137,14 @@ function upgradeToV5(upgradeTx) {
   };
 
   upgradeTx.addEventListener('complete', () => {
-    localStorage.setItem('ui-compare-v5-upgrade-data-cleared', 'true');
+    const db = upgradeTx.db;
+    if (!db.objectStoreNames.contains(STORE_APP_META)) { return; }
+    const tx = db.transaction([STORE_APP_META], 'readwrite');
+    tx.objectStore(STORE_APP_META).put({
+      key:     META_KEY_V5_DATA_CLEARED,
+      pending: true,
+      at:      Date.now(),
+    });
   });
 }
 
@@ -164,10 +174,17 @@ function upgradeToV7(db, upgradeTx) {
   };
 }
 
+function upgradeToV8(db) {
+  if (!db.objectStoreNames.contains(STORE_APP_META)) {
+    db.createObjectStore(STORE_APP_META, { keyPath: 'key' });
+  }
+}
+
 function runUpgrade(db, upgradeTx, oldVersion) {
   if (oldVersion < 1) { buildReportStores(db); }
   if (oldVersion < 2) { buildComparisonStores(db); }
   if (oldVersion < 4) { buildAuxStores(db); }
+  if (oldVersion < 8) { upgradeToV8(db); }
   if (oldVersion < 5) { upgradeToV5(upgradeTx); }
   if (oldVersion < 6) { upgradeToV6(db); }
   if (oldVersion < 7) { upgradeToV7(db, upgradeTx); }
@@ -891,6 +908,44 @@ class IDBRepository {
       return { bytesInUse: usage, quota, percentUsed, available: quota - usage };
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * One-shot V5 data-clear notice: migrates legacy localStorage, reads IDB, deletes key if pending.
+   * @returns {Promise<boolean>} true → show the upgrade warning toast
+   */
+  async consumeV5UpgradeDataClearedNotice() {
+    const LEGACY_LS_KEY = 'ui-compare-v5-upgrade-data-cleared';
+    try {
+      const db = await this.#getDB();
+      if (!db.objectStoreNames.contains(STORE_APP_META)) {
+        return false;
+      }
+      if (typeof localStorage !== 'undefined' && localStorage.getItem(LEGACY_LS_KEY)) {
+        localStorage.removeItem(LEGACY_LS_KEY);
+        const migTx = db.transaction([STORE_APP_META], 'readwrite');
+        migTx.objectStore(STORE_APP_META).put({
+          key:     META_KEY_V5_DATA_CLEARED,
+          pending: true,
+          at:      Date.now(),
+        });
+        await transactionToPromise(migTx);
+      }
+      const readTx = db.transaction([STORE_APP_META], 'readonly');
+      const rec = await requestToPromise(
+        readTx.objectStore(STORE_APP_META).get(META_KEY_V5_DATA_CLEARED)
+      );
+      if (!rec?.pending) {
+        return false;
+      }
+      const delTx = db.transaction([STORE_APP_META], 'readwrite');
+      delTx.objectStore(STORE_APP_META).delete(META_KEY_V5_DATA_CLEARED);
+      await transactionToPromise(delTx);
+      return true;
+    } catch (err) {
+      logger.warn('consumeV5UpgradeDataClearedNotice failed', { message: err?.message });
+      return false;
     }
   }
 }

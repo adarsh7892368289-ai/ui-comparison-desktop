@@ -27,7 +27,7 @@
 
     <div id="app-toolbar" role="banner" aria-label="Application toolbar">
       <div class="header-brand">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="2.5" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-brand)" stroke-width="2.5" aria-hidden="true">
           <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
         </svg>
       </div>
@@ -35,7 +35,7 @@
         <span class="breadcrumb-current">Extract</span>
       </div>
       <button class="btn-ghost btn-sm" id="cmd-palette-trigger" aria-label="Command palette (Ctrl+K)">
-        <span>⌘K</span>
+        <span id="cmd-palette-shortcut"></span>
       </button>
     </div>
 
@@ -52,15 +52,11 @@
             <option value="csv">CSV</option>
             <option value="json">JSON</option>
           </select>
-          <button class="btn-ghost btn-sm" id="export-all-btn" title="Export all reports" aria-label="Export all reports">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" aria-hidden="true">
-              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>
-            </svg>
-            Export All
-          </button>
+          <button type="button" class="btn-icon-ghost" id="export-all-btn" title="Export all reports" aria-label="Export all reports"></button>
           <details class="export-dropdown sidebar-toolbar-overflow">
-            <summary class="btn-ghost btn-sm sidebar-overflow__summary" aria-label="More actions">&#x22EF;</summary>
+            <summary class="btn-ghost btn-sm sidebar-overflow__summary" aria-label="More actions"></summary>
             <div class="export-menu" role="menu">
+              <button type="button" class="export-menu-item" id="export-all-overflow-btn" role="menuitem">Export all reports</button>
               <button type="button" class="export-menu-item export-menu-item--danger" id="delete-all-btn" role="menuitem">Delete all reports</button>
             </div>
           </details>
@@ -83,8 +79,8 @@
             <option value="elements">Elements</option>
             <option value="name">Name</option>
           </select>
-          <button class="filter-rail__density-btn" id="density-toggle-btn"
-                  aria-label="Toggle display density" title="Toggle display density">⊞</button>
+          <button type="button" class="filter-rail__density-btn" id="density-toggle-btn"
+                  aria-label="Toggle display density" title="Toggle display density"></button>
         </div>
       </div>
 
@@ -107,7 +103,10 @@
 
       <div class="nav-section nav-section--expanded nav-section--active" id="section-extract">
         <button class="nav-section__header" id="header-extract" aria-expanded="true" aria-controls="body-extract">
-          <span>Extract</span>
+          <span class="nav-section__header-leading">
+            <span class="workflow-step-indicator" aria-hidden="true">1</span>
+            <span>Extract</span>
+          </span>
           <svg class="nav-section__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
             <path d="M9 18l6-6-6-6"/>
           </svg>
@@ -164,7 +163,10 @@
 
       <div class="nav-section" id="section-compare">
         <button class="nav-section__header" id="header-compare" aria-expanded="false" aria-controls="body-compare">
-          <span>Compare</span>
+          <span class="nav-section__header-leading">
+            <span class="workflow-step-indicator" aria-hidden="true">2</span>
+            <span>Compare</span>
+          </span>
           <svg class="nav-section__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
             <path d="M9 18l6-6-6-6"/>
           </svg>
@@ -176,10 +178,18 @@
             <div class="card">
 
               <div class="form-field">
-                <label class="label" for="baseline-report">Baseline</label>
-                <select class="select" id="baseline-report" aria-label="Baseline report">
-                  <option value="">Select report…</option>
-                </select>
+                <label class="label" id="label-baseline-report" for="baseline-report-trigger">Baseline</label>
+                <div class="report-select">
+                  <button type="button" class="report-select__trigger" id="baseline-report-trigger" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="label-baseline-report baseline-report-value" aria-controls="baseline-report-listbox">
+                    <span class="report-select__value" id="baseline-report-value">Select report…</span>
+                  </button>
+                  <div class="report-select__dropdown" id="baseline-report-dropdown" hidden>
+                    <ul class="report-select__list" role="listbox" id="baseline-report-listbox" aria-labelledby="label-baseline-report"></ul>
+                  </div>
+                  <select id="baseline-report" class="report-select__native" hidden aria-hidden="true" tabindex="-1" aria-label="Baseline report">
+                    <option value="">Select report…</option>
+                  </select>
+                </div>
                 <label class="upload-report-label" for="baseline-upload" title="Import report from JSON, CSV, or Excel file">
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" aria-hidden="true">
                     <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
@@ -192,10 +202,18 @@
               <div class="vs-divider"><span class="vs-label">VS</span></div>
 
               <div class="form-field">
-                <label class="label" for="compare-report">Compare</label>
-                <select class="select" id="compare-report" aria-label="Compare report">
-                  <option value="">Select report…</option>
-                </select>
+                <label class="label" id="label-compare-report" for="compare-report-trigger">Compare</label>
+                <div class="report-select">
+                  <button type="button" class="report-select__trigger" id="compare-report-trigger" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="label-compare-report compare-report-value" aria-controls="compare-report-listbox">
+                    <span class="report-select__value" id="compare-report-value">Select report…</span>
+                  </button>
+                  <div class="report-select__dropdown" id="compare-report-dropdown" hidden>
+                    <ul class="report-select__list" role="listbox" id="compare-report-listbox" aria-labelledby="label-compare-report"></ul>
+                  </div>
+                  <select id="compare-report" class="report-select__native" hidden aria-hidden="true" tabindex="-1" aria-label="Compare report">
+                    <option value="">Select report…</option>
+                  </select>
+                </div>
                 <label class="upload-report-label" for="compare-upload" title="Import report from JSON, CSV, or Excel file">
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" aria-hidden="true">
                     <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>

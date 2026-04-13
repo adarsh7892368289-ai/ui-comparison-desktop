@@ -3,6 +3,7 @@ import storage from '../../infrastructure/idb-repository.js';
 import { dispatch, getState } from '../state.js';
 import { Toast, Modal, syncCompareButton } from '../ui.js';
 import { loadAndRenderReports } from './report-manager.js';
+import { syncReportSelectTrigger } from '../components/report-select-combobox.js';
 import { tryLoadCachedComparison } from './compare-workflow.js';
 
 const api = window.electronAPI;
@@ -185,7 +186,10 @@ async function handleImportReport(file, slot) {
 
     const selId = slot === 'baseline' ? 'baseline-report' : 'compare-report';
     const sel   = document.getElementById(selId);
-    if (sel) { sel.value = imported.id; }
+    if (sel) {
+      sel.value = imported.id;
+      syncReportSelectTrigger(sel);
+    }
 
     const actionKey = slot === 'baseline' ? 'BASELINE_SELECTED' : 'COMPARE_SELECTED';
     dispatch(actionKey, { id: imported.id });

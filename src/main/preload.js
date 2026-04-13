@@ -13,6 +13,9 @@ function makePushBridge(channel) {
 
 contextBridge.exposeInMainWorld('electronAPI', {
 
+  /** Main-process platform: 'darwin' | 'win32' | 'linux' — for ⌘ vs Ctrl in UI copy */
+  platform: process.platform,
+
   startComparison: (params) =>
     ipcRenderer.invoke(CH.START_COMPARISON, params),
 

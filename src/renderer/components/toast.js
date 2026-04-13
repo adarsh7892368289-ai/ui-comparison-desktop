@@ -48,8 +48,16 @@ const Toast = {
         toast.remove();
       }
     };
-    toast.addEventListener('transitionend', remove, { once: true });
-    setTimeout(remove, TOAST_TRANSITION_MS + 100);
+    const onTransitionEnd = (ev) => {
+      if (ev.target !== toast) { return; }
+      if (ev.propertyName !== 'opacity' && ev.propertyName !== 'transform') { return; }
+      remove();
+    };
+    toast.addEventListener('transitionend', onTransitionEnd);
+    setTimeout(() => {
+      toast.removeEventListener('transitionend', onTransitionEnd);
+      remove();
+    }, TOAST_TRANSITION_MS + 100);
   },
   success(message, duration = 4000) { this.show(message, 'success', duration); },
   error(message,   duration = 6000) { this.show(message, 'error',   duration); },
