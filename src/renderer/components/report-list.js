@@ -1,11 +1,10 @@
 import { sanitize } from '../utils/sanitize.js';
 import { relativeTime } from '../utils/time.js';
-import { iconArrowUp, iconArrowUpDown, iconChevronDown, iconTarget, iconTrash2 } from '../utils/icons.js';
+import { iconArrowUp, iconArrowUpDown, iconFileDown, iconTarget, iconTrash2 } from '../utils/icons.js';
 import { handleExportReport } from '../application/export-workflow.js';
 import { Modal } from './modal.js';
 
 const HEADER_HEIGHT = 28;
-/* Compact row must fit 44px touch targets on card actions (see base.css .btn-sm) */
 const DENSITY_HEIGHTS = { compact: 52, default: 64, comfortable: 80 };
 const OVERSCAN = 3;
 const STAGE_RE = /\b(stage|staging|dev|test|qa|uat|preview|sandbox|canary)\b/i;
@@ -52,7 +51,6 @@ export class ReportList {
     this._config = { ...DEFAULT_VIEW_CONFIG };
     this._reports = [];
     this._query = '';
-    this._selectedId = null;
     this._baselineId = null;
     this._compareId = null;
     this._rowItems = [];
@@ -105,9 +103,8 @@ export class ReportList {
     }
   }
 
-  setSelected(reportId) {
-    this._selectedId = reportId || null;
-    this._refreshStates();
+  /** No-op — selection styling removed; baseline/compare roles only. Kept for callers. */
+  setSelected() {
   }
 
   setBaseline(reportId) {
@@ -304,6 +301,7 @@ export class ReportList {
 
     const roleLabel = isBaseline ? ' (Baseline)' : isCompare ? ' (Compare)' : '';
     card.setAttribute('aria-label', `Report ${displayIndex}: ${host}${path}, ${report.totalElements ?? 0} elements${roleLabel}`);
+    card.title = 'B: set baseline · C: set compare';
 
     card.addEventListener('contextmenu', (e) => {
       if (!window.electronAPI?.showContextMenu) { return; }
@@ -313,16 +311,6 @@ export class ReportList {
         isBaseline,
       });
     });
-
-    if (isBaseline) {
-      const badge = _el('span', 'report-role-badge report-role-badge--baseline', 'B');
-      badge.title = 'Baseline report';
-      card.appendChild(badge);
-    } else if (isCompare) {
-      const badge = _el('span', 'report-role-badge report-role-badge--compare', 'C');
-      badge.title = 'Compare report';
-      card.appendChild(badge);
-    }
 
     const body = _el('div', 'report-card-body');
     body.style.cursor = 'pointer';
@@ -392,7 +380,7 @@ export class ReportList {
     const details = document.createElement('details');
     details.className = 'export-dropdown';
     const summary = _el('summary', 'btn-ghost btn-sm');
-    summary.innerHTML = `Export ${iconChevronDown(12)}`;
+    summary.innerHTML = iconFileDown(14);
     summary.title = 'Export options';
     summary.setAttribute('aria-label', 'Export report options');
     details.appendChild(summary);
@@ -418,6 +406,20 @@ export class ReportList {
     actions.appendChild(deleteBtn);
 
     card.appendChild(actions);
+
+    const badge = _el('span', 'report-role-badge');
+    badge.style.display = isBaseline || isCompare ? 'flex' : 'none';
+    if (isBaseline) {
+      badge.classList.add('report-role-badge--baseline');
+      badge.textContent = 'B';
+      badge.title = 'Baseline report';
+    } else if (isCompare) {
+      badge.classList.add('report-role-badge--compare');
+      badge.textContent = 'C';
+      badge.title = 'Compare report';
+    }
+    card.appendChild(badge);
+
     return card;
   }
 
@@ -456,9 +458,10 @@ export class ReportList {
     if (reportIndices.length === 0) return;
 
     const focused = document.activeElement;
-    let focusedId = null;   // hoisted — must be let, not const
+    let focusedId = null;
     if (focused !== this._viewport) {
-      focusedId = focused?.dataset?.reportId ?? null;
+      const cardFocus = focused?.closest?.('.report-card');
+      focusedId = cardFocus?.dataset?.reportId ?? focused?.dataset?.reportId ?? null;
       if (focusedId) {
         const logIdx = this._rowItems.findIndex(
           item => item.type === 'report' && item.report.id === focusedId
@@ -484,6 +487,30 @@ export class ReportList {
       e.preventDefault();
       const prevPos = currentPos > 0 ? currentPos - 1 : reportIndices.length - 1;
       this._focusCardByLogicalIndex(reportIndices[prevPos]);
+      return;
+    }
+
+    if (e.key === 'b' || e.key === 'B') {
+      e.preventDefault();
+      const id = focusedId
+        ?? (this._rowItems[this._focusedLogicalIndex]?.type === 'report'
+          ? this._rowItems[this._focusedLogicalIndex].report.id
+          : null);
+      if (!id) { return; }
+      const report = this._reports.find(r => r.id === id);
+      if (report) { this._cb.onBaseline?.(report); }
+      return;
+    }
+
+    if (e.key === 'c' || e.key === 'C') {
+      e.preventDefault();
+      const id = focusedId
+        ?? (this._rowItems[this._focusedLogicalIndex]?.type === 'report'
+          ? this._rowItems[this._focusedLogicalIndex].report.id
+          : null);
+      if (!id) { return; }
+      const report = this._reports.find(r => r.id === id);
+      if (report) { this._cb.onCompare?.(report); }
       return;
     }
 
@@ -516,26 +543,31 @@ export class ReportList {
   _refreshStates() {
     this._window.querySelectorAll('.report-card').forEach(card => {
       const id = card.dataset.reportId;
-      card.classList.toggle('report-card--selected', id === this._selectedId);
       card.classList.toggle('report-card--baseline', id === this._baselineId);
       card.classList.toggle('report-card--compare', id === this._compareId);
 
-      const existing = card.querySelector('.report-role-badge');
       const needsBaseline = id === this._baselineId;
       const needsCompare = id === this._compareId;
-
-      if (needsBaseline && (!existing || !existing.classList.contains('report-role-badge--baseline'))) {
-        existing?.remove();
-        const badge = _el('span', 'report-role-badge report-role-badge--baseline', 'B');
+      let badge = card.querySelector('.report-role-badge');
+      if (!badge) {
+        badge = _el('span', 'report-role-badge');
+        card.appendChild(badge);
+      }
+      badge.classList.remove('report-role-badge--baseline', 'report-role-badge--compare');
+      if (needsBaseline) {
+        badge.classList.add('report-role-badge--baseline');
+        badge.textContent = 'B';
         badge.title = 'Baseline report';
-        card.insertBefore(badge, card.firstChild);
-      } else if (needsCompare && (!existing || !existing.classList.contains('report-role-badge--compare'))) {
-        existing?.remove();
-        const badge = _el('span', 'report-role-badge report-role-badge--compare', 'C');
+        badge.style.display = 'flex';
+      } else if (needsCompare) {
+        badge.classList.add('report-role-badge--compare');
+        badge.textContent = 'C';
         badge.title = 'Compare report';
-        card.insertBefore(badge, card.firstChild);
-      } else if (!needsBaseline && !needsCompare && existing) {
-        existing.remove();
+        badge.style.display = 'flex';
+      } else {
+        badge.textContent = '';
+        badge.title = '';
+        badge.style.display = 'none';
       }
     });
   }

@@ -1,65 +1,57 @@
 :root {
-  /* ── Brand / Accent ─────────────────────────────────────── */
-  --color-brand:              hsl(221 83% 53%);
-  --color-brand-hover:        hsl(221 83% 44%);
-  --color-brand-subtle:       hsl(221 83% 53% / 0.08);
-  --color-brand-border:       hsl(221 83% 53% / 0.20);
-  --color-brand-ring:         hsl(221 83% 53% / 0.15);
-  --color-brand-glow:         hsl(221 83% 53% / 0.30);
-  --color-brand-halo:         hsl(221 83% 53% / 0.50);
+  --color-brand:              hsl(217 70% 54%);
+  --color-brand-hover:        hsl(217 70% 60%);
+  --color-brand-subtle:       hsl(217 70% 54% / 0.10);
+  --color-brand-border:       hsl(217 70% 54% / 0.30);
+  --color-brand-ring:         hsl(217 70% 54% / 0.40);
+  --color-brand-glow:         hsl(217 70% 54% / 0.30);
+  --color-brand-halo:         hsl(217 70% 54% / 0.50);
   --color-brand-end:          hsl(239 84% 74%);
 
-  /* ── Surfaces ───────────────────────────────────────────── */
-  --color-surface-base:       #0f1523;
-  --color-surface-raised:     #1a2236;
-  --color-surface-overlay:    #232f47;
-  --color-surface-sunken:     #080d17;
-  --color-surface-hover:      #283550;
+  --color-surface-base:       #111827;
+  --color-surface-raised:     #1c2333;
+  --color-surface-overlay:    #212d42;
+  --color-surface-sunken:     #090e1a;
+  --color-surface-hover:      #263348;
 
-  /* ── Borders ────────────────────────────────────────────── */
-  --color-border-subtle:      #2d3748;
-  --color-border-default:     #3d4f6b;
-  --color-border-focus:       hsl(221 83% 53% / 0.40);
+  --color-border-subtle:      #1e293b;
+  --color-border-default:     #334155;
+  --color-border-focus:       hsl(217 70% 54% / 0.40);
 
-  /* ── Text (WCAG AA verified on #0f1523 and #1a2236) ─────── */
-  --color-text-primary:       #E8ECF2;
-  --color-text-secondary:     #A0AEC0;
+  --color-text-primary:       #E2E8F0;
+  --color-text-secondary:     #94A3B8;
   --color-text-tertiary:      #7E8FA6;
-  /* Muted disabled UI: ≥3:1 vs both surfaces (AA large); inactive components may still be exempt under 1.4.3 */
   --color-text-disabled:      #5e7088;
 
-  /* ── Semantic colours ───────────────────────────────────── */
-  --color-success:            hsl(142 65% 45%);
-  --color-success-fg:         hsl(142 60% 55%);
-  --color-success-subtle:     hsl(142 65% 45% / 0.12);
-  --color-success-border:     hsl(142 65% 45% / 0.30);
+  --color-success:            hsl(142 55% 45%);
+  --color-success-fg:         hsl(142 55% 56%);
+  --color-success-subtle:     hsl(142 55% 45% / 0.12);
+  --color-success-border:     hsl(142 55% 45% / 0.30);
 
-  --color-warning:            hsl(38 90% 58%);
-  --color-warning-fg:         hsl(38 85% 60%);
-  --color-warning-subtle:     hsl(38 90% 58% / 0.12);
-  --color-warning-border:     hsl(38 90% 58% / 0.30);
+  --color-warning:            hsl(38 80% 55%);
+  --color-warning-fg:         hsl(38 75% 60%);
+  --color-warning-subtle:     hsl(38 80% 55% / 0.12);
+  --color-warning-border:     hsl(38 80% 55% / 0.30);
 
-  --color-destructive:        hsl(0 84% 54%);
-  --color-destructive-subtle: hsl(0 84% 54% / 0.15);
-  --color-destructive-border: hsl(0 84% 54% / 0.25);
+  --color-destructive:        hsl(0 72% 52%);
+  --color-destructive-subtle: hsl(0 72% 52% / 0.15);
+  --color-destructive-border: hsl(0 72% 52% / 0.30);
 
   --color-white:              hsl(0 0% 100%);
   --color-scrim:              hsl(220 40% 5% / 0.60);
   --color-shadow-dark:        hsl(0 0% 0% / 0.20);
 
-  /* ── Severity ───────────────────────────────────────────── */
-  --color-sev-critical:       hsl(0 84% 54%);
+  --color-sev-critical:       hsl(0 72% 52%);
   --color-sev-critical-bg:    var(--color-destructive-subtle);
-  --color-sev-high:           hsl(25 95% 50%);
-  --color-sev-high-subtle:    hsl(25 95% 50% / 0.15);
-  --color-sev-high-bg:        var(--color-sev-high-subtle);
+  --color-sev-high:           hsl(25 85% 52%);
+  --color-sev-high-subtle:    hsl(25 85% 52% / 0.15);
+  --color-sev-high-bg:        hsl(25 85% 52% / 0.15);
   --color-sev-medium:         var(--color-warning);
   --color-sev-medium-subtle:  var(--color-warning-subtle);
   --color-sev-medium-bg:      var(--color-warning-subtle);
   --color-sev-low:            var(--color-success);
   --color-sev-low-bg:         var(--color-success-subtle);
 
-  /* Short aliases (used by result-panel.css) */
   --severity-critical:        var(--color-sev-critical);
   --severity-critical-subtle: var(--color-sev-critical-bg);
   --severity-high:            var(--color-sev-high);
@@ -69,12 +61,10 @@
   --severity-low:             var(--color-sev-low);
   --severity-low-subtle:      var(--color-sev-low-bg);
 
-  /* Badge colours */
   --color-badge-added-bg:     var(--color-success-subtle);
   --color-badge-removed-bg:   var(--color-destructive-subtle);
 
-  --color-brand-subtle-strong: hsl(221 83% 53% / 0.12);
-  /* [BONUS] Single success-on-text token: alias legacy --color-success-text to --color-success-fg */
+  --color-brand-subtle-strong: hsl(217 70% 54% / 0.12);
   --color-success-text:       var(--color-success-fg);
 
   --color-coverage-matched:   var(--color-success);
@@ -82,7 +72,6 @@
   --color-coverage-added:     var(--color-brand);
   --color-coverage-removed:   var(--color-sev-critical);
 
-  /* ── Typography ─────────────────────────────────────────── */
   --font-sans: -apple-system, BlinkMacSystemFont, 'Inter', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
 
@@ -100,7 +89,6 @@
   --weight-semibold: 600;
   --weight-bold:     700;
 
-  /* ── Spacing ────────────────────────────────────────────── */
   --space-1:  4px;
   --space-2:  8px;
   --space-3:  12px;
@@ -110,9 +98,7 @@
   --space-8:  32px;
   --space-10: 40px;
   --space-12: 48px;
-  /* --space-section retired; use --space-6 directly */
 
-  /* ── Radii ──────────────────────────────────────────────── */
   --radius-xs:   4px;
   --radius-sm:   6px;
   --radius-md:   8px;
@@ -120,14 +106,11 @@
   --radius-badge: 10px;
   --radius-full: 9999px;
 
-  /* ── Shadows ────────────────────────────────────────────── */
   --shadow-sm:  0 1px 2px hsl(220 40% 5% / 0.32);
   --shadow-md:  0 4px 8px hsl(220 40% 5% / 0.40), 0 1px 3px hsl(220 40% 5% / 0.24);
   --shadow-lg:  0 8px 24px hsl(220 40% 5% / 0.48), 0 2px 6px hsl(220 40% 5% / 0.32);
-  /* [BONUS] Match upward shadow to functional opacity (was ~0.12 max, invisible on dark UI) */
   --shadow-up-md: 0 -4px 8px hsl(220 40% 5% / 0.40), 0 -1px 3px hsl(220 40% 5% / 0.24);
 
-  /* ── Motion ─────────────────────────────────────────────── */
   --ease-standard:    cubic-bezier(0.2, 0, 0, 1);
   --ease-decelerate:  cubic-bezier(0, 0, 0.2, 1);
   --ease-accelerate:  cubic-bezier(0.4, 0, 1, 1);
@@ -142,7 +125,6 @@
 
   --status-bar-height: 28px;
 
-  /* Short aliases — use --ease-standard instead of keyword ease */
   --transition-fast:   var(--dur-fast) var(--ease-standard);
   --transition-normal: var(--dur-base) var(--ease-standard);
   --transition-slow:   var(--dur-slow) var(--ease-standard);

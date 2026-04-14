@@ -17,7 +17,7 @@ import {
   handleExtraction,
   hostFromUrl,
 } from './application/report-manager.js';
-import { handleExport, handleExportAllReports, handleFullReport } from './application/export-workflow.js';
+import { handleExportAllReports } from './application/export-workflow.js';
 import { handleImportReport } from './application/import-workflow.js';
 import { handleComparison, tryLoadCachedComparison } from './application/compare-workflow.js';
 import { createResultPanel } from './components/result-panel.js';
@@ -28,6 +28,7 @@ import { createStatusBar }      from './components/status-bar.js';
 import {
   iconActivity,
   iconAlertCircle,
+  iconArrowUp,
   iconFileDown,
   iconGitCompare,
   iconGlobe,
@@ -72,6 +73,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (exportAllToolbarBtn && !exportAllToolbarBtn.querySelector('svg')) {
     exportAllToolbarBtn.insertAdjacentHTML('afterbegin', iconFileDown(13));
   }
+  const importToolbarBtn = document.getElementById('import-report-btn');
+  if (importToolbarBtn && !importToolbarBtn.querySelector('svg')) {
+    importToolbarBtn.insertAdjacentHTML('afterbegin', iconArrowUp(13));
+  }
   const densityBtn = document.getElementById('density-toggle-btn');
   if (densityBtn && !densityBtn.querySelector('svg')) {
     densityBtn.insertAdjacentHTML('afterbegin', iconLayoutGrid(16));
@@ -79,6 +84,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const overflowSummary = document.querySelector('.sidebar-overflow__summary');
   if (overflowSummary && !overflowSummary.querySelector('svg')) {
     overflowSummary.insertAdjacentHTML('afterbegin', iconMoreHorizontal(16));
+  }
+  const cmdTriggerIcon = document.querySelector('#cmd-palette-trigger .cmd-trigger-icon');
+  if (cmdTriggerIcon && !cmdTriggerIcon.querySelector('svg')) {
+    cmdTriggerIcon.innerHTML = iconSearch(14);
   }
 
   insertReportListSkeletonOverlay();
@@ -125,7 +134,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   _cmdPalette.registerCommands([
     { id: 'go-extract',  label: 'Go to Extract',        icon: iconGlobe(), shortcut: 'E',         keywords: ['extract', 'capture', 'dom'],       action: () => _appShell.activateSection('extract') },
     { id: 'go-compare',  label: 'Go to Compare',         icon: iconGitCompare(), shortcut: 'C',         keywords: ['compare', 'diff', 'regression'],   action: () => _appShell.activateSection('compare') },
-    { id: 'go-reports',  label: 'Focus Report List',     icon: iconList(), shortcut: 'R',         keywords: ['reports', 'list', 'history'],       action: () => document.getElementById('search-reports')?.focus() },
+    { id: 'go-reports',  label: 'Focus Report List',     icon: iconList(), shortcut: 'R',         keywords: ['reports', 'list', 'history'],       action: () => document.querySelector('#reports-list .vscroll-viewport')?.focus() },
     { id: 'search',      label: 'Search Reports',        icon: iconSearch(), shortcut: '/',         keywords: ['search', 'filter', 'find'],        action: () => document.getElementById('search-reports')?.focus() },
     { id: 'extract',     label: 'Start Extraction',      icon: iconPlay(), shortcut: '',          keywords: ['run', 'start', 'capture'],         action: () => { const btn = document.getElementById('extract-btn'); if (btn && !btn.disabled) btn.click(); } },
     { id: 'compare',     label: 'Run Comparison',        icon: iconGitCompare(), shortcut: '',          keywords: ['run', 'compare', 'diff'],          action: () => { const btn = document.getElementById('compare-btn'); if (btn && !btn.disabled) btn.click(); } },
@@ -142,17 +151,22 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   _appShell.activateSection('extract');
 
-  const paletteShortcut = isMac ? '⌘K' : 'Ctrl+K';
-  const cmdTrigger = document.getElementById('cmd-palette-trigger');
   const cmdShortcutSpan = document.getElementById('cmd-palette-shortcut');
-  if (cmdShortcutSpan) { cmdShortcutSpan.textContent = paletteShortcut; }
-  cmdTrigger?.setAttribute('aria-label', `Command palette (${paletteShortcut})`);
+  if (cmdShortcutSpan) {
+    const keys = isMac ? ['⌘', 'K'] : ['Ctrl', 'K'];
+    cmdShortcutSpan.innerHTML = keys.map(k => `<kbd>${k}</kbd>`).join('');
+  }
 
   document.getElementById('url-input')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.repeat) {
       const btn = document.getElementById('extract-btn');
       if (btn && !btn.disabled) btn.click();
     }
+  });
+
+  document.getElementById('url-input')?.addEventListener('input', () => {
+    const errEl = document.getElementById('extract-error');
+    if (errEl) errEl.textContent = '';
   });
 
   document.addEventListener('keydown', e => {
@@ -169,7 +183,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     if (inInput) { return; }
     if (e.key === 'e' || e.key === 'E') { _appShell.activateSection('extract'); }
-    if (e.key === 'c' || e.key === 'C') { _appShell.activateSection('compare'); }
+    if (e.key === 'c' || e.key === 'C') {
+      const el = document.activeElement;
+      const v = el?.closest?.('.vscroll-viewport');
+      if (el && v && el !== v) { return; }
+      _appShell.activateSection('compare');
+    }
     if (e.key === '/') {
       e.preventDefault();
       document.getElementById('search-reports')?.focus();
@@ -201,16 +220,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     await handleDeleteAllReports();
   });
 
-
-
-  ['baseline', 'compare'].forEach(slot => {
-    const input = document.getElementById(`${slot}-upload`);
-    if (!input) { return; }
-    input.addEventListener('change', e => {
-      const file = e.target.files?.[0];
-      input.value = '';
-      handleImportReport(file, slot);
-    });
+  document.getElementById('import-report-btn')?.addEventListener('click', () => {
+    document.getElementById('import-report-input')?.click();
+  });
+  document.getElementById('import-report-input')?.addEventListener('change', e => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    handleImportReport(file, null);
   });
 
   const baselineSel = document.getElementById('baseline-report');
@@ -248,6 +264,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!mod || !e.shiftKey || e.key.toLowerCase() !== 'd') { return; }
     e.preventDefault();
     showDiagnosticsPanel();
+  });
+
+  window.electronAPI?.onMenuAction?.((action) => {
+    if (action === 'toggle-sidebar') _appShell.toggleLeftPanel();
   });
 
   subscribe((state) => {

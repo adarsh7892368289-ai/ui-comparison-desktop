@@ -170,6 +170,7 @@
 }
 
 .report-card {
+  position: relative;
   display: flex;
   align-items: center;
   height: 64px;
@@ -193,38 +194,28 @@
   text-overflow: ellipsis;
 }
 
-.report-card:not(.report-card--selected):not(.report-card--baseline):not(.report-card--compare):hover {
+.report-card:not(.report-card--baseline):not(.report-card--compare):hover {
   background: var(--color-surface-hover);
 }
 
-.report-card--selected {
-  background: hsl(221 83% 53% / 0.14);
-  border-left: 3px solid var(--color-brand);
-  padding-left: calc(var(--space-3) - 3px);
-}
-
-.report-card--selected:hover {
-  background: hsl(221 83% 53% / 0.19);
-}
-
 .report-card--baseline {
+  background: hsl(142 55% 45% / 0.07);
   border-left: 3px solid var(--color-success);
   padding-left: calc(var(--space-3) - 3px);
-  background: var(--color-success-subtle);
 }
-
-.report-card--baseline:hover {
-  background: hsl(142 65% 45% / 0.2);
+.report-card--baseline:hover,
+.report-card--baseline:focus-within {
+  background: hsl(142 55% 45% / 0.11);
 }
 
 .report-card--compare {
+  background: hsl(217 70% 54% / 0.07);
   border-left: 3px solid var(--color-brand);
   padding-left: calc(var(--space-3) - 3px);
-  background: var(--color-brand-subtle);
 }
-
-.report-card--compare:hover {
-  background: hsl(221 83% 53% / 0.14);
+.report-card--compare:hover,
+.report-card--compare:focus-within {
+  background: hsl(217 70% 54% / 0.11);
 }
 
 #left-panel.density-compact .report-card {
@@ -233,7 +224,6 @@
   font-size: var(--text-xs);
 }
 
-#left-panel.density-compact .report-card--selected,
 #left-panel.density-compact .report-card--baseline,
 #left-panel.density-compact .report-card--compare {
   padding-left: calc(var(--space-2) - 3px);
@@ -307,22 +297,23 @@
 }
 
 .report-role-badge {
-  width: 20px;
-  height: 20px;
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
-  font-size: 9px;
-  font-weight: var(--weight-bold);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
-  letter-spacing: 0;
-  text-transform: uppercase;
+  z-index: 2;
 }
 
 .report-role-badge--baseline {
   background: var(--color-success-subtle);
-  color: var(--color-success-text);
+  color: var(--color-success-fg);
   border: 1px solid var(--color-success-border);
 }
 
@@ -336,14 +327,23 @@
   display: block;
 }
 
+/* Actions float above content — never in flex flow, never compress the body */
 .report-card-actions {
+  position: absolute;
+  z-index: 1;
+  right: var(--space-2);
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
   align-items: center;
-  gap: var(--space-1);
-  flex-shrink: 0;
+  gap: 2px;
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--transition-fast);
+  /* Subtle backdrop so text underneath stays readable */
+  background: var(--color-surface-raised);
+  border-radius: var(--radius-sm);
+  padding: 2px;
 }
 
 .report-card:hover .report-card-actions,
@@ -352,6 +352,7 @@
   pointer-events: auto;
 }
 
+/* Keyboard focus: ring only — distinct from baseline (green) and compare (blue) */
 .report-card:focus-visible {
   outline: 2px solid var(--color-brand);
   outline-offset: -2px;

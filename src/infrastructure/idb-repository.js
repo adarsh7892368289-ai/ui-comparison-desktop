@@ -15,7 +15,6 @@ const STORE_VISUAL_KEYFRAMES     = 'visual_keyframes';
 const STORE_VISUAL_ELEMENT_RECTS = 'visual_element_rects';
 const STORE_OP_LOG               = 'operation_log';
 const STORE_APP_META             = 'app_meta';
-/** Pending user-visible notice after V5 upgrade cleared report data */
 const META_KEY_V5_DATA_CLEARED   = 'v5_upgrade_data_cleared_notice';
 const MAX_COMPARISONS            = 20;
 const OP_STATUS_PENDING          = 'PENDING';
@@ -911,10 +910,6 @@ class IDBRepository {
     }
   }
 
-  /**
-   * One-shot V5 data-clear notice: migrates legacy localStorage, reads IDB, deletes key if pending.
-   * @returns {Promise<boolean>} true → show the upgrade warning toast
-   */
   async consumeV5UpgradeDataClearedNotice() {
     const LEGACY_LS_KEY = 'ui-compare-v5-upgrade-data-cleared';
     try {

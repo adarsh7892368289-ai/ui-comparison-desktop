@@ -59,6 +59,7 @@ function ensureUniqueness(xpath, targetElement, context = document) {
       }
     }
   } catch (_) {
+    void 0;
   }
   return xpath;
 }

@@ -15,7 +15,6 @@ const CAPTURE_QUALITY              = 85;
 const FREEZE_STYLE_ID              = 'vdiff-freeze-styles';
 const SUPPRESS_ATTR                = 'data-vdiff-suppress';
 const SCROLL_SETTLE_TIMEOUT_MS     = 800;
-const SCROLL_SETTLE_TOLERANCE_PX   = 2;
 const SCROLL_VERIFY_TOLERANCE_PX   = 5;
 const SCROLL_VERIFY_RETRY_MAX      = 2;
 const SCROLL_VERIFY_RETRY_MS       = 400;
@@ -74,6 +73,7 @@ function getExtractorBundleSource() {
       log.info('[PM] Loaded extractor bundle', { path: candidate });
       return _extractorBundleSource;
     } catch {
+      void 0;
     }
   }
 
@@ -797,7 +797,6 @@ async function captureAllKeyframes(sessionHandle, keyframes, selectorById, sessi
 
 async function executeTabCapture(sessionHandle, selectorPairs, sessionId, role, blobCache, comparisonId) {
   const t0   = Date.now();
-  const page = sessionHandle.page;
   log.info(`VDIFF [${role}] executeTabCapture START`, { selectorCount: selectorPairs.length });
 
   await sendCDP(sessionHandle, 'Page.bringToFront');
@@ -1129,11 +1128,13 @@ async function runExtraction({ url, browserType, filters, onProgress }) {
       const perfMarks = await page.evaluate(() => JSON.stringify(performance.getEntriesByType('measure')));
       log.debug('[PM] Extraction perf measures', { measures: JSON.parse(perfMarks) });
     } catch {
+      void 0;
     }
 
     log.info('[EXTRACT] element count:', report?.elements?.length ?? 0);
 
     report.id = crypto.randomUUID();
+    report.duration = Math.round(Date.now() - totalStart);
 
     onProgress?.('Extraction complete', 100);
     log.info('[PM] runExtraction done', { url, elementCount: report?.totalElements ?? 0 });

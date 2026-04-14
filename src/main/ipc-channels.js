@@ -16,4 +16,5 @@ module.exports = Object.freeze({
   SET_WINDOW_TITLE:               'SET_WINDOW_TITLE',
   SHOW_CONTEXT_MENU:              'show-context-menu',
   CONTEXT_ACTION:                 'context-action',
+  MENU_ACTION:                    'menu-action',
 });

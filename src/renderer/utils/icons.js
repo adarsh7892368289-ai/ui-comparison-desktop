@@ -1,9 +1,5 @@
 'use strict';
 
-/**
- * Inline Lucide-style SVG strings (no .svg webpack loader).
- * Default: 16×16, viewBox 24×24, stroke 1.5, currentColor.
- */
 const BASE =
   'xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"';
 
@@ -45,7 +41,6 @@ export function iconAlertCircle(size = 16) {
   );
 }
 
-/** Command palette & navigation */
 export function iconGlobe(size = 16) {
   return svg(
     '<circle cx="12" cy="12" r="10"/><line x1="2" x2="22" y1="12" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
@@ -93,7 +88,6 @@ export function iconActivity(size = 16) {
   return svg('<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>', size);
 }
 
-/** Report row actions: baseline = target, compare = vertical arrows */
 export function iconTarget(size = 16) {
   return svg('<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>', size);
 }
@@ -102,12 +96,10 @@ export function iconArrowUpDown(size = 16) {
   return svg('<path d="m7 15 5 5 5-5"/><path d="m17 9-5-5-5 5"/>', size);
 }
 
-/** [BONUS] Imported report badge (was ↑) */
 export function iconArrowUp(size = 16) {
   return svg('<line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>', size);
 }
 
-/** Density toggle (was ⊞ U+229E) */
 export function iconLayoutGrid(size = 16) {
   return svg(
     '<rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/>',
@@ -115,12 +107,17 @@ export function iconLayoutGrid(size = 16) {
   );
 }
 
-/** Overflow / more menu trigger (was ⋯ U+22EF) */
 export function iconMoreHorizontal(size = 16) {
   return svg('<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>', size);
 }
 
-/** Animated loading spinner — use with .icon-spin CSS class */
+export function iconInfo(size = 16) {
+  return svg(
+    '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="8"/><line x1="12" y1="12" x2="12" y2="16"/>',
+    size
+  );
+}
+
 export function iconSpinner(size = 16) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none"
     stroke="currentColor" stroke-width="1.5" stroke-linecap="round"

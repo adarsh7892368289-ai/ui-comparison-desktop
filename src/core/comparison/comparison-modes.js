@@ -254,21 +254,3 @@ class DynamicComparisonMode extends BaseComparisonMode {
 }
 
 export { StaticComparisonMode, DynamicComparisonMode, STATIC_FILTER, DYNAMIC_FILTER };
-
-function computeSeverityBreakdown(diffResults) {
-  const counts = { critical: 0, high: 0, medium: 0, low: 0 };
-  for (const r of diffResults) {
-    if (!r.differences?.length) {continue;}
-    const hpid = r.baselineElement?.hpid ?? r.hpid ?? null;
-    if (!hpid) {continue;}
-    const parentHpid = hpid.split('.').slice(0, -1).join('.');
-    const isChild = diffResults.some(p => {
-      const pH = p.baselineElement?.hpid ?? p.hpid ?? null;
-      return pH === parentHpid && p.differences?.length;
-    });
-    if (isChild) {continue;}
-    const sev = r.overallSeverity;
-    if (sev && sev in counts) {counts[sev]++;}
-  }
-  return counts;
-}

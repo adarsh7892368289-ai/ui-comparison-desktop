@@ -47,7 +47,7 @@ The renderer entry `src/renderer/app.js` is written as **ES modules**; it import
 ┌─────────────────────────────────────────────────┐
 │  MAIN PROCESS  (Node.js)                        │
 │                                                 │
-│  src/main/index.js         App lifecycle        │
+│  src/main/index.js         App lifecycle + menus │
 │  src/main/ipc-handlers.js  IPC request routing  │
 │  src/main/playwright-manager.js  Browser ctrl   │
 │  src/main/protocol-handler.js    app:// scheme  │
@@ -94,6 +94,10 @@ All IPC communication uses named channels defined in `src/main/ipc-channels.js`.
 
 ## Repository Map
 
+The tree below matches the **current** `src/` layout (every file under `src/` is listed; **83** files). Build scripts and webpack configs live at the **repository root**, not inside `src/`.
+
+### `src/` — application source
+
 ```
 src/
 ├── config/
@@ -110,12 +114,15 @@ src/
 │   │   ├── comparison-modes.js  # StaticComparisonMode, DynamicComparisonMode, cascade suppression.
 │   │   ├── differ.js            # PropertyDiffer: normalizes then tolerance-compares properties.
 │   │   ├── keyframe-grouper.js  # Groups elements by scroll position into screenshot keyframes.
-│   │   ├── matcher.js           # ElementMatcher: 4-phase pipeline (anchor→sequence→suffix→legacy).
+│   │   ├── matcher.js           # ElementMatcher: test-attribute phase → sequence alignment →
+│   │   │                        # HPID suffix realignment → legacy strategy pool (with progress yields).
 │   │   ├── severity-analyzer.js # SeverityAnalyzer: critical/high/medium/low classification.
 │   │   └── url-compatibility.js # Pre-flight URL path/query/hash comparison.
 │   │
 │   ├── extraction/
-│   │   ├── _page_stubs_/        # No-op stubs for electron/electron-log when bundled for in-page.
+│   │   ├── _page_stubs_/
+│   │   │   ├── electron.js      # No-op `electron` stub for in-page extractor bundle.
+│   │   │   └── electron-log.js  # No-op `electron-log` stub for in-page extractor bundle.
 │   │   ├── attribute-collector.js # Collects element attributes, filtering framework-generated ones.
 │   │   ├── dom-enrichment.js    # Neighbour context and class hierarchy collection.
 │   │   ├── dom-traversal.js     # TreeWalker-based DOM walk, HPID generation, shadow DOM support.
@@ -167,57 +174,75 @@ src/
 │   └── performance-monitor.js   # Operation timing with p50/p95/p99 percentile tracking.
 │
 ├── main/
-│   ├── index.js                 # Electron app entry: config init, validation, window creation.
+│   ├── index.js                 # App entry: optional smoke-test exit, config + validation, application menu,
+│   │                            # window-title + context-menu IPC listeners, protocol + window + IPC wiring,
+│   │                            # frozen Playwright session recovery.
 │   ├── ipc-channels.js          # Channel name constants (frozen object).
 │   ├── ipc-handlers.js          # All ipcMain.handle registrations.
 │   ├── playwright-manager.js    # Browser lifecycle, extraction, comparison, visual diff capture.
 │   ├── preload.js               # contextBridge.exposeInMainWorld('electronAPI', {...}).
 │   └── protocol-handler.js      # Custom app:// protocol, blob cache with 512MB LRU eviction.
 │
-├── renderer/
-│   ├── app.js                   # DOMContentLoaded entry: wires components, commands, keyboard shortcuts.
-│   ├── state.js                 # Reducer-based state machine (dispatch/subscribe/getState).
-│   ├── ui.js                    # Re-exports Toast, Modal, progress helpers.
-│   ├── application/
-│   │   ├── compare-workflow.js  # Loads elements from IDB, invokes IPC, persists results.
-│   │   ├── export-workflow.js   # Format-specific export handlers (HTML/CSV/JSON/Excel).
-│   │   ├── import-workflow.js   # Per-slot file import (JSON/CSV/Excel) → parse → save to IDB.
-│   │   └── report-manager.js    # Init, WAL replay, report list, extraction, context-menu actions, filters.
-│   ├── components/
-│   │   ├── app-shell.js         # Accordion navigation, breadcrumb, panel toggle.
-│   │   ├── command-palette.js   # Ctrl+K command palette with fuzzy search.
-│   │   ├── modal.js             # Promise-based confirm dialog.
-│   │   ├── progress-bar.js      # Progress bar show/update/hide.
-│   │   ├── report-list.js       # Virtual-scroll report list with grouping, sorting, density.
-│   │   ├── result-panel.js      # Comparison result rendering: severity bars, coverage, actions.
-│   │   ├── status-bar.js        # Bottom status bar: report count, phase indicator, shortcuts.
-│   │   ├── system-banner.js     # Persistent warning/error banner for storage degradation.
-│   │   └── toast.js             # Notification toasts (success/error/warning/info).
-│   ├── stubs/
-│   │   └── electron.js          # No-op Electron API stubs for webpack renderer bundle.
-│   ├── styles/
-│   │   ├── tokens.css           # Design tokens: colors, spacing, typography, shadows.
-│   │   ├── base.css             # Reset, body, typography, form elements.
-│   │   ├── shell.css            # App shell layout: toolbar, left panel, main content, status bar.
-│   │   ├── components.css       # Buttons, cards, badges, modals, toasts, toggles.
-│   │   ├── navigation.css       # Accordion nav sections, breadcrumb, command palette.
-│   │   ├── report-list.css      # Virtual scroll viewport, report cards, export dropdowns.
-│   │   └── result-panel.css     # Result panel: severity bars, coverage meters, element rows.
-│   ├── utils/
-│   │   ├── icons.js             # Inline SVG icon helpers for toolbar, lists, and commands.
-│   │   ├── sanitize.js          # XSS-safe HTML escaping via textContent → innerHTML.
-│   │   └── time.js              # Relative time formatting (just now, 5m ago, 2h ago, 3d ago).
-│   └── index.html               # Main HTML template with all section markup.
-│
-├── scripts/
-│   └── check-env.js             # Pre-build check: PLAYWRIGHT_BROWSERS_PATH exists with chromium.
-│
-├── webpack.main.config.js       # Main process bundle: target electron-main, externals playwright.
-├── webpack.renderer.config.js   # Renderer bundle: target web, stubs electron, copies static assets.
-├── webpack.extractor.config.js  # Extractor bundle: UMD library __uiCompare for in-page injection.
-├── electron-builder.config.js   # Packaging: NSIS/DMG, asar, playwright browser bundling.
-└── package.json                 # Scripts, dependencies, project metadata.
+└── renderer/
+    ├── app.js                   # DOMContentLoaded entry: wires components, commands, keyboard shortcuts.
+    ├── state.js                 # Reducer-based state machine (dispatch/subscribe/getState).
+    ├── ui.js                    # Re-exports Toast, Modal, progress helpers.
+    ├── index.html               # Main HTML template with all section markup.
+    ├── application/
+    │   ├── compare-workflow.js  # Loads elements from IDB, invokes IPC, persists results, cache by pair+mode.
+    │   ├── export-workflow.js   # Format-specific export handlers (HTML/CSV/JSON/Excel).
+    │   ├── import-workflow.js   # Per-slot import JSON / CSV / Excel (.xlsx, .xls) → parse → save to IDB.
+    │   └── report-manager.js    # Init, WAL replay, report list, extraction, combobox wiring, context menu.
+    ├── components/
+    │   ├── app-shell.js         # Accordion navigation, breadcrumb, panel toggle.
+    │   ├── command-palette.js   # Ctrl+K command palette with fuzzy search.
+    │   ├── modal.js             # Promise-based confirm dialog.
+    │   ├── progress-bar.js      # Progress bar show/update/hide.
+    │   ├── report-list.js       # Virtual-scroll report list with grouping, sorting, density.
+    │   ├── report-select-combobox.js # Baseline/compare picker: listbox UI + hidden native <select>.
+    │   ├── result-panel.js      # Comparison result rendering: severity bars, coverage, actions.
+    │   ├── status-bar.js        # Bottom status bar: report count, phase indicator, shortcuts.
+    │   ├── system-banner.js     # Persistent warning/error banner for storage degradation.
+    │   └── toast.js             # Notification toasts (success/error/warning/info).
+    ├── stubs/
+    │   └── electron.js          # No-op Electron API stubs for webpack renderer bundle.
+    ├── styles/
+    │   ├── tokens.css           # Design tokens: colors, spacing, typography, shadows.
+    │   ├── base.css             # Reset, body, typography, form elements.
+    │   ├── shell.css            # App shell layout: toolbar, left panel, main content, status bar.
+    │   ├── components.css       # Buttons, cards, badges, modals, toasts, toggles.
+    │   ├── navigation.css       # Accordion nav sections, breadcrumb, command palette.
+    │   ├── report-list.css      # Virtual scroll viewport, report cards, export dropdowns.
+    │   └── result-panel.css     # Result panel: severity bars, coverage meters, element rows.
+    └── utils/
+        ├── icons.js             # Inline SVG icon helpers for toolbar, lists, and commands.
+        ├── sanitize.js          # XSS-safe HTML escaping via textContent → innerHTML.
+        └── time.js              # Relative time formatting (just now, 5m ago, 2h ago, 3d ago).
 ```
+
+### Repository root (build, packaging, checks)
+
+These files are **not** under `src/` but define how the app is built and shipped:
+
+| Path | Role |
+|------|------|
+| `scripts/check-env.js` | `prebuild`: requires `PLAYWRIGHT_BROWSERS_PATH` and a `chromium-*` folder inside it. |
+| `webpack.main.config.js` | Main + preload → `dist/index.js`, `dist/preload.js` (`electron-main`, Playwright external). |
+| `webpack.renderer.config.js` | Renderer → `dist/renderer/app.js` (`web`), copies `index.html` and `styles/`. |
+| `webpack.extractor.config.js` | In-page bundle → `dist/extractor-bundle.js` (UMD `window.__uiCompare`). |
+| `electron-builder.config.js` | Installers to `dist-installer/`, `asarUnpack` for extractor + Playwright. |
+| `package.json` / `package-lock.json` | Scripts and dependency lockfile. |
+| `.eslintrc.json` | ESLint config (`npm run lint`). |
+
+### Count check
+
+To verify the map against disk (PowerShell):
+
+```powershell
+(Get-ChildItem -Path src -Recurse -File).Count
+```
+
+Expect **83** (currently all files are `.js`, `.html`, or `.css`). If you add or remove modules, update the tree above and this number.
 
 ## Data Flow: End to End
 
@@ -242,7 +267,7 @@ This traces a single comparison operation from user action to rendered result.
 12. `traverseDocument(filters)` — uses TreeWalker with a NodeFilter that rejects T0 tags (script, style, meta, etc.). For each element, computes both a relative HPID (rooted at extraction scope) and an absolute HPID (rooted at document.body). Shadow DOM boundaries inject a sentinel value (`0`) into the HPID path.
 13. `executePass1(visits)` — single synchronous pass reads `getBoundingClientRect()` and `getComputedStyle()` for every element.
 14. `applyVisibilityFilter()` — removes elements where `display:none`, `visibility:hidden`, `opacity:0`, or zero-dimension rect.
-15. `executeUnifiedPass()` — processes elements in adaptive batches (40 for ≤200 elements, down to 10 for >3000). For each element, builds an element record with HPID, tag, id, class, text, styles, attributes, rect, tier, page section. Then generates CSS and XPath selectors via `generateSelectorsForElements()` using a bounded concurrency queue.
+15. `executeUnifiedPass()` — processes elements in adaptive batches (`computeAdaptiveBatchSize`: 40 for ≤200 elements, 25 for ≤1000, 15 for ≤3000, 10 above that), further bounded per slice by `batchHardCapMs`. For each element, builds an element record with HPID, tag, id, class, text, styles, attributes, rect, tier, page section. Then generates CSS and XPath selectors via `generateSelectorsForElements()` using a bounded concurrency queue.
 16. Returns a report object:
 
 ```javascript
@@ -281,7 +306,7 @@ This traces a single comparison operation from user action to rendered result.
 
 ### Phase 2: Comparison (Two Reports → Diff Report)
 
-19. User selects baseline and compare reports from `#baseline-report` / `#compare-report`, chooses **dynamic** or **static** mode (`[name="compare-mode"]`), and optionally turns **Visual Diff** off via `#visual-diff-toggle` (maps to `includeScreenshots`). They can **Import file** per slot (`#baseline-upload`, `#compare-upload`) through `import-workflow.js` instead of using a saved extraction.
+19. User selects baseline and compare reports via the custom report combobox (`#baseline-report-trigger` / `#compare-report-trigger`, backed by hidden `#baseline-report` / `#compare-report` selects wired in `report-select-combobox.js` and `report-manager.js`), chooses **dynamic** or **static** mode (`[name="compare-mode"]`), and optionally turns **Visual Diff** off via `#visual-diff-toggle` (maps to `includeScreenshots`). They can **Import file** per slot (`#baseline-upload`, `#compare-upload`, accept `.json`, `.csv`, `.xlsx`, `.xls`) through `import-workflow.js` instead of using a saved extraction.
 20. When selections or mode change, `tryLoadCachedComparison()` in `compare-workflow.js` looks up an existing comparison by `(baselineId, compareId, mode)` in IndexedDB and, if found, dispatches `COMPARISON_COMPLETE` with `cachedAt` so the result panel shows stored diffs without re-running main-process work.
 21. User clicks `#compare-btn`. `compare-workflow.js` → `handleComparison()` runs `assessUrlCompatibility()` (from `@core/comparison/url-compatibility.js` in the renderer) — if paths differ, comparison is blocked (`INCOMPATIBLE`). If query/hash differs, a warning toast fires (`CAUTION`).
 22. `storage.loadReportElements(baselineId)` and `storage.loadReportElements(compareId)` load both element arrays from IndexedDB.
@@ -364,7 +389,7 @@ The matcher (`src/core/comparison/matcher.js`) uses an async generator pattern, 
 
 **Phase 2 (HPID Suffix Realignment):** Takes orphans from Phase 1 and builds a suffix index: for each compare orphan, takes the last `suffixDepth` (5) segments of the HPID plus tagName as a key. Baseline orphans are matched against this index. Only 1:1 unique matches are accepted (confidence 0.85). This recovers matches when a wrapper div was inserted/removed, shifting all descendant HPIDs by one segment.
 
-**Phase 3 (Legacy Strategies):** Runs remaining orphans through six strategy classifiers in descending confidence order: absolute-hpid (0.95), element-id (0.90), css-selector (0.80), xpath (0.78), position (0.30). Each classifier builds its own index (multimap or spatial grid) and processes all remaining baseline orphans. The position classifier uses a 2D grid with configurable cell size (`positionTolerance`, 50px), searching adjacent cells for the nearest same-tag element.
+**Phase 3 (Legacy Strategies):** Runs remaining orphans through the enabled `comparison.matching.strategies` entries **other than** `test-attribute` (default **five** passes: absolute-hpid, id, css-selector, xpath, position), each in descending confidence order. Each classifier builds its own index (multimap or spatial grid) and processes all remaining baseline orphans. The position classifier uses a 2D grid with configurable cell size (`positionTolerance`, 50px), searching adjacent cells for the nearest same-tag element.
 
 ### CSS Diff Engine and Severity Ranking
 
@@ -387,7 +412,7 @@ The matcher (`src/core/comparison/matcher.js`) uses an async generator pattern, 
 
 ### IndexedDB Persistence Layer
 
-**Database:** `ui_comparison_db`, version 7.
+**Database:** `ui_comparison_db`, version 8.
 
 **Object Stores:**
 
@@ -402,6 +427,7 @@ The matcher (`src/core/comparison/matcher.js`) uses an async generator pattern, 
 | `visual_keyframes` | `id` | `by_session` | Keyframe metadata |
 | `visual_element_rects` | `id` | `by_session`, `by_session_element` | Element rect records |
 | `operation_log` | `id` | `by_status`, `by_timestamp` | WAL entries |
+| `app_meta` | `key` | — | Small key-value records (e.g. one-shot user notice after a schema upgrade cleared legacy report data) |
 
 **Write-Ahead Log (WAL):** Every write operation follows this sequence:
 1. Write a `PENDING` entry to `operation_log` with the operation type and full payload.
@@ -409,6 +435,8 @@ The matcher (`src/core/comparison/matcher.js`) uses an async generator pattern, 
 3. Delete the WAL entry (marking it complete).
 
 On renderer startup, `initializeApp()` in `report-manager.js` calls `storage.applyPendingOperations()`, which scans `PENDING` WAL entries. **`SAVE_REPORT`** and **`SAVE_COMPARISON`** are replayed (each entry tracks `replayCount`; attempts stop after **3** failures, the entry is marked `FAILED`, and a `storage-degraded` event with reason **`WAL_REPLAY_EXHAUSTED`** is dispatched — `app.js` shows `SystemBanner.warning` for that case). **`SAVE_VISUAL_BLOB`** entries are never replayed (immediately marked `FAILED`) because binary payload may be missing after a crash. Other unknown operation types are failed the same way.
+
+After certain major upgrades (for example when legacy report rows were cleared in a v5 migration), `app.js` calls `storage.consumeV5UpgradeDataClearedNotice()` once; if a flag was stored in `app_meta`, the user sees a warning toast advising them to export before future upgrades.
 
 **Why WAL, not just write-and-hope:** IndexedDB transactions can fail or be torn if the app crashes mid-flight, quota is exceeded, or the DB is blocked. Without WAL, a crash between writing report metadata and element blobs could leave inconsistent rows. WAL records intent first; successful completion removes the entry. Replay on next launch recovers **report** and **comparison** writes when possible; when replay is unsafe or exhausted, the UI is notified instead of silently dropping data.
 
@@ -418,7 +446,7 @@ On renderer startup, `initializeApp()` in `report-manager.js` calls `storage.app
 
 ### Electron IPC Contract Layer
 
-Every IPC handler is registered in `src/main/ipc-handlers.js`. Every handler exposed to the renderer is defined in `src/main/preload.js` via `contextBridge.exposeInMainWorld`.
+Most `ipcMain.handle` routes live in `src/main/ipc-handlers.js`. A few `ipcMain.on` listeners (`SET_WINDOW_TITLE`, `SHOW_CONTEXT_MENU`) are registered in `src/main/index.js` next to the application menu. Everything exposed to the renderer is wired in `src/main/preload.js` via `contextBridge.exposeInMainWorld`. The bridge also exposes **`electronAPI.platform`** (`process.platform`: `darwin` \| `win32` \| `linux`) so the renderer can choose ⌘ vs Ctrl labels and macOS-specific shortcuts without guessing from `navigator`.
 
 | Channel Name | Direction | Handler (Main) | Renderer API | Input Shape | Output Shape |
 |---|---|---|---|---|---|
@@ -437,26 +465,29 @@ Every IPC handler is registered in `src/main/ipc-handlers.js`. Every handler exp
 | `SET_WINDOW_TITLE` | send (renderer→main) | `ipcMain.on` in `index.js` | `electronAPI.setWindowTitle(title)` | `title` (string) | — |
 | `SHOW_CONTEXT_MENU` | send (renderer→main) | `ipcMain.on` in `index.js` | `electronAPI.showContextMenu(payload)` | `{ reportId }` | — |
 | `CONTEXT_ACTION` | push (main→renderer) | `webContents.send` from context menu | `electronAPI.onContextAction(cb)` | — | `{ action, reportId, format? }` |
+| `MENU_ACTION` | push (main→renderer) | `webContents.send` from application menu (`buildApplicationMenu` in `index.js`) | `electronAPI.onMenuAction(cb)` | — | string action id (e.g. `'toggle-sidebar'`) |
 
-Channel string values are defined in `src/main/ipc-channels.js` and must stay aligned across `ipc-handlers.js`, `preload.js`, and any `ipcMain.on` / `send` usage in `index.js`. Note: `SHOW_CONTEXT_MENU` and `CONTEXT_ACTION` use lowercase hyphenated runtime strings (`show-context-menu`, `context-action`) while other channels use `SCREAMING_SNAKE` names matching their constant values.
+Channel string values are defined in `src/main/ipc-channels.js` and must stay aligned across `ipc-handlers.js`, `preload.js`, and any `ipcMain.on` / `send` usage in `index.js`. **Invoke channels** use uppercase string values that match their constant names (for example `START_COMPARISON` → `'START_COMPARISON'`). **`SHOW_CONTEXT_MENU`**, **`CONTEXT_ACTION`**, and **`MENU_ACTION`** use lowercase hyphenated runtime values (`show-context-menu`, `context-action`, `menu-action`).
 
-Renderer subscriptions: `report-manager.js` registers `onContextAction` during `initializeApp()` to connect menu actions to baseline/compare selection, export, and delete.
+**Native application menu:** `src/main/index.js` builds a standard Electron menu (File/Edit/View/Help; on macOS, an app menu with About/Quit). **View → Toggle Sidebar** sends `MENU_ACTION` with payload `'toggle-sidebar'` (accelerator **Ctrl+\\** / **⌘\\**). The renderer handles it in `app.js` via `electronAPI.onMenuAction`. Help items currently open placeholder GitHub URLs (`your-org/ui-comparison`); replace them in `buildApplicationMenu()` for your fork or internal docs.
+
+Renderer subscriptions: `report-manager.js` registers `onContextAction` during `initializeApp()` to connect context-menu actions to baseline/compare selection, export, and delete. `app.js` registers `onMenuAction` for application-menu actions (sidebar toggle).
 
 ### Renderer UI and client state
 
 **Bridge hard fail:** If `window.electronAPI` is missing (misconfigured preload), `app.js` replaces the body with a fatal message and throws — the app does not run half-connected.
 
-**State (`src/renderer/state.js`):** Single store with `dispatch` / `subscribe` / `getState`. Notable actions include `REPORTS_LOADED`, `REPORT_DELETED`, `EXTRACTION_PROGRESS`, `COMPARISON_STARTED` / `COMPARISON_PROGRESS` / `COMPARISON_COMPLETE` / `COMPARISON_ERROR`, `BASELINE_SELECTED`, `COMPARE_SELECTED`, `MODE_CHANGED`, `RESET_COMPARISON`, `DISMISS_ERROR` (resets phase while preserving reports and selections), `FILTERS_UPDATED`, and export lifecycle actions. `phase` drives window title updates via `electronAPI.setWindowTitle` in the `subscribe` callback in `app.js`.
+**State (`src/renderer/state.js`):** Single store with `dispatch` / `subscribe` / `getState`. Notable actions include `REPORTS_LOADED`, `REPORT_DELETED`, `EXTRACTION_PROGRESS`, `COMPARISON_STARTED` / `COMPARISON_PROGRESS` / `COMPARISON_COMPLETE` / `COMPARISON_ERROR`, `BASELINE_SELECTED`, `COMPARE_SELECTED`, `MODE_CHANGED`, `RESET_COMPARISON`, `DISMISS_ERROR` (resets phase while preserving reports and selections), `FILTERS_UPDATED`, and `EXPORT_STARTED` / `EXPORT_COMPLETE` / `EXPORT_ERROR`. `phase` drives window title updates via `electronAPI.setWindowTitle` in the `subscribe` callback in `app.js`.
 
 **Toolbar and shell:** `app-shell.js` drives the Extract / Compare accordion, breadcrumb (including “Results” when `phase === 'done'`), and left panel collapse (`#panel-toggle-btn`). `status-bar.js` shows phase and report count.
 
-**Sidebar list:** `report-list.js` virtual-scrolls saved reports with **group by** (none / host / date / environment), **sort by** (date / elements / name), **density** toggle (compact 44px, default 64px, comfortable 80px), and **search** (`#search-reports`, debounced). Right-click (when available) calls `electronAPI.showContextMenu({ reportId })`; the native menu sends actions back through `electronAPI.onContextAction`, handled in `initializeApp()` to set baseline/compare, export JSON/HTML, or delete.
+**Sidebar list:** `report-list.js` virtual-scrolls saved reports with **group by** (none / host / date / environment), **sort by** (date / elements / name), **density** toggle (compact 44px, default 64px, comfortable 80px), and **search** (`#search-reports`, debounced). Right-click (when available) calls `electronAPI.showContextMenu({ reportId })`; the native menu sends actions back through `electronAPI.onContextAction`, handled in `initializeApp()` to set baseline/compare, export (JSON / Excel / CSV / HTML), or delete.
 
 **Bulk actions:** Export all reports (`#export-all-btn` + `#export-all-format`) and delete all (`#delete-all-btn` in overflow menu) live in the sidebar card.
 
 **Compare UX:** Segmented **dynamic** vs **static** mode, **Visual Diff** checkbox (`#visual-diff-toggle` → `includeScreenshots`), per-slot **Import file** inputs.
 
-**Command palette and shortcuts (`app.js`):** **Ctrl+K** / **⌘K** toggles the palette. With focus outside inputs: **E** / **C** switch sections, **/** focuses search, **Escape** clears search text and re-renders the list. **Ctrl+Shift+D** (Cmd not used for diagnostics) opens a performance overlay fed by `getPerfMetrics()`. **Enter** dismisses error phase when not in an input.
+**Command palette and shortcuts (`app.js`):** **Ctrl+K** / **⌘K** toggles the palette. With focus outside inputs: **E** / **C** switch sections, **R** focuses the report list search field, **/** also focuses search, **Escape** clears search text and re-renders the list. **Ctrl+Shift+D** on Windows/Linux or **⌘⇧D** on macOS opens a performance overlay fed by `getPerfMetrics()`. **Enter** dismisses error phase when not in an input.
 
 **Token System:** `src/renderer/styles/tokens.css` defines CSS custom properties for colors (primary, neutral, semantic), spacing (4px base scale), typography (Inter + JetBrains Mono), border-radius, shadows, and z-index layers. Component styles are expected to use these tokens.
 
@@ -479,6 +510,8 @@ git clone <repo-url> ui-comparison-desktop
 cd ui-comparison-desktop
 npm install
 ```
+
+`postinstall` runs `electron-builder install-app-deps` so native dependencies are prepared for packaging after install.
 
 ### Install Playwright Browsers
 
@@ -505,6 +538,8 @@ This runs three processes concurrently:
 3. `electron .` launches the app
 
 `npm start` does **not** build the extractor bundle. You must build it separately before extraction will work (see next section). Alternatively, run `npm run build` once before your first `npm start` — it builds all three bundles.
+
+The webpack configs set `bail: true` together with `--watch`. If either bundle fails to compile, that watch process exits (you may see `exited with code 1` from `concurrently` for the webpack tasks while Electron keeps running). Fix the error and restart `npm start`, or rely on a successful `npm run build` and run `electron .` alone if you only need to test the app without watch rebuilds.
 
 DevTools: Press `Ctrl+Shift+I` (Windows/Linux) or `Cmd+Option+I` (macOS).
 
@@ -547,6 +582,13 @@ Verifies the extractor bundle exists and `app.getVersion()` returns a valid stri
 
 ## Development Workflows
 
+### Lint and format
+
+```bash
+npm run lint    # ESLint (see `.eslintrc.json`)
+npm run format  # Prettier write
+```
+
 ### Adding a New IPC Handler
 
 **Constraint:** The handler must be registered in main, exposed in preload, and consumed in renderer. All three files must use the same channel name constant.
@@ -570,6 +612,8 @@ Verifies the extractor bundle exists and `app.getVersion()` returns a valid stri
    ```
 
 4. **Renderer code** — Call via `window.electronAPI.myNewMethod(params)`.
+
+For **one-way** renderer→main channels (no async reply), follow `SET_WINDOW_TITLE` / `SHOW_CONTEXT_MENU`: register `ipcMain.on` in `src/main/index.js`, expose `ipcRenderer.send` from preload, and subscribe or handle in the renderer as needed.
 
 **Constraint:** The handler in main must never import from `src/renderer/` or call IndexedDB. The renderer must never import from `src/main/`.
 
@@ -652,7 +696,7 @@ Verifies the extractor bundle exists and `app.getVersion()` returns a valid stri
 
 **Common root cause:** The preload entry in `webpack.main.config.js` compiles to `dist/preload.js`, but the `BrowserWindow` must load that same file. If you rename or move outputs, this path breaks silently — the window opens but `electronAPI` is `undefined`.
 
-**Verification:** In the terminal where `npm start` runs, look for `registerIpcHandlers` log. In renderer DevTools, run `Object.keys(window.electronAPI)` — you should see the invoke/send APIs and progress/context subscription helpers (e.g. `startComparison`, `extractElements`, `onComparisonProgress`, `setWindowTitle`, `showContextMenu`, `onContextAction`).
+**Verification:** In the terminal where `npm start` runs, look for `registerIpcHandlers` log. In renderer DevTools, run `Object.keys(window.electronAPI)` — you should see the invoke/send APIs and progress/context subscription helpers (e.g. `platform`, `startComparison`, `extractElements`, `onComparisonProgress`, `setWindowTitle`, `showContextMenu`, `onContextAction`).
 
 ### IndexedDB: circuit breaker or WAL replay
 
@@ -724,6 +768,6 @@ Without cascade suppression, changing a parent's `color` property creates diff e
 
 ## Critical Risk Assessment
 
-**The subsystem with the highest gap between implementation complexity and documentation coverage is `src/core/export/export-utils/report-transformer.js`.** This 729-line file contains the BFS cascade suppression algorithm, content intelligence (Levenshtein-based text divergence scoring, geometric proportionality error analysis for width/height changes), impact score computation, severity rebucketing, and deduplication logic. It transforms raw comparison results into the grouped report structure consumed by the HTML exporter. None of these algorithms were documented in the existing README — no mention of the Levenshtein distance, the proportionality error formula, the corroboration scores, or the narrative badge classification.
+**The subsystem with the highest gap between implementation complexity and documentation coverage is `src/core/export/export-utils/report-transformer.js`.** This module (on the order of **~620** lines of implementation) contains the BFS cascade suppression algorithm, content intelligence (Levenshtein-based text divergence scoring, geometric proportionality error analysis for width/height changes), impact score computation, severity rebucketing, and deduplication logic. It transforms raw comparison results into the grouped report structure consumed by the HTML exporter. The Levenshtein distance, proportionality error analysis, corroboration scores, and narrative badge classification remain under-documented here — read the source when changing export behavior.
 
 **The single most dangerous thing a new engineer could do:** Modify the `runBFSSuppression()` function's ancestor-walk logic (specifically the `walkUpToNearestDiffAncestor` function or the `INHERITABLE_PROPS` / `LAYOUT_PROPAGATION_PROPS` sets) without understanding that it uses *absolute* HPIDs for ancestry detection but the rest of the system uses *relative* HPIDs for display. If someone swapped to relative HPIDs in the suppression walk (because they "look simpler" or because they're used everywhere else), suppression would silently break for filtered extractions — where relative HPIDs start at `1` for every filter root, making unrelated elements appear to be ancestors of each other. The result: legitimate diffs would be suppressed, the impact score would improve, and the HTML report would show fewer issues than actually exist. This corruption would not produce any error, warning, or test failure — it would simply make reports look "clean" when they're not.

@@ -50,9 +50,6 @@ function hostHint(url) {
   }
 }
 
-/**
- * Rebuild listbox options from the hidden native select (metadata from data-* on options).
- */
 export function refreshReportSelectPanel(selectEl) {
   const root = selectEl.closest('.report-select');
   if (!root) { return; }

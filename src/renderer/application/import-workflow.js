@@ -184,6 +184,13 @@ async function handleImportReport(file, slot) {
     await storage.saveReport(imported);
     await loadAndRenderReports();
 
+    if (slot !== 'baseline' && slot !== 'compare') {
+      syncCompareButton();
+      tryLoadCachedComparison();
+      Toast.success('Imported report — select it in Compare to use it.');
+      return;
+    }
+
     const selId = slot === 'baseline' ? 'baseline-report' : 'compare-report';
     const sel   = document.getElementById(selId);
     if (sel) {

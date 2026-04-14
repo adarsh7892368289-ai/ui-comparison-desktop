@@ -35,7 +35,6 @@ export class StatusBar {
     frag.appendChild(this._kbd(keyLetter));
   }
 
-  /** Single phase-aware shortcut hint (right region). */
   updateRightHint(state) {
     if (!this._right) { return; }
     this._right.replaceChildren();
@@ -51,13 +50,12 @@ export class StatusBar {
 
     if (phase === 'idle' && reportCount > 0) {
       this._appendModPlusKey(frag, 'K');
-      frag.appendChild(document.createTextNode(' Open commands'));
+      frag.appendChild(document.createTextNode(' Quick actions'));
       this._right.appendChild(frag);
       return;
     }
 
     if (phase === 'extracting') {
-      /* No Esc cancel wired for extraction — omit shortcut hint. */
       return;
     }
 
@@ -69,7 +67,7 @@ export class StatusBar {
 
     if (phase === 'done') {
       this._appendModPlusKey(frag, 'K');
-      frag.appendChild(document.createTextNode(' Export or compare again'));
+      frag.appendChild(document.createTextNode(' Export or search'));
       this._right.appendChild(frag);
       return;
     }

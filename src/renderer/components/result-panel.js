@@ -1,11 +1,7 @@
-import { Toast } from './toast.js';
-import { sanitize } from '../utils/sanitize.js';
 import { relativeTime } from '../utils/time.js';
 import { handleExport, handleFullReport } from '../application/export-workflow.js';
 import { dispatch } from '../state.js';
 import { iconAlertCircle, iconAlertTriangle, iconCheck, iconGitCompare } from '../utils/icons.js';
-
-const DETAIL_CAP = 50;
 
 function _ce(tag, className) {
   const el = document.createElement(tag);
@@ -17,64 +13,6 @@ function _text(tag, className, content) {
   const el = _ce(tag, className);
   el.textContent = content;
   return el;
-}
-
-function _buildElRow(el, status) {
-  const tag    = (el.tagName || 'unknown').toLowerCase();
-  const idPart = el.elementId ? `#${el.elementId}` : '';
-  const clsPart = el.className?.trim()
-    ? `.${el.className.trim().split(/\s+/).slice(0, 2).join('.')}`
-    : '';
-  const label = `${tag}${idPart}${clsPart}` || 'unknown';
-
-  const row   = _ce('div', 'el-row');
-  const badge = _text('span', `badge ${status === 'added' ? 'badge-added' : 'badge-removed'}`, status === 'added' ? '+' : '−');
-  const info  = _ce('div', 'el-info');
-
-  info.appendChild(_text('span', 'el-label', label));
-
-  if (el.hpid) {
-    info.appendChild(_text('span', 'el-hpid', el.hpid));
-  }
-
-  if (el.textContent?.trim()) {
-    const trimmed = el.textContent.trim().slice(0, 60);
-    const suffix  = el.textContent.trim().length > 60 ? '…' : '';
-    info.appendChild(_text('span', 'el-text', `"${trimmed}${suffix}"`));
-  }
-
-  if (el.cssSelector) {
-    const sel = _ce('span', 'el-sel');
-    sel.title       = el.cssSelector;
-    sel.textContent = el.cssSelector.slice(0, 50) + (el.cssSelector.length > 50 ? '…' : '');
-    info.appendChild(sel);
-  }
-
-  row.append(badge, info);
-  return row;
-}
-
-function _buildElSection(items, status) {
-  const section = _ce('details', 'element-section result-section');
-  const summary = _ce('summary');
-
-  const countBadge = _text('span', `badge ${status === 'added' ? 'badge-added' : 'badge-removed'}`,
-    `${status === 'added' ? '+' : '−'}${items.length}`);
-  const labelNode = document.createTextNode(` ${status === 'added' ? 'Added in compare' : 'Removed from baseline'}`);
-
-  summary.append(countBadge, labelNode);
-  section.appendChild(summary);
-
-  const list = _ce('div', 'el-list');
-  const cap  = items.slice(0, DETAIL_CAP);
-  cap.forEach(el => list.appendChild(_buildElRow(el, status)));
-
-  if (items.length > DETAIL_CAP) {
-    list.appendChild(_text('div', 'el-overflow', `+${items.length - DETAIL_CAP} more — export for full list`));
-  }
-
-  section.appendChild(list);
-  return section;
 }
 
 function _buildSevRow(label, count, type, sevTotal) {
@@ -89,6 +27,53 @@ function _buildSevRow(label, count, type, sevTotal) {
   wrap.appendChild(fill);
   const countEl = _text('span', 'sev-count', String(count));
   row.append(badge, wrap, countEl);
+  return row;
+}
+
+function shortenUrl(url) {
+  try { const u = new URL(url); return u.hostname + (u.pathname !== '/' ? u.pathname : ''); }
+  catch { return url ?? '—'; }
+}
+
+function getMatchRateColor(pct) {
+  if (pct >= 75) { return 'var(--color-success)'; }
+  if (pct >= 60) { return 'hsl(25 85% 52%)'; }
+  return 'var(--color-destructive)';
+}
+
+function _truncateElText(s, max = 40) {
+  if (s == null || s === '') { return ''; }
+  const t = String(s).replace(/\s+/g, ' ').trim();
+  if (t.length <= max) { return t; }
+  return `${t.slice(0, max)}…`;
+}
+
+function _elementTagClassLine(el) {
+  const tag = (el.tagName || 'element').toLowerCase();
+  const cn = el.className != null ? String(el.className).trim() : '';
+  const parts = cn ? cn.split(/\s+/).filter(Boolean).slice(0, 3) : [];
+  return parts.length ? `${tag}.${parts.join('.')}` : tag;
+}
+
+function _buildElRow(el) {
+  const row = _ce('div', 'el-row');
+  const sel = el.cssSelector ?? el.xpath ?? '';
+  if (sel) { row.title = sel; }
+
+  const info = _ce('div', 'el-info');
+  const tagLine = _elementTagClassLine(el);
+  const textRaw = el.textContent != null ? String(el.textContent).trim() : '';
+
+  if (textRaw) {
+    info.appendChild(_text('span', 'el-label', `${tagLine} `));
+    info.appendChild(_text('span', 'el-text', `"${_truncateElText(textRaw, 40)}"`));
+  } else if (el.className != null && String(el.className).trim()) {
+    info.appendChild(_text('span', 'el-label', tagLine));
+  } else {
+    info.appendChild(_text('span', 'el-label', `<${(el.tagName || 'element').toLowerCase()}>`));
+  }
+
+  row.appendChild(info);
   return row;
 }
 
@@ -120,19 +105,20 @@ export class ResultPanel {
     const added   = result.unmatchedElements?.compare  ?? [];
     const removed = result.unmatchedElements?.baseline ?? [];
 
-    const totalElements  = (matching.totalMatched ?? 0) + (matching.unmatchedBaseline ?? 0) + (matching.unmatchedCompare ?? 0);
-    const unmatchedTotal = (matching.unmatchedBaseline ?? 0) + (matching.unmatchedCompare ?? 0);
-    const pct = n => totalElements > 0 ? ((n / totalElements) * 100).toFixed(1) : 0;
-
-    const rateClass = critical > 0 ? 'rate-critical' : high > 0 ? 'rate-high' : 'rate-ok';
-
     this._removeListeners();
     this._container.replaceChildren();
 
     const root = _ce('div', 'result-panel');
 
-    root.appendChild(this._buildSummaryBar(matching, mode, duration, cachedAt, rateClass));
-    root.appendChild(this._buildCoverageSection(matching, modifiedElements, unchangedElements, added, removed, unmatchedTotal, totalElements, pct));
+    root.appendChild(this._buildSummaryBar(matching, mode, duration, cachedAt, result.baselineUrl, result.compareUrl));
+    root.appendChild(this._buildCoverageSection(matching, modifiedElements, unchangedElements, added, removed));
+
+    if (added.length > 0) {
+      root.appendChild(this._buildElementSection('Added in compare', added));
+    }
+    if (removed.length > 0) {
+      root.appendChild(this._buildElementSection('Removed from baseline', removed));
+    }
 
     if (propChanges > 0) {
       root.appendChild(this._buildSeveritySection(propChanges, sevElements, critical, high, medium, low, sevTotal));
@@ -142,14 +128,6 @@ export class ResultPanel {
       checkIc.innerHTML = iconCheck(16);
       noDiffs.append(checkIc, document.createTextNode('No style differences in matched elements'));
       root.appendChild(noDiffs);
-    }
-
-    if (added.length > 0) {
-      root.appendChild(_buildElSection(added, 'added'));
-    }
-
-    if (removed.length > 0) {
-      root.appendChild(_buildElSection(removed, 'removed'));
     }
 
     if (matching.ambiguousCount > 0) {
@@ -170,20 +148,18 @@ export class ResultPanel {
     this._container.appendChild(root);
   }
 
-  _buildSummaryBar(matching, mode, duration, cachedAt, rateClass) {
+  _buildSummaryBar(matching, mode, duration, cachedAt, baselineUrl, compareUrl) {
     const bar = _ce('div', 'result-summary-bar');
 
-    const pct   = matching.matchRate ?? 0;
-    const r     = 30;
-    const cx    = 40;
-    const cy    = 40;
-    const circ  = 2 * Math.PI * r;           // ~188.5
+    const pct    = matching.matchRate ?? 0;
+    const r      = 30;
+    const cx     = 40;
+    const cy     = 40;
+    const circ   = 2 * Math.PI * r;
     const filled = (pct / 100) * circ;
     const gap    = circ - filled;
 
-    const arcColor = rateClass === 'rate-critical' ? 'var(--severity-critical)'
-                   : rateClass === 'rate-high'     ? 'var(--severity-high)'
-                   :                                 'var(--color-success)';
+    const arcColor = getMatchRateColor(pct);
 
     const svgNS = 'http://www.w3.org/2000/svg';
     const svgEl = document.createElementNS(svgNS, 'svg');
@@ -194,14 +170,12 @@ export class ResultPanel {
     svgEl.setAttribute('aria-label', `${pct}% match rate`);
     svgEl.setAttribute('role', 'img');
 
-    // Track arc (unfilled)
     const track = document.createElementNS(svgNS, 'circle');
     track.setAttribute('cx', cx); track.setAttribute('cy', cy); track.setAttribute('r', r);
     track.setAttribute('fill', 'none');
     track.setAttribute('stroke', 'var(--color-surface-raised)');
     track.setAttribute('stroke-width', '8');
 
-    // Filled arc — starts at 12 o'clock via transform rotate(-90)
     const arc = document.createElementNS(svgNS, 'circle');
     arc.setAttribute('cx', cx); arc.setAttribute('cy', cy); arc.setAttribute('r', r);
     arc.setAttribute('fill', 'none');
@@ -211,14 +185,14 @@ export class ResultPanel {
     arc.setAttribute('stroke-dasharray', `${filled} ${gap}`);
     arc.setAttribute('transform', `rotate(-90 ${cx} ${cy})`);
 
-    // Center percentage text — 16px keeps "100%" within 44px inner diameter
     const label = document.createElementNS(svgNS, 'text');
+    label.setAttribute('class', 'match-rate-value');
     label.setAttribute('x', cx); label.setAttribute('y', cy);
     label.setAttribute('dominant-baseline', 'central');
     label.setAttribute('text-anchor', 'middle');
     label.setAttribute('font-size', '16');
     label.setAttribute('font-weight', '600');
-    label.setAttribute('fill', 'var(--color-text-primary)');
+    label.setAttribute('fill', arcColor);
     label.textContent = `${pct}%`;
 
     svgEl.appendChild(track);
@@ -244,88 +218,101 @@ export class ResultPanel {
     }
 
     detail.appendChild(meta);
+
+    const urlRow  = _ce('div', 'result-url-row');
+    const urlAEl  = _text('span', 'result-url result-url--baseline', shortenUrl(baselineUrl));
+    urlAEl.title  = baselineUrl ?? '';
+    const sep     = _text('span', 'result-url-sep', '↔');
+    const urlBEl  = _text('span', 'result-url result-url--compare', shortenUrl(compareUrl));
+    urlBEl.title  = compareUrl ?? '';
+    urlRow.append(urlAEl, sep, urlBEl);
+    detail.appendChild(urlRow);
+
     bar.appendChild(detail);
     return bar;
   }
 
-  _buildCoverageSection(matching, modifiedElements, unchangedElements, added, removed, unmatchedTotal, totalElements, pct) {
-    const section = _ce('div', 'coverage-bar-section');
-    section.appendChild(_text('span', 'section-title', `Element Coverage — ${totalElements} total`));
+  _buildCoverageSection(matching, modifiedElements, unchangedElements, added, removed) {
+    const total     = matching.totalElements
+                   ?? ((matching.totalMatched ?? 0) + (matching.unmatchedBaseline ?? 0) + (matching.unmatchedCompare ?? 0));
+    const matched   = matching.totalMatched ?? 0;
+    const unchanged = matching.unchangedCount ?? unchangedElements ?? 0;
+    const modified  = matching.modifiedCount  ?? modifiedElements  ?? 0;
+    const addedCnt  = matching.addedCount     ?? (added?.length   ?? 0);
+    const removedCnt= matching.removedCount   ?? (removed?.length ?? 0);
+    const unmatched = addedCnt + removedCnt;
 
-    const dotColors = {
-      Matched:   'var(--color-coverage-matched)',
-      Modified:  'var(--color-coverage-modified)',
-      Unchanged: 'var(--color-coverage-matched)',
-      Unmatched: 'var(--color-coverage-removed)',
-    };
+    const pct = (n) => total > 0 ? Math.round(n / total * 100) : 0;
 
-    const stats = _ce('div', 'coverage-stats');
-    const statDefs = [
-      { val: matching.totalMatched,    label: 'Matched' },
-      { val: modifiedElements  ?? 0,   label: 'Modified' },
-      { val: unchangedElements ?? 0,   label: 'Unchanged' },
-      { val: unmatchedTotal,           label: 'Unmatched' },
-    ];
-    statDefs.forEach(({ val, label }) => {
-      const stat = _ce('div', 'coverage-stat');
-      const dot = _ce('span', 'coverage-dot');
-      dot.style.background = dotColors[label] || 'var(--color-text-secondary)';
-      const valueRow = _ce('div', 'coverage-stat-value');
-      valueRow.textContent = String(val);
-      stat.appendChild(dot);
-      stat.appendChild(valueRow);
-      stat.appendChild(_text('div', 'coverage-stat-label', label));
-      stats.appendChild(stat);
-    });
-    section.appendChild(stats);
+    const section = _ce('section', 'result-section coverage-section');
 
-    const bar = _ce('div', 'coverage-bar');
-    bar.setAttribute('role', 'meter');
-    bar.setAttribute('aria-label', 'Element coverage');
-    bar.setAttribute('aria-valuemin', '0');
-    bar.setAttribute('aria-valuemax', String(totalElements));
-    bar.setAttribute('aria-valuenow', String(matching.totalMatched ?? 0));
-    bar.setAttribute('aria-valuetext', `${matching.totalMatched ?? 0} of ${totalElements} elements matched`);
-    const segs = [
-      { cls: 'seg-unchanged', n: unchangedElements ?? 0, title: `${unchangedElements} unchanged` },
-      { cls: 'seg-modified',  n: modifiedElements  ?? 0, title: `${modifiedElements} modified` },
-      { cls: 'seg-added',     n: added.length,           title: `${added.length} added` },
-      { cls: 'seg-removed',   n: removed.length,         title: `${removed.length} removed` },
-    ];
-    segs.forEach(({ cls, n, title }) => {
-      const pctVal = parseFloat(pct(n));
-      const seg = _ce('div', `coverage-bar-segment ${cls}`);
-      seg.style.width = `${pctVal}%`;
-      seg.title = title;
-      bar.appendChild(seg);
-    });
+    const title = _ce('div', 'section-title');
+    title.textContent = `Elements — ${total} total`;
+    section.appendChild(title);
+
+    const bar = _ce('div', 'coverage-proportion-bar');
+    const segMatched = _ce('div', 'coverage-prop-seg coverage-prop-matched');
+    segMatched.style.width = pct(matched) + '%';
+    segMatched.title = `Matched: ${matched}`;
+    const segUnmatched = _ce('div', 'coverage-prop-seg coverage-prop-unmatched');
+    segUnmatched.style.width = pct(unmatched) + '%';
+    segUnmatched.title = `Unmatched: ${unmatched}`;
+    bar.append(segMatched, segUnmatched);
     section.appendChild(bar);
 
-    const legend = _ce('div', 'coverage-bar-legend');
-    legend.setAttribute('role', 'list');
-    [
-      { cls: 'seg-unchanged', label: 'Unchanged' },
-      { cls: 'seg-modified', label: 'Modified' },
-      { cls: 'seg-added', label: 'Added' },
-      { cls: 'seg-removed', label: 'Removed' },
-    ].forEach(({ cls, label }) => {
-      const item = _ce('div', 'coverage-bar-legend-item');
-      item.setAttribute('role', 'listitem');
-      const sw = _ce('span', `coverage-legend-swatch ${cls}`);
-      sw.setAttribute('aria-hidden', 'true');
-      item.appendChild(sw);
-      item.appendChild(_text('span', 'coverage-legend-label', label));
-      legend.appendChild(item);
-    });
-    section.appendChild(legend);
-
+    const tree = _ce('div', 'coverage-tree');
+    tree.appendChild(this._buildCoverageGroup('Matched', matched, pct(matched),
+      [{ label: 'Unchanged', val: unchanged, symbol: '●', note: 'no differences', cls: 'unchanged' },
+       { label: 'Modified',  val: modified,  symbol: '●', note: 'CSS changes',    cls: 'modified'  }]
+    ));
+    tree.appendChild(this._buildCoverageGroup('Unmatched', unmatched, pct(unmatched),
+      [{ label: 'Added',   val: addedCnt,   symbol: '+', note: 'new in compare',       cls: 'added'   },
+       { label: 'Removed', val: removedCnt, symbol: '−', note: 'missing from baseline', cls: 'removed' }]
+    ));
+    section.appendChild(tree);
     return section;
   }
 
+  _buildElementSection(title, elements) {
+    const details = _ce('details', 'result-section element-section');
+    const summary = _ce('summary');
+    summary.textContent = `${title} (${elements.length})`;
+    details.appendChild(summary);
+    const list = _ce('div', 'el-list');
+    for (const el of elements) {
+      list.appendChild(_buildElRow(el));
+    }
+    details.appendChild(list);
+    return details;
+  }
+
+  _buildCoverageGroup(label, total, pct, children) {
+    const group  = _ce('div', 'coverage-group');
+    const header = _ce('div', 'coverage-group-header');
+    const lbl    = _ce('span', 'cg-label');  lbl.textContent  = label;
+    const val    = _ce('span', 'cg-value');  val.textContent  = String(total);
+    const pctEl  = _ce('span', 'cg-pct');   pctEl.textContent = `${pct}%`;
+    header.append(lbl, val, pctEl);
+    group.appendChild(header);
+    for (const child of children) {
+      const row  = _ce('div', `coverage-child coverage-child--${child.cls}`);
+      const sym  = _ce('span', 'cc-sym');   sym.textContent  = child.symbol;
+      const cLbl = _ce('span', 'cc-label'); cLbl.textContent = child.label;
+      const cVal = _ce('span', 'cc-val');   cVal.textContent = String(child.val);
+      const note = _ce('span', 'cc-note');  note.textContent = child.note;
+      row.append(sym, cLbl, cVal, note);
+      group.appendChild(row);
+    }
+    return group;
+  }
+
   _buildSeveritySection(propChanges, sevElements, critical, high, medium, low, sevTotal) {
-    const section = _ce('div', 'severity-section');
-    const titleText = `Severity — ${propChanges} CSS property change${propChanges !== 1 ? 's' : ''} across ${sevElements} modified element${sevElements !== 1 ? 's' : ''}`;
-    section.appendChild(_text('span', 'section-title', titleText));
+    const section = _ce('div', 'severity-section result-section--nested');
+    const frame = _ce('div', 'severity-section__frame');
+    const titleText = `${propChanges} CSS change${propChanges !== 1 ? 's' : ''} across ${sevElements} modified element${sevElements !== 1 ? 's' : ''}`;
+    const titleEl = _ce('div', 'section-title section-title--nested');
+    titleEl.textContent = titleText;
+    frame.appendChild(titleEl);
 
     const list = _ce('div');
     list.setAttribute('role', 'list');
@@ -333,7 +320,8 @@ export class ResultPanel {
     if (high     > 0) { list.appendChild(_buildSevRow('High',     high,     'high',     sevTotal)); }
     if (medium   > 0) { list.appendChild(_buildSevRow('Medium',   medium,   'medium',   sevTotal)); }
     if (low      > 0) { list.appendChild(_buildSevRow('Low',      low,      'low',      sevTotal)); }
-    section.appendChild(list);
+    frame.appendChild(list);
+    section.appendChild(frame);
 
     return section;
   }

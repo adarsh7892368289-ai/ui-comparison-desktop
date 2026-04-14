@@ -99,7 +99,6 @@ function reduce(state, type, payload) {
       return { ...state, comparison: null, phase: 'idle', error: null, cachedAt: null };
 
     case 'DISMISS_ERROR':
-      /* Full shape like initialState; preserve list/selections so sidebar does not empty */
       return {
         ...initialState,
         reports:          state.reports,

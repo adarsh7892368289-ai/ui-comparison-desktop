@@ -1,7 +1,8 @@
 'use strict';
 
-const { app, BrowserWindow, protocol, Menu, ipcMain } = require('electron');
+const { app, BrowserWindow, protocol, Menu, ipcMain, shell } = require('electron');
 const path = require('path');
+const fs   = require('fs');
 const log  = require('electron-log');
 
 const { registerIpcHandlers, setBlobCache }                        = require('./ipc-handlers');
@@ -57,6 +58,33 @@ function buildApplicationMenu() {
         { role: 'selectAll' },
       ],
     },
+    {
+      label: 'View',
+      submenu: [
+        { label: 'Toggle Sidebar', accelerator: 'CmdOrCtrl+\\', click: () => {
+          BrowserWindow.getFocusedWindow()?.webContents.send(IPC.MENU_ACTION, 'toggle-sidebar');
+        }},
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' }
+      ]
+    },
+    {
+      label: 'Help',
+      submenu: [
+        { label: 'Documentation', click: () => {
+          shell.openExternal('https://github.com/your-org/ui-comparison/wiki');
+        }},
+        { label: 'Report an Issue', click: () => {
+          shell.openExternal('https://github.com/your-org/ui-comparison/issues');
+        }},
+        { type: 'separator' },
+        { role: 'about' }
+      ]
+    },
   ];
 
   if (!app.isPackaged) {
@@ -78,7 +106,6 @@ app.on('ready', () => {
 
   const isSmokeTest = process.argv.includes('--smoke-test');
   if (isSmokeTest) {
-    const fs = require('fs');
     const candidates = [
       path.join(process.resourcesPath ?? '', 'extractor-bundle.js'),
       path.join(__dirname, 'extractor-bundle.js'),
@@ -170,6 +197,40 @@ app.on('ready', () => {
   mainWindow.on('closed', () => { mainWindow = null; });
 });
 
+// Lazy getter — app.getPath('userData') must not be called before app.ready
+function _stateFilePath() {
+  return path.join(app.getPath('userData'), 'window-state.json');
+}
+
+function _loadWindowState() {
+  try { return JSON.parse(fs.readFileSync(_stateFilePath(), 'utf8')); }
+  catch { return null; }
+}
+
+function _saveWindowState(win) {
+  try {
+    const b = win.getBounds();
+    fs.writeFileSync(_stateFilePath(), JSON.stringify({
+      x: b.x, y: b.y,
+      width: b.width, height: b.height,
+      maximized: win.isMaximized()
+    }));
+  } catch (err) {
+    log.error('Error saving window state', { err: err.message });
+  }
+}
+
+// Debounced periodic save — survives OS force-kill (SIGKILL) better than close-only
+function _attachPeriodicStateSave(win) {
+  let _saveTimer = null;
+  const schedSave = () => {
+    clearTimeout(_saveTimer);
+    _saveTimer = setTimeout(() => _saveWindowState(win), 800);
+  };
+  win.on('resize', schedSave);
+  win.on('move',   schedSave);
+}
+
 function createMainWindow() {
   const win = new BrowserWindow({
     width:     1280,
@@ -186,18 +247,32 @@ function createMainWindow() {
       webSecurity:      true,
     },
     title:           'UI Comparison',
-    /* Match --color-surface-base (tokens.css); avoids white flash before renderer CSS */
-    backgroundColor: '#0f1523',
+    backgroundColor: '#111827',
     ...(process.platform === 'darwin'
       ? {
           titleBarStyle: 'hiddenInset',
-          /* y:14 centers ~12px traffic lights in a 44px toolbar (audit: default y:22 targets 48px) */
           trafficLightPosition: { x: 12, y: 14 },
         }
       : {}),
   });
 
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => {
+    const savedState = _loadWindowState();
+    if (!savedState || savedState.maximized) {
+      win.maximize();
+    } else {
+      if (savedState.width && savedState.height) {
+        win.setSize(savedState.width, savedState.height);
+      }
+      if (savedState.x != null && savedState.y != null) {
+        win.setPosition(savedState.x, savedState.y);
+      }
+    }
+    win.show();
+  });
+
+  win.on('close', () => _saveWindowState(win));
+  _attachPeriodicStateSave(win);
 
   win.loadURL('app://./index.html');
 

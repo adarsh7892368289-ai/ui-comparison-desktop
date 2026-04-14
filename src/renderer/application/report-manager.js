@@ -24,6 +24,11 @@ let _reportList = null;
 
 const api = window.electronAPI;
 
+function announceReportList(message) {
+  const el = document.getElementById('report-list-announcer');
+  if (el) { el.textContent = message; }
+}
+
 function selectBaselineFromReport(report) {
   dispatch('BASELINE_SELECTED', { id: report.id });
   const sel = document.getElementById('baseline-report');
@@ -33,6 +38,8 @@ function selectBaselineFromReport(report) {
   }
   syncCompareButton();
   tryLoadCachedComparison();
+  Toast.success('Set as baseline');
+  announceReportList(`Set as baseline — ${hostFromUrl(report.url)}`);
 }
 
 function selectCompareFromReport(report) {
@@ -44,6 +51,8 @@ function selectCompareFromReport(report) {
   }
   syncCompareButton();
   tryLoadCachedComparison();
+  Toast.success('Set as compare');
+  announceReportList(`Set as compare — ${hostFromUrl(report.url)}`);
 }
 
 const STAGE_RE = /\b(stage|staging|dev|test|qa|uat|preview|sandbox|canary)\b/i;
@@ -90,7 +99,6 @@ function insertReportListSkeletonOverlay() {
 }
 
 function renderReportList(reports, searchQuery) {
-  /* Remove skeleton before virtual list paints so skeleton + first card never overlap (Session 9) */
   document.querySelector('#reports-list .report-list-skeleton-overlay')?.remove();
   _reportList?.setReports(reports, searchQuery ?? '');
   const empty = document.getElementById('reports-empty');
@@ -193,7 +201,7 @@ async function handleExtraction() {
   }
   setError('extract', '');
   const originalHTML = extractBtn.innerHTML;
-  extractBtn.style.minWidth = extractBtn.offsetWidth + 'px';   // lock width BEFORE innerHTML change
+  extractBtn.style.minWidth = extractBtn.offsetWidth + 'px';
   extractBtn.disabled  = true;
   extractBtn.innerHTML = `${iconSpinner(14)} <span>Extracting…</span>`;
   showProgress('extract', 'Starting…');
@@ -222,6 +230,7 @@ async function handleExtraction() {
       id:        result.report.id        ?? crypto.randomUUID(),
       timestamp: result.report.timestamp ?? new Date().toISOString(),
       url:       result.report.url       ?? url,
+      duration:  result.report?.duration ?? result.duration,
     });
 
     if (result.report.captureQuality === 'DEGRADED') {
@@ -230,7 +239,9 @@ async function handleExtraction() {
 
     await storage.saveReport(report);
     await loadAndRenderReports();
-    Toast.success(`Extracted ${report.totalElements ?? 0} elements`);
+    const dur = report.duration;
+    const durStr = dur ? ` · ${(dur / 1000).toFixed(1)}s` : '';
+    Toast.success(`Extracted ${report.totalElements ?? 0} elements${durStr}`);
 
   } catch (err) {
     setError('extract', err.message ?? 'Unexpected error');

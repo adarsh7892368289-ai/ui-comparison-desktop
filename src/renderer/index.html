@@ -34,8 +34,11 @@
       <div class="toolbar-breadcrumb" id="toolbar-breadcrumb">
         <span class="breadcrumb-current">Extract</span>
       </div>
-      <button class="btn-ghost btn-sm" id="cmd-palette-trigger" aria-label="Command palette (Ctrl+K)">
-        <span id="cmd-palette-shortcut"></span>
+      <button class="cmd-palette-trigger-btn" id="cmd-palette-trigger"
+              aria-label="Open command palette" aria-keyshortcuts="Control+K Meta+K">
+        <span class="cmd-trigger-icon" aria-hidden="true"></span>
+        <span class="cmd-trigger-placeholder">Search or jump to…</span>
+        <span class="cmd-trigger-shortcut" id="cmd-palette-shortcut" aria-hidden="true"></span>
       </button>
     </div>
 
@@ -53,6 +56,8 @@
             <option value="json">JSON</option>
           </select>
           <button type="button" class="btn-icon-ghost" id="export-all-btn" title="Export all reports" aria-label="Export all reports"></button>
+          <button type="button" class="btn-icon-ghost" id="import-report-btn" title="Import report from file" aria-label="Import report from file"></button>
+          <input type="file" id="import-report-input" accept=".json,.csv,.xlsx,.xls" hidden>
           <details class="export-dropdown sidebar-toolbar-overflow">
             <summary class="btn-ghost btn-sm sidebar-overflow__summary" aria-label="More actions"></summary>
             <div class="export-menu" role="menu">
@@ -84,6 +89,7 @@
         </div>
       </div>
 
+      <div id="report-list-announcer" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
       <div id="reports-list" class="reports-list" aria-label="Saved reports"></div>
 
       <div id="reports-empty" class="empty-state hidden" aria-live="polite">
@@ -94,6 +100,15 @@
         <p class="empty-title">No reports yet</p>
         <p class="empty-hint">Enter a URL in the Extract section and click Extract Elements to create your first report</p>
       </div>
+
+      <div id="panel-resize-handle"
+           role="separator"
+           aria-orientation="vertical"
+           aria-label="Resize sidebar"
+           aria-valuenow="300"
+           aria-valuemin="220"
+           aria-valuemax="480"
+           tabindex="0"></div>
 
     </div>
 
@@ -190,13 +205,6 @@
                     <option value="">Select report…</option>
                   </select>
                 </div>
-                <label class="upload-report-label" for="baseline-upload" title="Import report from JSON, CSV, or Excel file">
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" aria-hidden="true">
-                    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
-                  </svg>
-                  Import file
-                </label>
-                <input type="file" id="baseline-upload" accept=".json,.csv,.xlsx,.xls" hidden>
               </div>
 
               <div class="vs-divider"><span class="vs-label">VS</span></div>
@@ -214,13 +222,6 @@
                     <option value="">Select report…</option>
                   </select>
                 </div>
-                <label class="upload-report-label" for="compare-upload" title="Import report from JSON, CSV, or Excel file">
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" aria-hidden="true">
-                    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
-                  </svg>
-                  Import file
-                </label>
-                <input type="file" id="compare-upload" accept=".json,.csv,.xlsx,.xls" hidden>
               </div>
 
               <hr class="card-sep">

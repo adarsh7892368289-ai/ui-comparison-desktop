@@ -16,7 +16,6 @@ const api = window.electronAPI;
 function scrollCompareResultsIntoView() {
   const el = document.getElementById('compare-results');
   if (!el) { return; }
-  /* Double rAF: layout + result-panel paint after synchronous render (Session 9) */
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       el.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -62,7 +61,9 @@ async function tryLoadCachedComparison() {
     );
     if (cached) {
       let diffs = [];
-      try { diffs = await storage.loadComparisonDiffs(cached.id); } catch (_) {}
+      try { diffs = await storage.loadComparisonDiffs(cached.id); } catch (_) { void 0; }
+      const baselineRep = state.reports.find(r => r.id === cached.baselineId);
+      const compareRep  = state.reports.find(r => r.id === cached.compareId);
       const normalized = normalizeComparisonResult({
         baselineId:        cached.baselineId,
         compareId:         cached.compareId,
@@ -72,6 +73,8 @@ async function tryLoadCachedComparison() {
         visualDiffs:       {},
         unmatchedElements: cached.unmatchedElements,
         duration:          cached.duration ?? 0,
+        baselineUrl:       baselineRep?.url ?? '',
+        compareUrl:        compareRep?.url ?? '',
       });
       dispatch('COMPARISON_COMPLETE', { result: { ...normalized, id: cached.id }, cachedAt: cached.timestamp });
       scrollCompareResultsIntoView();
@@ -102,7 +105,7 @@ async function handleComparison() {
   setError('compare', '');
   const compareBtn = document.getElementById('compare-btn');
   const originalHTML = compareBtn.innerHTML;
-  compareBtn.style.minWidth = compareBtn.offsetWidth + 'px';   // lock width BEFORE innerHTML change
+  compareBtn.style.minWidth = compareBtn.offsetWidth + 'px';
   compareBtn.disabled  = true;
   compareBtn.innerHTML = `${iconSpinner(14)} <span>Comparing…</span>`;
 
@@ -174,7 +177,11 @@ async function handleComparison() {
     }
 
     const sr         = result.result;
-    const normalized = normalizeComparisonResult(sr);
+    const normalized = normalizeComparisonResult({
+      ...sr,
+      baselineUrl: baselineReport.url,
+      compareUrl:  compareReport.url,
+    });
 
     const meta = {
       id:                crypto.randomUUID(),
@@ -226,7 +233,9 @@ async function handleComparison() {
     const diffs = sr.comparison?.summary?.propertyDiffCount
                ?? sr.comparison?.summary?.totalDifferences
                ?? 0;
-    Toast.success(`Done — ${diffs} CSS change${diffs !== 1 ? 's' : ''} found`);
+    const matchedPct = sr.matching?.matchRate ?? 0;
+    const durSec = sr?.duration ? ` · ${(sr.duration / 1000).toFixed(1)}s` : '';
+    Toast.success(`Done · ${matchedPct}% match · ${diffs} change${diffs !== 1 ? 's' : ''} found${durSec}`);
 
   } catch (err) {
     dispatch('COMPARISON_ERROR', { error: err.message });

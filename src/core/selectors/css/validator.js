@@ -24,7 +24,7 @@ function isUniqueCssSelector(selector, targetElement) {
 function escapeCss(str) {
   if (!str) {return '';}
 
-  return str.replace(/([!"#$%&'()*+,.\/:;<=>?@[\\\]^`{|}~])/g, '\\$1');
+  return str.replace(/([!"#$%&'()*+,./:;<=>?@[\\\]^`{|}~])/g, '\\$1');
 }
 
 export { isValidCssSelector, isUniqueCssSelector, escapeCss };

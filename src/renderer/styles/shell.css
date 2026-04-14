@@ -1,7 +1,7 @@
 #app-root {
   display: grid;
   grid-template-rows: 48px auto 1fr var(--status-bar-height);
-  grid-template-columns: 260px 1fr;
+  grid-template-columns: var(--sidebar-width, 300px) 1fr;
   grid-template-areas:
     "toolbar    toolbar"
     "banner     banner"
@@ -28,11 +28,10 @@
   display: flex;
   align-items: center;
   padding: 0 var(--space-4);
-  gap: var(--space-4);
+  gap: var(--space-2);
   flex-shrink: 0;
 }
 
-/* macOS hiddenInset: traffic lights at x≈12 span ~52px — inset keeps brand/breadcrumb clear */
 html.platform-darwin #app-toolbar {
   padding-left: 72px;
 }
@@ -41,9 +40,63 @@ html.platform-darwin #app-toolbar {
   flex-shrink: 0;
 }
 
+#app-toolbar .toolbar-breadcrumb {
+  flex: 0 0 auto;
+  flex-shrink: 0;
+}
+
+.cmd-palette-trigger-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  min-width: 200px;
+  max-width: 360px;
+  flex: 1;
+  padding: 0 10px;
+  background: var(--color-surface-sunken);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 6px;
+  color: var(--color-text-tertiary);
+  cursor: text;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.cmd-palette-trigger-btn:hover {
+  border-color: var(--color-border-default);
+  background: var(--color-surface-raised);
+}
+
+.cmd-trigger-placeholder {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-sm);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cmd-trigger-shortcut {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.cmd-trigger-shortcut kbd {
+  font-size: var(--text-2xs);
+  font-family: var(--font-sans);
+  background: var(--color-surface-overlay);
+  border: 1px solid var(--color-border-default);
+  border-radius: 3px;
+  padding: 1px 4px;
+  color: var(--color-text-tertiary);
+}
+
 #left-panel {
   grid-area: left-panel;
-  width: 260px;
+  width: var(--sidebar-width, 300px);
   background: var(--color-surface-raised);
   border-right: 1px solid var(--color-border-subtle);
   overflow-y: auto;
@@ -51,11 +104,17 @@ html.platform-darwin #app-toolbar {
   flex-direction: column;
   gap: 0;
   transition: width var(--transition-normal);
+  position: relative; /* Anchor for #panel-resize-handle */
 }
 
 #left-panel.left-panel--collapsed {
   width: 48px;
   overflow: hidden;
+}
+
+#left-panel.left-panel--collapsed #panel-resize-handle {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 #left-panel .card--toolbar {
@@ -100,8 +159,7 @@ html.platform-darwin #app-toolbar {
   grid-area: main-content;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden;     /* children manage their own scroll */
   min-height: 0;
   background: var(--color-surface-base);
 }
@@ -109,15 +167,25 @@ html.platform-darwin #app-toolbar {
 #main-controls {
   padding: var(--space-6);
   flex-shrink: 0;
+  overflow-y: auto;
+  /* Give controls a sensible max — prevents Compare button from going below fold */
+  max-height: 65vh;
 }
 
 #compare-results {
   padding: var(--space-6);
   border-top: 1px solid var(--color-border-subtle, #2d3748);
-  flex-shrink: 0;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 #compare-results:empty {
+  display: none;
+}
+
+/* Hide result panel when user is on the Extract workflow — it belongs to Compare */
+#main-content[data-active-section="extract"] #compare-results {
   display: none;
 }
 
@@ -236,4 +304,19 @@ html.platform-darwin #app-toolbar {
 @keyframes status-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
+}
+#panel-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  width: 4px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 20;
+  background: transparent;
+  transition: background 150ms;
+}
+#panel-resize-handle:hover,
+#panel-resize-handle.is-resizing {
+  background: var(--color-brand);
 }

@@ -7,41 +7,110 @@ export class AppShell {
     this._sectionIds = ['extract', 'compare'];
     this._activeSection = null;
     this._collapsed = false;
+    this._buildSectionsMap();
     this._wireSectionHeaders();
     this._syncPanelToggleButton();
     this._hydrateAccordionFromDom();
+    this._initResizeHandle();
+  }
+
+  _buildSectionsMap() {
+    this._sections = new Map();
+    for (const id of this._sectionIds) {
+      const el = document.getElementById(`section-${id}`);
+      if (!el) { continue; }
+      const headerBtn = el.querySelector('.nav-section__header');
+      const body = document.getElementById(`body-${id}`);
+      const firstFocusable = body?.querySelector(
+        'input:not([disabled]), button:not([disabled]), select:not([disabled]), [tabindex="0"]'
+      ) ?? null;
+      this._sections.set(id, { el, headerBtn, firstFocusable });
+    }
   }
 
   _wireSectionHeaders() {
-    this._sectionIds.forEach(id => {
-      const header = document.querySelector(`#section-${id} .nav-section__header`);
-      if (!header) { return; }
-      header.addEventListener('click', () => this.activateSection(id));
+    this._sections.forEach((section, id) => {
+      section.headerBtn?.addEventListener('click', () => this.toggleSection(id));
     });
   }
 
-  /**
-   * Match DOM classes from index.html before any animated toggle runs.
-   * If content is injected into a section body without a full report-list re-render,
-   * call _measureAndSetHeight(sectionEl) so height: auto reflects new content.
-   */
+  toggleSection(sectionId) {
+    const section = this._sections.get(sectionId);
+    if (!section) { return; }
+    const isOpen = section.el.classList.contains('nav-section--expanded');
+    if (isOpen) {
+      this._closeSectionBody(section.el);
+      section.el.classList.remove('nav-section--expanded');
+      section.headerBtn?.setAttribute('aria-expanded', 'false');
+      if (sectionId === this._activeSection) {
+        const next = this._sectionIds.find(
+          (id) => id !== sectionId && this._sections.get(id)?.el.classList.contains('nav-section--expanded')
+        );
+        if (next) { this._applyWorkflowFocus(next); }
+      }
+    } else {
+      this._openSectionBody(section.el);
+      section.el.classList.add('nav-section--expanded');
+      section.headerBtn?.setAttribute('aria-expanded', 'true');
+      this._applyWorkflowFocus(sectionId);
+    }
+    this._persistSectionStates();
+  }
+
+  activateSection(sectionId) {
+    const section = this._sections.get(sectionId);
+    if (!section) { return; }
+    if (!section.el.classList.contains('nav-section--expanded')) {
+      this._openSectionBody(section.el);
+      section.el.classList.add('nav-section--expanded');
+      section.headerBtn?.setAttribute('aria-expanded', 'true');
+      this._persistSectionStates();
+    }
+    this._applyWorkflowFocus(sectionId);
+    section.firstFocusable?.focus();
+  }
+
+  _applyWorkflowFocus(sectionId) {
+    this._sections.forEach(({ el }, id) => {
+      el.classList.toggle('nav-section--active', id === sectionId);
+    });
+    this._activeSection = sectionId;
+    const mainContent = document.getElementById('main-content');
+    if (mainContent) { mainContent.dataset.activeSection = sectionId; }
+    const label = sectionId.charAt(0).toUpperCase() + sectionId.slice(1);
+    this.setBreadcrumb([{ label }]);
+  }
+
+  _persistSectionStates() {
+    const states = {};
+    this._sections.forEach((section, id) => {
+      states[id] = section.el.classList.contains('nav-section--expanded');
+    });
+    try { localStorage.setItem('section-states', JSON.stringify(states)); } catch { void 0; }
+  }
+
   _hydrateAccordionFromDom() {
-    for (const id of this._sectionIds) {
-      const section = document.getElementById(`section-${id}`);
-      const body = section?.querySelector('.nav-section__body');
-      if (!body) { continue; }
-      const expanded = section.classList.contains('nav-section--expanded');
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem('section-states')); } catch { void 0; }
+    this._sections.forEach((section, id) => {
+      const shouldBeOpen = saved ? (saved[id] ?? false) : (id === 'extract');
+      const body = section.el.querySelector('.nav-section__body');
+      if (!body) { return; }
       body.style.transition = 'none';
-      if (expanded) {
+      if (shouldBeOpen) {
+        section.el.classList.add('nav-section--expanded');
         body.style.height = 'auto';
         body.style.overflow = '';
+        section.headerBtn?.setAttribute('aria-expanded', 'true');
       } else {
+        section.el.classList.remove('nav-section--expanded');
         body.style.height = '0';
         body.style.overflow = 'hidden';
+        section.headerBtn?.setAttribute('aria-expanded', 'false');
       }
-      body.offsetHeight; /* reflow */
+      body.offsetHeight;
       body.style.transition = '';
-    }
+    });
   }
 
   _clearBodyTransitionEnd(body) {
@@ -55,7 +124,7 @@ export class AppShell {
     }
   }
 
-  _toggleSectionBody(sectionEl, open) {
+  _openSectionBody(sectionEl) {
     const body = sectionEl.querySelector('.nav-section__body');
     if (!body) { return; }
 
@@ -63,58 +132,65 @@ export class AppShell {
       && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (reduce) {
       this._clearBodyTransitionEnd(body);
-      body.style.height = open ? 'auto' : '0';
-      body.style.overflow = open ? '' : 'hidden';
+      body.style.height = 'auto';
+      body.style.overflow = '';
       return;
     }
 
     this._clearBodyTransitionEnd(body);
 
-    if (open) {
-      const rectH = body.getBoundingClientRect().height;
-      const fullH = body.scrollHeight;
-      if (fullH > 0 && Math.abs(rectH - fullH) < 2) {
-        body.style.height = 'auto';
-        body.style.overflow = '';
-        return;
-      }
-      body.style.height = '0';
-      body.style.overflow = 'hidden';
-      body.style.display = 'block';
-      body.offsetHeight; /* force reflow so transition runs */
-      const targetH = body.scrollHeight;
-      body.style.height = `${targetH}px`;
-      /* transitionend can be skipped (display:none parent, reduced intermediate state) — timeout releases height:auto */
-      const OPEN_FALLBACK_MS = 320;
-      let openSettled = false;
-      const finishOpen = () => {
-        if (openSettled) { return; }
-        openSettled = true;
-        this._clearBodyTransitionEnd(body);
-        body.style.height = 'auto';
-        body.style.overflow = '';
-      };
-      const onEnd = (ev) => {
-        if (ev.propertyName !== 'height' || ev.target !== body) { return; }
-        finishOpen();
-      };
-      body._accordionTransitionEnd = onEnd;
-      body.addEventListener('transitionend', onEnd);
-      body._accordionOpenFallback = setTimeout(finishOpen, OPEN_FALLBACK_MS);
-    } else {
-      /* Use layout height (not scrollHeight) so closing mid-open animation does not jump. */
-      const startH = Math.max(body.getBoundingClientRect().height, 1);
-      body.style.height = `${startH}px`;
-      body.offsetHeight;
-      body.style.overflow = 'hidden';
-      body.style.height = '0';
+    const rectH = body.getBoundingClientRect().height;
+    const fullH = body.scrollHeight;
+    if (fullH > 0 && Math.abs(rectH - fullH) < 2) {
+      body.style.height = 'auto';
+      body.style.overflow = '';
+      return;
     }
+    body.style.height = '0';
+    body.style.overflow = 'hidden';
+    body.style.display = 'block';
+    body.offsetHeight;
+    const targetH = body.scrollHeight;
+    body.style.height = `${targetH}px`;
+    const OPEN_FALLBACK_MS = 320;
+    let openSettled = false;
+    const finishOpen = () => {
+      if (openSettled) { return; }
+      openSettled = true;
+      this._clearBodyTransitionEnd(body);
+      body.style.height = 'auto';
+      body.style.overflow = '';
+    };
+    const onEnd = (ev) => {
+      if (ev.propertyName !== 'height' || ev.target !== body) { return; }
+      finishOpen();
+    };
+    body._accordionTransitionEnd = onEnd;
+    body.addEventListener('transitionend', onEnd);
+    body._accordionOpenFallback = setTimeout(finishOpen, OPEN_FALLBACK_MS);
   }
 
-  /**
-   * If content is added inside an open section without report-list re-render, call this
-   * so height: auto reflects new content (current architecture usually re-renders instead).
-   */
+  _closeSectionBody(sectionEl) {
+    const body = sectionEl.querySelector('.nav-section__body');
+    if (!body) { return; }
+
+    const reduce = typeof window !== 'undefined'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) {
+      this._clearBodyTransitionEnd(body);
+      body.style.height = '0';
+      body.style.overflow = 'hidden';
+      return;
+    }
+
+    this._clearBodyTransitionEnd(body);
+    const startH = Math.max(body.getBoundingClientRect().height, 1);
+    body.style.height = `${startH}px`;
+    body.offsetHeight;
+    body.style.overflow = 'hidden';
+    body.style.height = '0';
+  }
+
   _measureAndSetHeight(sectionEl) {
     const body = sectionEl?.querySelector('.nav-section__body');
     if (!body || !sectionEl.classList.contains('nav-section--expanded')) { return; }
@@ -122,27 +198,15 @@ export class AppShell {
     body.style.overflow = '';
   }
 
-  activateSection(sectionId) {
-    this._sectionIds.forEach(id => {
-      const section = document.getElementById(`section-${id}`);
-      if (!section) { return; }
-      const header = section.querySelector('.nav-section__header');
-      const isTarget = id === sectionId;
-      section.classList.toggle('nav-section--expanded', isTarget);
-      section.classList.toggle('nav-section--active', isTarget);
-      header?.setAttribute('aria-expanded', String(isTarget));
-      this._toggleSectionBody(section, isTarget);
-    });
-    this._activeSection = sectionId;
-    const label = sectionId.charAt(0).toUpperCase() + sectionId.slice(1);
-    /* Single segment — no duplicate product name; root is never a false link */
-    this.setBreadcrumb([{ label }]);
-
-    const body = document.getElementById(`body-${sectionId}`);
-    const firstFocusable = body?.querySelector(
-      'input:not([disabled]), button:not([disabled]), select:not([disabled]), [tabindex="0"]'
-    );
-    requestAnimationFrame(() => firstFocusable?.focus());
+  _sidebarExpandedWidthPx() {
+    const MIN_W = 220;
+    const MAX_W = 480;
+    const def = 300;
+    try {
+      const saved = parseInt(localStorage.getItem('sidebar-width'), 10);
+      if (!Number.isNaN(saved) && saved >= MIN_W && saved <= MAX_W) { return saved; }
+    } catch { void 0; }
+    return def;
   }
 
   _syncPanelToggleButton() {
@@ -155,10 +219,25 @@ export class AppShell {
 
   toggleLeftPanel() {
     const panel = document.getElementById('left-panel');
+    const root = document.getElementById('app-root');
     if (!panel) { return; }
     const focusInPanel = panel.contains(document.activeElement);
     this._collapsed = !this._collapsed;
     panel.classList.toggle('left-panel--collapsed', this._collapsed);
+
+    if (root) {
+      if (this._collapsed) {
+        root.style.setProperty('--sidebar-width', '48px');
+      } else {
+        root.style.setProperty('--sidebar-width', `${this._sidebarExpandedWidthPx()}px`);
+      }
+    }
+
+    const handle = document.getElementById('panel-resize-handle');
+    if (handle && !this._collapsed) {
+      handle.setAttribute('aria-valuenow', String(this._sidebarExpandedWidthPx()));
+    }
+
     this._syncPanelToggleButton();
     const btn = document.getElementById('panel-toggle-btn');
     if (this._collapsed && focusInPanel && btn) {
@@ -192,11 +271,57 @@ export class AppShell {
     });
   }
 
-  /** Reset toolbar trail after result clear — uses last activated Extract/Compare section */
   syncBreadcrumbToActiveSection() {
     if (!this._activeSection) { return; }
     const label = this._activeSection.charAt(0).toUpperCase() + this._activeSection.slice(1);
     this.setBreadcrumb([{ label }]);
+  }
+
+  _initResizeHandle() {
+    const handle = document.getElementById('panel-resize-handle');
+    if (!handle) { return; }
+
+    const MIN_W = 220, MAX_W = 480;
+    const root = document.getElementById('app-root') ?? document.documentElement;
+
+    const setWidth = (w) => {
+      const clamped = Math.max(MIN_W, Math.min(MAX_W, Math.round(w)));
+      root.style.setProperty('--sidebar-width', clamped + 'px');
+      handle.setAttribute('aria-valuenow', String(clamped));
+      try { localStorage.setItem('sidebar-width', String(clamped)); } catch { void 0; }
+    };
+
+    try {
+      const saved = parseInt(localStorage.getItem('sidebar-width'), 10);
+      if (saved >= MIN_W && saved <= MAX_W) { setWidth(saved); }
+    } catch { void 0; }
+
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = parseInt(getComputedStyle(document.getElementById('left-panel')).width, 10);
+      handle.classList.add('is-resizing');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+
+      const onMove = (me) => setWidth(startW + me.clientX - startX);
+      const onUp = () => {
+        handle.classList.remove('is-resizing');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+
+    handle.addEventListener('keydown', (e) => {
+      const current = parseInt(getComputedStyle(document.getElementById('left-panel')).width, 10);
+      const step = e.shiftKey ? 50 : 10;
+      if (e.key === 'ArrowRight') { e.preventDefault(); setWidth(current + step); }
+      if (e.key === 'ArrowLeft')  { e.preventDefault(); setWidth(current - step); }
+    });
   }
 
   destroy() {

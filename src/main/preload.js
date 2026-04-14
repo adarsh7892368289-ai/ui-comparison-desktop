@@ -13,7 +13,6 @@ function makePushBridge(channel) {
 
 contextBridge.exposeInMainWorld('electronAPI', {
 
-  /** Main-process platform: 'darwin' | 'win32' | 'linux' — for ⌘ vs Ctrl in UI copy */
   platform: process.platform,
 
   startComparison: (params) =>
@@ -57,4 +56,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.send(CH.SHOW_CONTEXT_MENU, payload),
 
   onContextAction: makePushBridge(CH.CONTEXT_ACTION),
+
+  onMenuAction: makePushBridge(CH.MENU_ACTION),
 });
