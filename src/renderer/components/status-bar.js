@@ -92,16 +92,31 @@ export class StatusBar {
     }
   }
 
-  updateReportCount(reports) {
+  updateReportCount(reports, filteredCount) {
     if (!this._left) return;
-    const count = reports?.length ?? 0;
-    if (count === 0) {
+    const total = reports?.length ?? 0;
+    const filtered = (filteredCount !== undefined && filteredCount !== null)
+      ? filteredCount
+      : total;
+
+    if (total === 0) {
       this._left.textContent = 'No reports';
+      return;
+    }
+
+    const hosts = new Set(
+      reports.map(r => {
+        try { return new URL(r.url).hostname; }
+        catch { return r.url || 'unknown'; }
+      })
+    );
+
+    const hostStr = `${hosts.size} host${hosts.size !== 1 ? 's' : ''}`;
+
+    if (filtered < total) {
+      this._left.textContent = `${filtered} of ${total} \u00b7 ${hostStr}`;
     } else {
-      const hosts = new Set(reports.map(r => {
-        try { return new URL(r.url).hostname; } catch { return r.url; }
-      }));
-      this._left.textContent = `${count} report${count !== 1 ? 's' : ''} \u00b7 ${hosts.size} host${hosts.size !== 1 ? 's' : ''}`;
+      this._left.textContent = `${total} report${total !== 1 ? 's' : ''} \u00b7 ${hostStr}`;
     }
   }
 

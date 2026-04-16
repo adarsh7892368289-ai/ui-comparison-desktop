@@ -1,6 +1,23 @@
 'use strict';
 
-import { iconChevronLeft, iconChevronRight } from '../utils/icons.js';
+import { iconChevronLeft } from '../utils/icons.js';
+
+const SNAP_POINTS = [240, 300, 380, 480];
+const SNAP_THRESHOLD = 20;
+
+/** @param {number} width */
+function snapNearestResize(width) {
+  let nearest = null;
+  let minDist = Infinity;
+  for (const point of SNAP_POINTS) {
+    const dist = Math.abs(width - point);
+    if (dist < SNAP_THRESHOLD && dist < minDist) {
+      minDist = dist;
+      nearest = point;
+    }
+  }
+  return nearest;
+}
 
 export class AppShell {
   constructor() {
@@ -212,7 +229,9 @@ export class AppShell {
   _syncPanelToggleButton() {
     const btn = document.getElementById('panel-toggle-btn');
     if (!btn) { return; }
-    btn.innerHTML = this._collapsed ? iconChevronRight() : iconChevronLeft();
+    if (!btn.querySelector('svg')) {
+      btn.innerHTML = iconChevronLeft(16);
+    }
     btn.setAttribute('aria-expanded', String(!this._collapsed));
     btn.setAttribute('aria-label', this._collapsed ? 'Expand sidebar' : 'Collapse sidebar');
   }
@@ -222,16 +241,29 @@ export class AppShell {
     const root = document.getElementById('app-root');
     if (!panel) { return; }
     const focusInPanel = panel.contains(document.activeElement);
+
+    /* Skip width animation so we never sweep through sub-340px widths (toolbar compact/overflow flicker). */
+    panel.classList.add('left-panel--instant-width');
+
     this._collapsed = !this._collapsed;
     panel.classList.toggle('left-panel--collapsed', this._collapsed);
 
     if (root) {
       if (this._collapsed) {
         root.style.setProperty('--sidebar-width', '48px');
+        panel.classList.remove('toolbar--compact', 'toolbar--narrow');
       } else {
-        root.style.setProperty('--sidebar-width', `${this._sidebarExpandedWidthPx()}px`);
+        const w = this._sidebarExpandedWidthPx();
+        root.style.setProperty('--sidebar-width', `${w}px`);
+        panel.classList.toggle('toolbar--compact', w < 340);
+        panel.classList.toggle('toolbar--narrow', w < 270);
       }
     }
+
+    void panel.offsetWidth;
+    requestAnimationFrame(() => {
+      panel.classList.remove('left-panel--instant-width');
+    });
 
     const handle = document.getElementById('panel-resize-handle');
     if (handle && !this._collapsed) {
@@ -287,6 +319,11 @@ export class AppShell {
     const setWidth = (w) => {
       const clamped = Math.max(MIN_W, Math.min(MAX_W, Math.round(w)));
       root.style.setProperty('--sidebar-width', clamped + 'px');
+      const panel = document.getElementById('left-panel');
+      if (panel) {
+        panel.classList.toggle('toolbar--compact', clamped < 340);
+        panel.classList.toggle('toolbar--narrow', clamped < 270);
+      }
       handle.setAttribute('aria-valuenow', String(clamped));
       try { localStorage.setItem('sidebar-width', String(clamped)); } catch { void 0; }
     };
@@ -296,21 +333,59 @@ export class AppShell {
       if (saved >= MIN_W && saved <= MAX_W) { setWidth(saved); }
     } catch { void 0; }
 
+    const panelInit = document.getElementById('left-panel');
+    if (panelInit) {
+      const w = parseInt(getComputedStyle(panelInit).width, 10);
+      if (Number.isFinite(w)) {
+        setWidth(Math.max(MIN_W, Math.min(MAX_W, w)));
+      }
+    }
+
     handle.addEventListener('mousedown', (e) => {
       e.preventDefault();
+      const panel = document.getElementById('left-panel');
+      if (!panel) { return; }
       const startX = e.clientX;
-      const startW = parseInt(getComputedStyle(document.getElementById('left-panel')).width, 10);
+      const startW = parseInt(getComputedStyle(panel).width, 10);
+      panel.style.transition = 'none';
       handle.classList.add('is-resizing');
-      document.body.style.cursor = 'col-resize';
+      document.body.style.cursor = 'ew-resize';
       document.body.style.userSelect = 'none';
 
-      const onMove = (me) => setWidth(startW + me.clientX - startX);
+      const onMove = (me) => {
+        panel.style.transition = 'none';
+        setWidth(startW + me.clientX - startX);
+      };
       const onUp = () => {
         handle.classList.remove('is-resizing');
         document.body.style.cursor = '';
         document.body.style.userSelect = '';
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
+
+        const rawW = parseInt(getComputedStyle(panel).width, 10);
+        const clamped = Math.max(MIN_W, Math.min(MAX_W, Number.isFinite(rawW) ? rawW : startW));
+        const snapped = snapNearestResize(clamped);
+        const reduce = typeof window !== 'undefined'
+          && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+        if (snapped !== null) {
+          if (!reduce) {
+            handle.style.transition = 'none';
+            panel.style.transition = 'width 200ms var(--ease-spring)';
+            setWidth(snapped);
+            window.setTimeout(() => {
+              panel.style.transition = '';
+              handle.style.transition = '';
+            }, 210);
+          } else {
+            setWidth(snapped);
+            panel.style.transition = '';
+          }
+        } else {
+          setWidth(clamped);
+          panel.style.transition = '';
+        }
       };
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);

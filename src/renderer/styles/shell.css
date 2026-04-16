@@ -107,6 +107,11 @@ html.platform-darwin #app-toolbar {
   position: relative; /* Anchor for #panel-resize-handle */
 }
 
+/* Programmatic expand/collapse: avoid animating through intermediate widths (toolbar reflow / jump) */
+#left-panel.left-panel--instant-width {
+  transition: none !important;
+}
+
 #left-panel.left-panel--collapsed {
   width: 48px;
   overflow: hidden;
@@ -117,6 +122,15 @@ html.platform-darwin #app-toolbar {
   pointer-events: none;
 }
 
+/* Collapsed rail is too narrow for report rows, filters, or toolbar actions — hide to avoid clipped UI */
+#left-panel.left-panel--collapsed .card--toolbar,
+#left-panel.left-panel--collapsed .filter-rail,
+#left-panel.left-panel--collapsed #report-list-announcer,
+#left-panel.left-panel--collapsed #reports-list,
+#left-panel.left-panel--collapsed #reports-empty {
+  display: none;
+}
+
 #left-panel .card--toolbar {
   border-radius: 0;
   border-left: none;
@@ -124,11 +138,34 @@ html.platform-darwin #app-toolbar {
   border-top: none;
   flex-shrink: 0;
   overflow: visible;
+  box-sizing: border-box;
+  /* Single row: same height when compact vs full (labels / overflow toggle swap without wrapping) */
+  justify-content: flex-start;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: var(--space-2) var(--space-3);
+  min-height: calc(28px + 2 * var(--space-2));
+}
+
+#left-panel .card--toolbar .section-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 42%;
+  margin: 0;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 #left-panel .card--toolbar .section-row-actions {
   position: relative;
   overflow: visible;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 #left-panel .sidebar-overflow__summary {
@@ -143,6 +180,27 @@ html.platform-darwin #app-toolbar {
 #left-panel .sidebar-overflow__summary svg {
   display: block;
   flex-shrink: 0;
+}
+
+#left-panel .sidebar-import-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  width: auto;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0 var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--color-text-secondary);
+}
+
+#left-panel.toolbar--compact .sidebar-import-btn {
+  width: 28px;
+  min-width: 28px;
+  padding: 0;
 }
 
 #left-panel .search-bar-wrap {
@@ -174,7 +232,7 @@ html.platform-darwin #app-toolbar {
 
 #compare-results {
   padding: var(--space-6);
-  border-top: 1px solid var(--color-border-subtle, #2d3748);
+  border-top: 1px solid var(--color-border-subtle);
   flex: 1;
   overflow-y: auto;
   min-height: 0;
@@ -202,15 +260,15 @@ html.platform-darwin #app-toolbar {
 }
 
 .system-banner--warning {
-  background: hsl(38 90% 44% / 0.12);
+  background: var(--color-warning-subtle);
   color: var(--color-warning, hsl(38 90% 44%));
-  border-bottom-color: hsl(38 90% 44% / 0.25);
+  border-bottom-color: var(--color-warning-border);
 }
 
 .system-banner--error {
-  background: hsl(0 84% 54% / 0.12);
+  background: var(--color-destructive-subtle);
   color: var(--color-destructive, hsl(0 84% 54%));
-  border-bottom-color: hsl(0 84% 54% / 0.25);
+  border-bottom-color: var(--color-destructive-border);
 }
 
 .system-banner__msg {
@@ -308,15 +366,46 @@ html.platform-darwin #app-toolbar {
 #panel-resize-handle {
   position: absolute;
   top: 0;
-  right: -2px;
-  width: 4px;
-  height: 100%;
-  cursor: col-resize;
-  z-index: 20;
+  bottom: 0;
+  right: -1px;
+  width: 2px;
+  cursor: ew-resize;
+  z-index: 10;
   background: transparent;
-  transition: background 150ms;
+  transition: background var(--dur-fast) var(--ease-standard);
 }
+
+#panel-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  right: -8px;
+  cursor: ew-resize;
+  z-index: 11;
+  pointer-events: auto;
+}
+
 #panel-resize-handle:hover,
+#panel-resize-handle:active,
 #panel-resize-handle.is-resizing {
   background: var(--color-brand);
 }
+
+/* Toolbar responsive behavior — controlled by JS class on #left-panel */
+
+/* At compact widths: hide text labels, show overflow trigger */
+#left-panel.toolbar--compact .split-btn__label { display: none; }
+#left-panel.toolbar--compact #import-label { display: none; }
+
+/* Overflow details: hidden at full width, visible at compact */
+.sidebar-toolbar-overflow { display: none; }
+#left-panel.toolbar--compact .sidebar-toolbar-overflow { display: flex; }
+
+/* At narrow widths: hide import button entirely — it moves into overflow menu */
+#left-panel.toolbar--narrow #import-report-btn { display: none; }
+
+/* Section title: hide only at narrow widths and when sidebar is collapsed (no edge clipping) */
+#left-panel.toolbar--narrow .card--toolbar h2 { display: none; }
+#left-panel.left-panel--collapsed .card--toolbar h2 { display: none; }

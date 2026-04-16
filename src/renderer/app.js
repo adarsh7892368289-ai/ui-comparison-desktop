@@ -12,12 +12,12 @@ import { Toast, syncCompareButton } from './ui.js';
 import {
   initializeApp,
   insertReportListSkeletonOverlay,
-  renderReportList,
+  filteredReportCount,
   handleDeleteAllReports,
   handleExtraction,
   hostFromUrl,
 } from './application/report-manager.js';
-import { handleExportAllReports } from './application/export-workflow.js';
+import { handleExportAllReports, getBulkExportFormat, setBulkExportFormat } from './application/export-workflow.js';
 import { handleImportReport } from './application/import-workflow.js';
 import { handleComparison, tryLoadCachedComparison } from './application/compare-workflow.js';
 import { createResultPanel } from './components/result-panel.js';
@@ -29,6 +29,7 @@ import {
   iconActivity,
   iconAlertCircle,
   iconArrowUp,
+  iconChevronDown,
   iconFileDown,
   iconGitCompare,
   iconGlobe,
@@ -59,6 +60,63 @@ if (!api) {
   throw new Error('window.electronAPI is undefined');
 }
 
+function wireExportSplitControls() {
+  const formatNames = { xlsx: 'Excel', csv: 'CSV', json: 'JSON' };
+  const menu = document.getElementById('export-format-menu');
+  const trigger = document.getElementById('export-format-trigger');
+  const primary = document.getElementById('export-all-btn');
+
+  const closeFormatMenu = () => {
+    if (menu) menu.hidden = true;
+    trigger?.setAttribute('aria-expanded', 'false');
+  };
+
+  const applyBulkFormatUi = (format) => {
+    const name = formatNames[format] ?? String(format).toUpperCase();
+    const label = document.querySelector('#export-split-btn .split-btn__label');
+    if (label) label.textContent = name;
+    if (primary) {
+      primary.title = `Export all as ${name}`;
+      primary.setAttribute('aria-label', `Export all reports as ${name}`);
+    }
+    if (primary && !primary.querySelector('svg')) {
+      primary.insertAdjacentHTML('afterbegin', iconFileDown(14));
+    }
+  };
+
+  trigger?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!menu || !trigger) return;
+    const willOpen = menu.hidden;
+    menu.hidden = !willOpen;
+    trigger.setAttribute('aria-expanded', String(willOpen));
+  });
+
+  menu?.addEventListener('click', (e) => {
+    const item = e.target.closest('[data-format]');
+    if (!item) return;
+    const f = item.dataset.format;
+    if (!f) return;
+    setBulkExportFormat(f);
+    applyBulkFormatUi(getBulkExportFormat());
+    closeFormatMenu();
+  });
+
+  document.addEventListener('click', (e) => {
+    const split = document.getElementById('export-split-btn');
+    if (!split || !menu || menu.hidden) return;
+    if (split.contains(e.target)) return;
+    closeFormatMenu();
+  });
+
+  primary?.addEventListener('click', () => {
+    closeFormatMenu();
+    void handleExportAllReports();
+  });
+
+  applyBulkFormatUi(getBulkExportFormat());
+}
+
 let _resultPanel        = null;
 let _appShell           = null;
 let _cmdPalette         = null;
@@ -69,10 +127,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.documentElement.classList.add('platform-darwin');
   }
 
-  const exportAllToolbarBtn = document.getElementById('export-all-btn');
-  if (exportAllToolbarBtn && !exportAllToolbarBtn.querySelector('svg')) {
-    exportAllToolbarBtn.insertAdjacentHTML('afterbegin', iconFileDown(13));
+  const exportAllPrimary = document.getElementById('export-all-btn');
+  if (exportAllPrimary && !exportAllPrimary.querySelector('svg')) {
+    exportAllPrimary.insertAdjacentHTML('afterbegin', iconFileDown(14));
   }
+  const exportFormatTrigger = document.getElementById('export-format-trigger');
+  if (exportFormatTrigger && !exportFormatTrigger.querySelector('svg')) {
+    exportFormatTrigger.insertAdjacentHTML('afterbegin', iconChevronDown(10));
+  }
+  wireExportSplitControls();
   const importToolbarBtn = document.getElementById('import-report-btn');
   if (importToolbarBtn && !importToolbarBtn.querySelector('svg')) {
     importToolbarBtn.insertAdjacentHTML('afterbegin', iconArrowUp(13));
@@ -91,7 +154,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   insertReportListSkeletonOverlay();
-  await initializeApp();
+  _statusBar = createStatusBar();
+  _statusBar.updatePhase(getState());
+  await initializeApp(_statusBar);
 
   const compareResultsEl = document.getElementById('compare-results');
   if (compareResultsEl) {
@@ -121,10 +186,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   _appShell = createAppShell();
   _cmdPalette = createCommandPalette();
-  _statusBar = createStatusBar();
-
-  _statusBar.updatePhase(getState());
-  _statusBar.updateReportCount(getState().reports);
 
   const isMac =
     typeof api.platform === 'string'
@@ -197,7 +258,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       const search = document.getElementById('search-reports');
       if (search?.value) {
         search.value = '';
-        renderReportList(getState().reports ?? [], '');
+        search.dispatchEvent(new Event('input', { bubbles: true }));
+        search.focus();
       }
     }
   });
@@ -208,11 +270,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.querySelector('.sidebar-toolbar-overflow')?.removeAttribute('open');
   };
 
-  document.getElementById('export-all-btn')?.addEventListener('click', handleExportAllReports);
-
-  document.getElementById('export-all-overflow-btn')?.addEventListener('click', () => {
+  document.getElementById('import-report-overflow-btn')?.addEventListener('click', () => {
     closeSidebarToolbarOverflow();
-    void handleExportAllReports();
+    document.getElementById('import-report-input')?.click();
   });
 
   document.getElementById('delete-all-btn')?.addEventListener('click', async () => {
@@ -272,7 +332,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   subscribe((state) => {
     _statusBar?.updatePhase(state);
-    _statusBar?.updateReportCount(state.reports);
+    const reports = state.reports ?? [];
+    const searchQ = document.getElementById('search-reports')?.value ?? '';
+    _statusBar?.updateReportCount(reports, filteredReportCount(reports, searchQ));
 
     if (state.phase === 'comparing') {
       _resultPanel?.showComparing?.();

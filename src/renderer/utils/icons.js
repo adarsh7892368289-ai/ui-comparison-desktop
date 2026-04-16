@@ -100,6 +100,10 @@ export function iconArrowUp(size = 16) {
   return svg('<line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>', size);
 }
 
+export function iconArrowDown(size = 16) {
+  return svg('<line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/>', size);
+}
+
 export function iconLayoutGrid(size = 16) {
   return svg(
     '<rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/>',

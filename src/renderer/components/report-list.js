@@ -9,6 +9,8 @@ const DENSITY_HEIGHTS = { compact: 52, default: 64, comfortable: 80 };
 const OVERSCAN = 3;
 const STAGE_RE = /\b(stage|staging|dev|test|qa|uat|preview|sandbox|canary)\b/i;
 
+const DATE_GROUP_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
 const DEFAULT_VIEW_CONFIG = {
   density: 'default',
   groupBy: null,
@@ -57,6 +59,7 @@ export class ReportList {
     this._offsets = [];
     this._totalHeight = 0;
     this._focusedLogicalIndex = -1;
+    this._lastKnownHeight = 0;
 
     this._viewport = _el('div', 'vscroll-viewport');
     this._spacer = _el('div', 'vscroll-spacer');
@@ -68,7 +71,11 @@ export class ReportList {
 
     this._onScroll = this._render.bind(this);
     this._viewport.addEventListener('scroll', this._onScroll, { passive: true });
-    this._resizeObs = new ResizeObserver(() => this._render());
+    this._resizeObs = new ResizeObserver(() => {
+      const h = this._viewport.clientHeight;
+      if (h > 0) { this._lastKnownHeight = h; }
+      this._render();
+    });
     this._resizeObs.observe(this._viewport);
 
     this._onKeydown = this._handleKeydown.bind(this);
@@ -84,6 +91,14 @@ export class ReportList {
     this._render();
   }
 
+  /**
+   * @param {Partial<{
+   *   density: 'default' | 'compact' | 'comfortable',
+   *   groupBy: string | null,
+   *   sortBy: 'date' | 'elements' | 'name' | string,
+   *   sortDir: 'asc' | 'desc'
+   * }>} patch
+   */
   setViewConfig(patch) {
     Object.assign(this._config, patch);
     this._updateDensityClass();
@@ -141,11 +156,16 @@ export class ReportList {
     const dir = sortDir === 'asc' ? 1 : -1;
 
     let filtered = q
-      ? this._reports.filter(r =>
-          (_hostFromUrl(r.url)).toLowerCase().includes(q) ||
-          (r.url || '').toLowerCase().includes(q) ||
-          (r.environment || '').toLowerCase().includes(q) ||
-          (r.name || '').toLowerCase().includes(q))
+      ? this._reports.filter(r => {
+        const qLower = q;
+        return (
+          (_hostFromUrl(r.url) || '').toLowerCase().includes(qLower) ||
+          (r.url || '').toLowerCase().includes(qLower) ||
+          (_lastPathSegment(r.url) || '').toLowerCase().includes(qLower) ||
+          (r.environment || '').toLowerCase().includes(qLower) ||
+          (r.name || '').toLowerCase().includes(qLower)
+        );
+      })
       : [...this._reports];
 
     filtered.sort((a, b) => {
@@ -193,7 +213,23 @@ export class ReportList {
       return _hostFromUrl(report.url) || 'Unknown';
     }
     if (groupBy === 'date') {
-      return report.timestamp ? report.timestamp.slice(0, 10) : 'Unknown';
+      if (!report.timestamp) return 'Unknown date';
+
+      const d = new Date(report.timestamp);
+      if (Number.isNaN(d.getTime())) return 'Unknown date';
+
+      const today = new Date();
+      const yesterday = new Date(today);
+      yesterday.setDate(today.getDate() - 1);
+
+      const toDateStr = (dt) => dt.toDateString();
+
+      if (toDateStr(d) === toDateStr(today)) return 'Today';
+      if (toDateStr(d) === toDateStr(yesterday)) return 'Yesterday';
+
+      const thisYear = today.getFullYear();
+      const dateStr = `${DATE_GROUP_MONTHS[d.getMonth()]} ${d.getDate()}`;
+      return d.getFullYear() === thisYear ? dateStr : `${dateStr}, ${d.getFullYear()}`;
     }
     if (groupBy === 'environment') {
       return report.environment ?? _envTag(report.url) ?? 'Unknown';
@@ -214,9 +250,15 @@ export class ReportList {
     this._spacer.style.height = total + 'px';
   }
 
+  _viewportCssHeight() {
+    const ch = this._viewport.clientHeight;
+    if (ch > 0) { return ch; }
+    return Math.max(this._lastKnownHeight || 0, Math.floor(window.innerHeight * 0.6));
+  }
+
   _render() {
     const scrollTop = this._viewport.scrollTop;
-    const viewH = this._viewport.clientHeight || 400;
+    const viewH = this._viewportCssHeight();
     const cardH = this._cardHeight();
     const n = this._rowItems.length;
 
@@ -318,25 +360,36 @@ export class ReportList {
 
     const headerRow = _el('div', 'report-card-header');
     headerRow.title = report.url || '';
-    const indexSpan = _el('span', 'report-index', `R${displayIndex}`);
-    indexSpan.title = report.url || '';
-    headerRow.appendChild(indexSpan);
     if (showEnvBadge && env) {
-      headerRow.appendChild(
-        _el('span', `env-badge env-badge--${env.toLowerCase()}`, env));
+      const badge = _el('span', `env-badge env-badge--${env.toLowerCase()}`, env);
+      const envTitle = report.environment?.trim()
+        ? report.environment.trim()
+        : env === 'STAGE'
+          ? 'Staging environment'
+          : 'Production environment';
+      badge.title = envTitle;
+      headerRow.appendChild(badge);
     }
-    const hostSpan = _el('span', 'meta-host', host);
+    const titleLine = _el('div', 'report-card-title-line');
+    titleLine.title = report.url || '';
+    const hostSpan = _el('span', 'report-card-host', host);
     hostSpan.title = report.url;
-    headerRow.appendChild(hostSpan);
+    titleLine.appendChild(hostSpan);
+    const indexSpan = _el('span', 'report-card-index', `R${displayIndex}`);
+    indexSpan.title = report.url || '';
+    titleLine.appendChild(indexSpan);
+    headerRow.appendChild(titleLine);
     body.appendChild(headerRow);
 
     const meta = _el('div', 'report-card-meta');
     meta.title = report.url || '';
-    meta.appendChild(_el('span', '', `${report.totalElements ?? 0} el`));
-    meta.appendChild(_el('span', 'meta-sep', '·'));
     const pathSpan = _el('span', 'meta-path', path);
     pathSpan.title = report.url || '';
     meta.appendChild(pathSpan);
+    meta.appendChild(_el('span', 'meta-sep', '·'));
+    meta.appendChild(_el('span', '', `${report.totalElements ?? 0} el`));
+    meta.appendChild(_el('span', 'meta-sep', '·'));
+    meta.appendChild(_el('span', 'report-card-timestamp', relativeTime(report.timestamp)));
 
     const filter = _filterLabel(report.filters);
     if (filter) {
@@ -345,9 +398,6 @@ export class ReportList {
       fs.title = 'Extraction filter';
       meta.appendChild(fs);
     }
-
-    meta.appendChild(_el('span', 'meta-sep', '·'));
-    meta.appendChild(_el('span', '', relativeTime(report.timestamp)));
 
     if (report.source === 'imported') {
       meta.appendChild(_el('span', 'meta-sep', '·'));
@@ -399,6 +449,7 @@ export class ReportList {
     actions.appendChild(details);
 
     const deleteBtn = _el('button', 'btn-icon-danger');
+    deleteBtn.dataset.action = 'delete';
     deleteBtn.title = 'Delete report';
     deleteBtn.setAttribute('aria-label', `Delete report from ${sanitize(host)}`);
     deleteBtn.innerHTML = iconTrash2(16);
@@ -408,7 +459,6 @@ export class ReportList {
     card.appendChild(actions);
 
     const badge = _el('span', 'report-role-badge');
-    badge.style.display = isBaseline || isCompare ? 'flex' : 'none';
     if (isBaseline) {
       badge.classList.add('report-role-badge--baseline');
       badge.textContent = 'B';
@@ -436,7 +486,7 @@ export class ReportList {
     this._focusedLogicalIndex = logicalIdx;
     const offset = this._offsets[logicalIdx];
     const cardH = this._cardHeight();
-    const viewH = this._viewport.clientHeight || 400;
+    const viewH = this._viewportCssHeight();
     if (offset < this._viewport.scrollTop || offset + cardH > this._viewport.scrollTop + viewH) {
       this._viewport.scrollTop = Math.max(0, offset - cardH);
       this._render();
@@ -553,21 +603,34 @@ export class ReportList {
         badge = _el('span', 'report-role-badge');
         card.appendChild(badge);
       }
+      const hadVisible = badge.classList.contains('report-role-badge--visible');
       badge.classList.remove('report-role-badge--baseline', 'report-role-badge--compare');
       if (needsBaseline) {
         badge.classList.add('report-role-badge--baseline');
         badge.textContent = 'B';
         badge.title = 'Baseline report';
-        badge.style.display = 'flex';
+        if (!hadVisible) {
+          requestAnimationFrame(() => {
+            badge.classList.add('report-role-badge--visible');
+          });
+        } else {
+          badge.classList.add('report-role-badge--visible');
+        }
       } else if (needsCompare) {
         badge.classList.add('report-role-badge--compare');
         badge.textContent = 'C';
         badge.title = 'Compare report';
-        badge.style.display = 'flex';
+        if (!hadVisible) {
+          requestAnimationFrame(() => {
+            badge.classList.add('report-role-badge--visible');
+          });
+        } else {
+          badge.classList.add('report-role-badge--visible');
+        }
       } else {
         badge.textContent = '';
         badge.title = '';
-        badge.style.display = 'none';
+        badge.classList.remove('report-role-badge--visible');
       }
     });
   }

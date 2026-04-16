@@ -230,28 +230,42 @@
 
 .panel-toggle-btn {
   position: absolute;
-  top: var(--space-3);
-  right: calc(-1 * var(--space-4));
-  width: 44px;
-  height: 44px;
-  min-width: 44px;
-  background: var(--color-surface-overlay);
+  top: 50%;
+  transform: translateY(-50%);
+  right: -12px;
+  width: 24px;
+  height: 48px;
+  min-width: 24px;
+  background: var(--color-surface-raised);
   border: 1px solid var(--color-border-subtle);
-  border-radius: 50%;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   cursor: pointer;
-  z-index: 10;
+  z-index: 12;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: var(--text-sm);
-  color: var(--color-text-secondary);
+  color: var(--color-text-tertiary);
   padding: 0;
   line-height: 1;
+  transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
 }
 
 .panel-toggle-btn:hover {
   color: var(--color-text-primary);
-  border-color: var(--color-brand);
+  background: var(--color-surface-overlay);
+  border-color: var(--color-border-default);
+}
+
+.panel-toggle-btn svg {
+  transition: transform var(--transition-normal);
+}
+
+#left-panel:not(.left-panel--collapsed) .panel-toggle-btn svg {
+  transform: rotate(0deg);
+}
+
+#left-panel.left-panel--collapsed .panel-toggle-btn svg {
+  transform: rotate(180deg);
 }
 
 #left-panel.left-panel--collapsed .nav-section__header span,
@@ -285,7 +299,7 @@
 .panel-toggle-btn:focus-visible {
   outline: 2px solid var(--color-brand);
   outline-offset: -2px;
-  border-radius: 50%;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
 .filter-rail__density-btn:focus-visible,

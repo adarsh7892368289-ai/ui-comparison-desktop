@@ -18,11 +18,86 @@ import {
   refreshReportSelectPanel,
   syncReportSelectTrigger,
 } from '../components/report-select-combobox.js';
-import { iconSpinner } from '../utils/icons.js';
+import { iconArrowDown, iconArrowUp, iconLayoutGrid, iconSpinner } from '../utils/icons.js';
 
 let _reportList = null;
+let _statusBar = null;
+
+const _densityStates = ['default', 'compact', 'comfortable'];
+let _densityIdx = 0;
+let _sortDir = 'desc';
+
+/** Previously bound #empty-clear-search for safe removeEventListener on re-init. */
+let _emptyClearSearchButton = null;
+
+const VIEW_CONFIG_KEY = 'sidebar-view-config';
+const LEGACY_VIEW_CONFIG_KEY = 'report-view-config';
+
+function _loadViewConfigFromStorage() {
+  try {
+    const cur = localStorage.getItem(VIEW_CONFIG_KEY);
+    if (cur) { return JSON.parse(cur); }
+  } catch { void 0; }
+  try {
+    const leg = localStorage.getItem(LEGACY_VIEW_CONFIG_KEY);
+    if (leg) {
+      const parsed = JSON.parse(leg);
+      try {
+        localStorage.setItem(VIEW_CONFIG_KEY, leg);
+        localStorage.removeItem(LEGACY_VIEW_CONFIG_KEY);
+      } catch { void 0; }
+      return typeof parsed === 'object' && parsed !== null ? parsed : {};
+    }
+  } catch { void 0; }
+  return {};
+}
+
+function _saveViewConfig(patch) {
+  try {
+    const existing = JSON.parse(localStorage.getItem(VIEW_CONFIG_KEY) || '{}');
+    localStorage.setItem(VIEW_CONFIG_KEY, JSON.stringify({ ...existing, ...patch }));
+  } catch { void 0; }
+}
+
+function _syncDensityToggleButton() {
+  const btn = document.getElementById('density-toggle-btn');
+  if (!btn) return;
+  const d = _densityStates[_densityIdx];
+  btn.setAttribute('aria-label', `Density: ${d}`);
+  btn.title = `Density: ${d}`;
+  btn.innerHTML = iconLayoutGrid(14);
+}
+
+function _syncSortDirButton() {
+  const btn = document.getElementById('sort-dir-btn');
+  if (!btn) return;
+  const isDesc = _sortDir === 'desc';
+  btn.dataset.dir = _sortDir;
+  btn.setAttribute('aria-label', `Sort direction: ${isDesc ? 'newest' : 'oldest'} first`);
+  btn.setAttribute('title', `Sort direction: ${isDesc ? 'newest' : 'oldest'} first`);
+  btn.innerHTML = isDesc ? iconArrowDown(13) : iconArrowUp(13);
+}
 
 const api = window.electronAPI;
+
+function handleEmptyClearSearchClick() {
+  const input = document.getElementById('search-reports');
+  if (!input) return;
+  input.value = '';
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.focus();
+}
+
+function wireEmptyClearSearchButton() {
+  const btn = document.getElementById('empty-clear-search');
+  if (!btn) return;
+  if (_emptyClearSearchButton && _emptyClearSearchButton !== btn) {
+    _emptyClearSearchButton.removeEventListener('click', handleEmptyClearSearchClick);
+  }
+  if (_emptyClearSearchButton === btn) return;
+  btn.addEventListener('click', handleEmptyClearSearchClick);
+  _emptyClearSearchButton = btn;
+}
 
 function announceReportList(message) {
   const el = document.getElementById('report-list-announcer');
@@ -98,19 +173,46 @@ function insertReportListSkeletonOverlay() {
   c.appendChild(o);
 }
 
+function filteredReportCount(reports, searchQuery) {
+  const list = reports ?? [];
+  const rawQ = searchQuery ?? '';
+  const q = rawQ.toLowerCase().trim();
+  if (!q) return list.length;
+  return list.filter(r =>
+    (hostFromUrl(r.url) || '').toLowerCase().includes(q) ||
+    (r.url || '').toLowerCase().includes(q) ||
+    (lastPathSegment(r.url) || '').toLowerCase().includes(q) ||
+    (r.environment || '').toLowerCase().includes(q) ||
+    (r.name || '').toLowerCase().includes(q)).length;
+}
+
 function renderReportList(reports, searchQuery) {
   document.querySelector('#reports-list .report-list-skeleton-overlay')?.remove();
-  _reportList?.setReports(reports, searchQuery ?? '');
+  const rawQ = searchQuery ?? '';
+  _reportList?.setReports(reports, rawQ);
+  const count = filteredReportCount(reports, searchQuery);
+  _statusBar?.updateReportCount(reports, count);
   const empty = document.getElementById('reports-empty');
   if (!empty) { return; }
-  const q = (searchQuery ?? '').toLowerCase().trim();
-  const count = q
-    ? reports.filter(r =>
-        (hostFromUrl(r.url) || '').toLowerCase().includes(q) ||
-        (r.url || '').toLowerCase().includes(q) ||
-        (r.name || '').toLowerCase().includes(q)).length
-    : reports.length;
   empty.classList.toggle('hidden', count > 0);
+  const isFiltered = typeof searchQuery === 'string' && searchQuery.trim().length > 0;
+  empty.dataset.filtered = String(isFiltered);
+  const emptyPanel = empty.querySelector('[data-state="empty"]');
+  const filteredPanel = empty.querySelector('[data-state="filtered"]');
+  if (emptyPanel && filteredPanel) {
+    emptyPanel.hidden = isFiltered;
+    filteredPanel.hidden = !isFiltered;
+  }
+  if (isFiltered) {
+    const titleEl = filteredPanel?.querySelector('.empty-title');
+    if (titleEl) {
+      const q = rawQ.trim();
+      titleEl.textContent = q.length > 0 ? `No results for "${q}"` : 'No results';
+    }
+  } else {
+    const titleEl = filteredPanel?.querySelector('.empty-title');
+    if (titleEl) { titleEl.textContent = 'No results'; }
+  }
 }
 
 async function loadAndRenderReports() {
@@ -254,7 +356,8 @@ async function handleExtraction() {
   }
 }
 
-async function initializeApp() {
+async function initializeApp(statusBar) {
+  _statusBar = statusBar ?? null;
   await storage.applyPendingOperations();
 
   const listContainer = document.getElementById('reports-list');
@@ -267,6 +370,34 @@ async function initializeApp() {
       onBaseline: (report) => selectBaselineFromReport(report),
       onCompare: (report) => selectCompareFromReport(report),
     });
+  }
+
+  const savedView = _loadViewConfigFromStorage();
+
+  if (savedView.groupBy !== undefined) {
+    const sel = document.getElementById('group-by-select');
+    if (sel) { sel.value = savedView.groupBy || ''; }
+    _reportList?.setViewConfig({ groupBy: savedView.groupBy ?? null });
+  }
+
+  if (savedView.sortBy) {
+    const sel = document.getElementById('sort-by-select');
+    if (sel) { sel.value = savedView.sortBy; }
+    _reportList?.setViewConfig({ sortBy: savedView.sortBy });
+  }
+
+  if (savedView.sortDir === 'asc' || savedView.sortDir === 'desc') {
+    _sortDir = savedView.sortDir;
+    _reportList?.setViewConfig({ sortDir: _sortDir });
+  }
+
+  if (savedView.density) {
+    const idx = _densityStates.indexOf(savedView.density);
+    if (idx !== -1) {
+      _densityIdx = idx;
+      _reportList?.setViewConfig({ density: savedView.density });
+      _syncDensityToggleButton();
+    }
   }
 
   if (typeof api?.onContextAction === 'function') {
@@ -283,7 +414,7 @@ async function initializeApp() {
           selectCompareFromReport(report);
           break;
         case 'export':
-          if (['json', 'html', 'csv', 'excel'].includes(payload.format)) {
+          if (['json', 'csv', 'excel'].includes(payload.format)) {
             handleExportReport(report, payload.format);
           }
           break;
@@ -303,17 +434,27 @@ async function initializeApp() {
 
   document.getElementById('group-by-select')?.addEventListener('change', e => {
     _reportList?.setViewConfig({ groupBy: e.target.value || null });
+    _saveViewConfig({ groupBy: e.target.value || null });
   });
 
   document.getElementById('sort-by-select')?.addEventListener('change', e => {
     _reportList?.setViewConfig({ sortBy: e.target.value });
+    _saveViewConfig({ sortBy: e.target.value });
   });
 
-  const _densityStates = ['default', 'compact', 'comfortable'];
-  let _densityIdx = 0;
+  document.getElementById('sort-dir-btn')?.addEventListener('click', () => {
+    _sortDir = _sortDir === 'desc' ? 'asc' : 'desc';
+    _syncSortDirButton();
+    _reportList?.setViewConfig({ sortDir: _sortDir });
+    _saveViewConfig({ sortDir: _sortDir });
+  });
+
   document.getElementById('density-toggle-btn')?.addEventListener('click', () => {
     _densityIdx = (_densityIdx + 1) % _densityStates.length;
-    _reportList?.setViewConfig({ density: _densityStates[_densityIdx] });
+    const d = _densityStates[_densityIdx];
+    _reportList?.setViewConfig({ density: d });
+    _saveViewConfig({ density: d });
+    _syncDensityToggleButton();
   });
 
   let _searchDebounce;
@@ -321,8 +462,13 @@ async function initializeApp() {
     clearTimeout(_searchDebounce);
     _searchDebounce = setTimeout(() => {
       renderReportList(getState().reports ?? [], e.target.value);
-    }, 200);
+    }, 250);
   });
+
+  wireEmptyClearSearchButton();
+
+  _syncSortDirButton();
+  _syncDensityToggleButton();
 
   const baselineSelect = document.getElementById('baseline-report');
   const compareSelect = document.getElementById('compare-report');
@@ -339,6 +485,7 @@ export {
   envTag,
   insertReportListSkeletonOverlay,
   renderReportList,
+  filteredReportCount,
   loadAndRenderReports,
   populateReportSelectors,
   handleDeleteReport,

@@ -2,6 +2,8 @@
   --color-brand:              hsl(217 70% 54%);
   --color-brand-hover:        hsl(217 70% 60%);
   --color-brand-subtle:       hsl(217 70% 54% / 0.10);
+  --color-brand-subtle-faint:    hsl(217 70% 54% / 0.07);
+  --color-brand-subtle-hover:    hsl(217 70% 54% / 0.11);
   --color-brand-border:       hsl(217 70% 54% / 0.30);
   --color-brand-ring:         hsl(217 70% 54% / 0.40);
   --color-brand-glow:         hsl(217 70% 54% / 0.30);
@@ -26,6 +28,8 @@
   --color-success:            hsl(142 55% 45%);
   --color-success-fg:         hsl(142 55% 56%);
   --color-success-subtle:     hsl(142 55% 45% / 0.12);
+  --color-success-subtle-faint:  hsl(142 55% 45% / 0.07);
+  --color-success-subtle-hover:  hsl(142 55% 45% / 0.11);
   --color-success-border:     hsl(142 55% 45% / 0.30);
 
   --color-warning:            hsl(38 80% 55%);

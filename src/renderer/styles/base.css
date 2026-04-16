@@ -281,11 +281,11 @@ body {
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .section-title {
-  font-size: var(--text-sm);
+  font-size: var(--text-2xs);
   font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--color-text-tertiary);
+  letter-spacing: 0.08em;
+  color: var(--color-text-disabled);
   flex-shrink: 0;
 }
 
@@ -309,6 +309,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .empty-state { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); padding: var(--space-6) var(--space-5); text-align: center; }
 .empty-state.hidden { display: none; }
+.empty-state__panel { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); }
 .empty-title { font-size: var(--text-base); font-weight: var(--weight-semibold); color: var(--color-text-secondary); }
 .empty-hint { font-size: var(--text-sm); color: var(--color-text-tertiary); max-width: 260px; }
 

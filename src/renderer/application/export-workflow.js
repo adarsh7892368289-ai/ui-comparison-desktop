@@ -18,12 +18,27 @@ import storage from '../../infrastructure/idb-repository.js';
 
 const api = window.electronAPI;
 
-function escapeHtml(s) {
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+const SIDEBAR_EXPORT_FORMAT_KEY = 'sidebar-export-format';
+const VALID_BULK_FORMATS = new Set(['xlsx', 'csv', 'json']);
+
+function _readStoredBulkFormat() {
+  try {
+    const v = localStorage.getItem(SIDEBAR_EXPORT_FORMAT_KEY);
+    if (v && VALID_BULK_FORMATS.has(v)) { return v; }
+  } catch { void 0; }
+  return 'xlsx';
+}
+
+let _bulkExportFormat = _readStoredBulkFormat();
+
+function getBulkExportFormat() {
+  return _bulkExportFormat;
+}
+
+function setBulkExportFormat(format) {
+  if (!format || !VALID_BULK_FORMATS.has(format)) { return; }
+  _bulkExportFormat = format;
+  try { localStorage.setItem(SIDEBAR_EXPORT_FORMAT_KEY, format); } catch { void 0; }
 }
 
 function timedExport(promise, timeoutMs = 120_000) {
@@ -52,19 +67,6 @@ async function handleExportReport(report, format) {
       const json         = buildExtractedReportJson(fullReport);
       const safeFilename = sanitizeFilename(`report-${host}-${safeId}.json`);
       const res = await timedExport(api.exportFile({ format: 'json', data: json, filename: safeFilename }));
-      if (res.success)                   { Toast.success(`Saved to ${res.filePath}`); }
-      else if (res.reason !== 'cancelled') { Toast.error(res.error ?? 'Export failed'); }
-      return;
-    }
-
-    if (format === 'html') {
-      const json         = buildExtractedReportJson(fullReport);
-      const pageTitle    = escapeHtml(`${host} — report`);
-      const htmlDoc =
-        `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><title>${pageTitle}</title></head>` +
-        `<body><h1>Extracted report</h1><pre>${escapeHtml(json)}</pre></body></html>`;
-      const safeFilename = sanitizeFilename(`report-${host}-${safeId}.html`);
-      const res = await timedExport(api.exportFile({ format: 'html', data: htmlDoc, filename: safeFilename }));
       if (res.success)                   { Toast.success(`Saved to ${res.filePath}`); }
       else if (res.reason !== 'cancelled') { Toast.error(res.error ?? 'Export failed'); }
       return;
@@ -103,7 +105,7 @@ async function handleExportAllReports() {
 
   if (reports.length === 0) { Toast.info('No reports to export'); return; }
 
-  const format = document.getElementById('export-all-format')?.value ?? 'html';
+  const format = getBulkExportFormat();
 
   let fullReports;
   try {
@@ -261,4 +263,12 @@ async function handleFullReport() {
   }
 }
 
-export { timedExport, handleExportReport, handleExportAllReports, handleExport, handleFullReport };
+export {
+  timedExport,
+  handleExportReport,
+  handleExportAllReports,
+  handleExport,
+  handleFullReport,
+  getBulkExportFormat,
+  setBulkExportFormat,
+};

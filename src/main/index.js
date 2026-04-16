@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, protocol, Menu, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, protocol, Menu, ipcMain, shell, screen } = require('electron');
 const path = require('path');
 const fs   = require('fs');
 const log  = require('electron-log');
@@ -170,7 +170,6 @@ app.on('ready', () => {
         { label: 'Export as JSON', click: () => send({ action: 'export', format: 'json', reportId }) },
         { label: 'Export as Excel', click: () => send({ action: 'export', format: 'excel', reportId }) },
         { label: 'Export as CSV', click: () => send({ action: 'export', format: 'csv', reportId }) },
-        { label: 'Export as HTML', click: () => send({ action: 'export', format: 'html', reportId }) },
         { type: 'separator' },
         { label: 'Delete', click: () => send({ action: 'delete', reportId }) },
       ];
@@ -231,6 +230,28 @@ function _attachPeriodicStateSave(win) {
   win.on('move',   schedSave);
 }
 
+/** If saved position is off-screen (e.g. unplugged monitor), move window into view. */
+function _ensureWindowOnScreen(win) {
+  try {
+    const b = win.getBounds();
+    const cx = b.x + Math.max(1, Math.floor(b.width / 2));
+    const cy = b.y + Math.max(1, Math.floor(b.height / 2));
+    const nearest = screen.getDisplayNearestPoint({ x: cx, y: cy });
+    const wa = nearest.workArea || nearest.bounds;
+    const overlaps =
+      b.x < wa.x + wa.width &&
+      b.x + b.width > wa.x &&
+      b.y < wa.y + wa.height &&
+      b.y + b.height > wa.y;
+    if (!overlaps) {
+      if (win.isMaximized()) { win.unmaximize(); }
+      win.center();
+    }
+  } catch (err) {
+    log.warn('[BOOT] ensureWindowOnScreen failed', { err: err.message });
+  }
+}
+
 function createMainWindow() {
   const win = new BrowserWindow({
     width:     1280,
@@ -256,7 +277,11 @@ function createMainWindow() {
       : {}),
   });
 
-  win.once('ready-to-show', () => {
+  let _mainWindowShown = false;
+  const applyBoundsAndShow = () => {
+    if (_mainWindowShown || win.isDestroyed()) { return; }
+    _mainWindowShown = true;
+
     const savedState = _loadWindowState();
     if (!savedState || savedState.maximized) {
       win.maximize();
@@ -268,8 +293,29 @@ function createMainWindow() {
         win.setPosition(savedState.x, savedState.y);
       }
     }
+    _ensureWindowOnScreen(win);
     win.show();
+  };
+
+  win.once('ready-to-show', applyBoundsAndShow);
+
+  win.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame) { return; }
+    log.error('[BOOT] Main frame failed to load', {
+      errorCode,
+      errorDescription,
+      validatedURL,
+    });
+    applyBoundsAndShow();
   });
+
+  const _showFallbackMs = 8000;
+  const _showFallbackTimer = setTimeout(() => {
+    if (win.isDestroyed() || win.isVisible()) { return; }
+    log.warn('[BOOT] ready-to-show did not fire — showing window anyway', { ms: _showFallbackMs });
+    applyBoundsAndShow();
+  }, _showFallbackMs);
+  win.once('show', () => clearTimeout(_showFallbackTimer));
 
   win.on('close', () => _saveWindowState(win));
   _attachPeriodicStateSave(win);
