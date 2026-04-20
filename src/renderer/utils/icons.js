@@ -62,6 +62,20 @@ export function iconList(size = 16) {
   );
 }
 
+export function iconRowsComfortable(size = 16) {
+  return svg(
+    '<line x1="8" x2="21" y1="5" y2="5"/><line x1="8" x2="21" y1="9" y2="9"/><line x1="3" x2="3.01" y1="7" y2="7"/><line x1="8" x2="21" y1="15" y2="15"/><line x1="8" x2="21" y1="19" y2="19"/><line x1="3" x2="3.01" y1="17" y2="17"/>',
+    size
+  );
+}
+
+export function iconLayers(size = 16) {
+  return svg(
+    '<rect x="2" y="4" width="20" height="4" rx="1"/><rect x="2" y="10" width="20" height="4" rx="1"/><rect x="2" y="16" width="20" height="4" rx="1"/>',
+    size
+  );
+}
+
 export function iconSearch(size = 16) {
   return svg('<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>', size);
 }

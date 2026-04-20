@@ -117,12 +117,11 @@ class BaseComparisonMode {
     return 'modified';
   }
 
-  generateSummary(diffResults, ambiguous, modeName) {
+  generateSummary(diffResults, modeName) {
     const totalElements     = diffResults.length;
     const unchangedElements = diffResults.filter(r => r.totalDifferences === 0).length;
     const modifiedElements  = diffResults.filter(r => r.totalDifferences > 0).length;
     const totalDifferences  = diffResults.reduce((sum, r) => sum + r.totalDifferences, 0);
-    const ambiguousCount    = ambiguous.length;
 
     const severityCounts = { critical: 0, high: 0, medium: 0, low: 0 };
     for (const resultItem of diffResults) {
@@ -132,7 +131,7 @@ class BaseComparisonMode {
 
     logger.info(`${modeName} comparison summary`, {
       totalElements, unchangedElements, modifiedElements,
-      totalDifferences, ambiguousCount, severityCounts
+      totalDifferences, severityCounts
     });
 
     return {
@@ -140,7 +139,6 @@ class BaseComparisonMode {
       unchangedElements,
       modifiedElements,
       totalDifferences,
-      ambiguousCount,
       severityCounts
     };
   }
@@ -215,7 +213,7 @@ class BaseComparisonMode {
   }
 
 
-  async* compareChunked(matches, ambiguous, filter, modeName) {
+  async* compareChunked(matches, filter, modeName) {
     const total       = matches.length;
     const diffResults = [];
 
@@ -233,23 +231,22 @@ class BaseComparisonMode {
     yield resultFrame({
       modeName,
       results:  cleaned,
-      ambiguous,
-      summary:  this.generateSummary(cleaned, ambiguous, modeName)
+      summary:  this.generateSummary(cleaned, modeName)
     });
   }
 }
 
 class StaticComparisonMode extends BaseComparisonMode {
   constructor(deps = {}) { super(deps); }
-  async* compare(matches, ambiguous = []) {
-    yield* this.compareChunked(matches, ambiguous, STATIC_FILTER, 'static');
+  async* compare(matches) {
+    yield* this.compareChunked(matches, STATIC_FILTER, 'static');
   }
 }
 
 class DynamicComparisonMode extends BaseComparisonMode {
   constructor(deps = {}) { super(deps); }
-  async* compare(matches, ambiguous = []) {
-    yield* this.compareChunked(matches, ambiguous, DYNAMIC_FILTER, 'dynamic');
+  async* compare(matches) {
+    yield* this.compareChunked(matches, DYNAMIC_FILTER, 'dynamic');
   }
 }
 

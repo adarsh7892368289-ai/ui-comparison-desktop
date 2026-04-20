@@ -15,29 +15,31 @@ import {
   filteredReportCount,
   handleDeleteAllReports,
   handleExtraction,
-  hostFromUrl,
 } from './application/report-manager.js';
+import {
+  BULK_EXTRACTED_REPORT_EXPORT_BADGE_LABELS,
+  BULK_EXTRACTED_REPORT_EXPORT_FORMAT_LABELS,
+  BULK_EXTRACTED_REPORT_EXPORT_FORMATS,
+  BULK_EXTRACTED_REPORT_EXPORT_MENU,
+} from '@core/export/extraction-exporters/extracted-report-export-catalog.js';
 import { handleExportAllReports, getBulkExportFormat, setBulkExportFormat } from './application/export-workflow.js';
 import { handleImportReport } from './application/import-workflow.js';
 import { handleComparison, tryLoadCachedComparison } from './application/compare-workflow.js';
 import { createResultPanel } from './components/result-panel.js';
 import { createAppShell }       from './components/app-shell.js';
-import { createCommandPalette } from './components/command-palette.js';
 import { SystemBanner }         from './components/system-banner.js';
 import { createStatusBar }      from './components/status-bar.js';
+import { attachTooltip }        from './components/tooltip/tooltip.js';
 import {
-  iconActivity,
+  getLeftPanelRailWidthPx,
+  syncLeftPanelRailState,
+  TOOLBAR_COMPACT_PX,
+} from './utils/left-panel-breakpoints.js';
+import {
   iconAlertCircle,
   iconArrowUp,
   iconChevronDown,
   iconFileDown,
-  iconGitCompare,
-  iconGlobe,
-  iconLayoutGrid,
-  iconList,
-  iconMoreHorizontal,
-  iconPlay,
-  iconSearch,
   iconTrash2,
 } from './utils/icons.js';
 
@@ -60,11 +62,116 @@ if (!api) {
   throw new Error('window.electronAPI is undefined');
 }
 
+api.setWindowTitle?.('UI Comparison');
+
+/** @type {(() => void)[]} */
+let _toolbarDiscoveryTooltipDisposers = [];
+
+function isKeyboardTypingContext(el) {
+  if (!el || el.nodeType !== Node.ELEMENT_NODE) { return false; }
+  const t = el.tagName;
+  if (t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT') { return true; }
+  return Boolean(el.isContentEditable);
+}
+
+function initSidebarLayoutObservers() {
+  const row = document.querySelector('[data-sidebar-toolbar]');
+  const panel = document.getElementById('left-panel');
+  if (typeof ResizeObserver === 'undefined') { return; }
+
+  const flush = () => {
+    requestAnimationFrame(() => {
+      syncLeftPanelRailState();
+      if (!row || !panel || panel.classList.contains('left-panel--collapsed')) {
+        row?.removeAttribute('data-compact');
+        return;
+      }
+      const w = getLeftPanelRailWidthPx();
+      if (w != null) {
+        row.dataset.compact = w < TOOLBAR_COMPACT_PX ? 'true' : 'false';
+      }
+    });
+  };
+
+  if (panel) {
+    const roPanel = new ResizeObserver(flush);
+    roPanel.observe(panel);
+  }
+  flush();
+}
+
+function wireToolbarDiscoveryTooltips() {
+  for (const d of _toolbarDiscoveryTooltipDisposers) {
+    try { d(); } catch { void 0; }
+  }
+  _toolbarDiscoveryTooltipDisposers = [];
+
+  const importBtn = document.getElementById('import-report-btn');
+  if (importBtn) {
+    _toolbarDiscoveryTooltipDisposers.push(
+      attachTooltip(importBtn, () => 'Import report from file')
+    );
+  }
+  const deleteBtn = document.getElementById('delete-all-btn');
+  if (deleteBtn) {
+    _toolbarDiscoveryTooltipDisposers.push(
+      attachTooltip(deleteBtn, () => 'Delete all reports')
+    );
+  }
+  const exportPrimary = document.getElementById('export-all-btn');
+  if (exportPrimary) {
+    _toolbarDiscoveryTooltipDisposers.push(
+      attachTooltip(exportPrimary, () => {
+        const fmt = getBulkExportFormat();
+        const name = BULK_EXTRACTED_REPORT_EXPORT_FORMAT_LABELS[fmt] ?? String(fmt).toUpperCase();
+        return `Export all reports as ${name}`;
+      })
+    );
+  }
+  const exportTrigger = document.getElementById('export-format-trigger');
+  if (exportTrigger) {
+    _toolbarDiscoveryTooltipDisposers.push(
+      attachTooltip(exportTrigger, () => 'Choose export format')
+    );
+  }
+  const sortBtn = document.getElementById('sort-control-btn');
+  if (sortBtn) {
+    _toolbarDiscoveryTooltipDisposers.push(
+      attachTooltip(sortBtn, () => {
+        const lab = sortBtn.querySelector('.filter-rail__toolbar-btn-label');
+        const t = lab?.textContent?.trim();
+        return t ? `Sort: ${t}` : 'Sort reports';
+      })
+    );
+  }
+  const groupBtn = document.getElementById('group-control-btn');
+  if (groupBtn) {
+    _toolbarDiscoveryTooltipDisposers.push(
+      attachTooltip(groupBtn, () => {
+        const lab = groupBtn.querySelector('.filter-rail__toolbar-btn-label');
+        const t = lab?.textContent?.trim();
+        return t ? `Group: ${t}` : 'Group reports';
+      })
+    );
+  }
+}
+
 function wireExportSplitControls() {
-  const formatNames = { xlsx: 'Excel', csv: 'CSV', json: 'JSON' };
   const menu = document.getElementById('export-format-menu');
   const trigger = document.getElementById('export-format-trigger');
   const primary = document.getElementById('export-all-btn');
+
+  if (menu && menu.childElementCount === 0) {
+    for (const { format, label } of BULK_EXTRACTED_REPORT_EXPORT_MENU) {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'split-btn__menu-item';
+      item.setAttribute('role', 'menuitem');
+      item.dataset.format = format;
+      item.textContent = label;
+      menu.appendChild(item);
+    }
+  }
 
   const closeFormatMenu = () => {
     if (menu) menu.hidden = true;
@@ -72,9 +179,12 @@ function wireExportSplitControls() {
   };
 
   const applyBulkFormatUi = (format) => {
-    const name = formatNames[format] ?? String(format).toUpperCase();
+    const name = BULK_EXTRACTED_REPORT_EXPORT_FORMAT_LABELS[format] ?? String(format).toUpperCase();
+    const badgeText = BULK_EXTRACTED_REPORT_EXPORT_BADGE_LABELS[format] ?? String(format).toUpperCase();
     const label = document.querySelector('#export-split-btn .split-btn__label');
     if (label) label.textContent = name;
+    const badge = primary?.querySelector('.format-badge');
+    if (badge) badge.textContent = badgeText;
     if (primary) {
       primary.title = `Export all as ${name}`;
       primary.setAttribute('aria-label', `Export all reports as ${name}`);
@@ -96,7 +206,7 @@ function wireExportSplitControls() {
     const item = e.target.closest('[data-format]');
     if (!item) return;
     const f = item.dataset.format;
-    if (!f) return;
+    if (!f || !BULK_EXTRACTED_REPORT_EXPORT_FORMATS.has(f)) return;
     setBulkExportFormat(f);
     applyBulkFormatUi(getBulkExportFormat());
     closeFormatMenu();
@@ -119,7 +229,6 @@ function wireExportSplitControls() {
 
 let _resultPanel        = null;
 let _appShell           = null;
-let _cmdPalette         = null;
 let _statusBar          = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -140,17 +249,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (importToolbarBtn && !importToolbarBtn.querySelector('svg')) {
     importToolbarBtn.insertAdjacentHTML('afterbegin', iconArrowUp(13));
   }
-  const densityBtn = document.getElementById('density-toggle-btn');
-  if (densityBtn && !densityBtn.querySelector('svg')) {
-    densityBtn.insertAdjacentHTML('afterbegin', iconLayoutGrid(16));
-  }
-  const overflowSummary = document.querySelector('.sidebar-overflow__summary');
-  if (overflowSummary && !overflowSummary.querySelector('svg')) {
-    overflowSummary.insertAdjacentHTML('afterbegin', iconMoreHorizontal(16));
-  }
-  const cmdTriggerIcon = document.querySelector('#cmd-palette-trigger .cmd-trigger-icon');
-  if (cmdTriggerIcon && !cmdTriggerIcon.querySelector('svg')) {
-    cmdTriggerIcon.innerHTML = iconSearch(14);
+  const deleteAllToolbarBtn = document.getElementById('delete-all-btn');
+  if (deleteAllToolbarBtn && !deleteAllToolbarBtn.querySelector('svg')) {
+    deleteAllToolbarBtn.insertAdjacentHTML('afterbegin', iconTrash2(14));
   }
 
   insertReportListSkeletonOverlay();
@@ -185,38 +286,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   _appShell = createAppShell();
-  _cmdPalette = createCommandPalette();
+  initSidebarLayoutObservers();
+  wireToolbarDiscoveryTooltips();
 
-  const isMac =
-    typeof api.platform === 'string'
-      ? api.platform === 'darwin'
-      : typeof navigator !== 'undefined' && navigator.platform.startsWith('Mac');
-
-  _cmdPalette.registerCommands([
-    { id: 'go-extract',  label: 'Go to Extract',        icon: iconGlobe(), shortcut: 'E',         keywords: ['extract', 'capture', 'dom'],       action: () => _appShell.activateSection('extract') },
-    { id: 'go-compare',  label: 'Go to Compare',         icon: iconGitCompare(), shortcut: 'C',         keywords: ['compare', 'diff', 'regression'],   action: () => _appShell.activateSection('compare') },
-    { id: 'go-reports',  label: 'Focus Report List',     icon: iconList(), shortcut: 'R',         keywords: ['reports', 'list', 'history'],       action: () => document.querySelector('#reports-list .vscroll-viewport')?.focus() },
-    { id: 'search',      label: 'Search Reports',        icon: iconSearch(), shortcut: '/',         keywords: ['search', 'filter', 'find'],        action: () => document.getElementById('search-reports')?.focus() },
-    { id: 'extract',     label: 'Start Extraction',      icon: iconPlay(), shortcut: '',          keywords: ['run', 'start', 'capture'],         action: () => { const btn = document.getElementById('extract-btn'); if (btn && !btn.disabled) btn.click(); } },
-    { id: 'compare',     label: 'Run Comparison',        icon: iconGitCompare(), shortcut: '',          keywords: ['run', 'compare', 'diff'],          action: () => { const btn = document.getElementById('compare-btn'); if (btn && !btn.disabled) btn.click(); } },
-    { id: 'export-html', label: 'Export as HTML',        icon: iconFileDown(), shortcut: '',          keywords: ['export', 'html', 'download'],      action: () => { const btn = document.getElementById('export-comparison-btn'); if (btn && !btn.disabled && document.getElementById('export-format-select')?.value === 'html') btn.click(); } },
-    { id: 'delete-all',  label: 'Delete All Reports',    icon: iconTrash2(), shortcut: '',          keywords: ['delete', 'clear', 'remove all'],   action: () => { const btn = document.getElementById('delete-all-btn'); if (btn && !btn.disabled) btn.click(); } },
-    { id: 'diagnostics', label: 'Open Diagnostics Panel',icon: iconActivity(), shortcut: isMac ? '⌘⇧D' : 'Ctrl+⇧+D', keywords: ['perf', 'metrics', 'debug'],        action: () => showDiagnosticsPanel() },
-  ]);
-
-  document.getElementById('cmd-palette-trigger')
-    ?.addEventListener('click', () => _cmdPalette.toggle());
+  const panelToggleBtn = document.getElementById('panel-toggle-btn');
+  if (panelToggleBtn) {
+    attachTooltip(panelToggleBtn, () => panelToggleBtn.getAttribute('aria-label') || '');
+  }
 
   document.getElementById('panel-toggle-btn')
     ?.addEventListener('click', () => _appShell.toggleLeftPanel());
 
   _appShell.activateSection('extract');
-
-  const cmdShortcutSpan = document.getElementById('cmd-palette-shortcut');
-  if (cmdShortcutSpan) {
-    const keys = isMac ? ['⌘', 'K'] : ['Ctrl', 'K'];
-    cmdShortcutSpan.innerHTML = keys.map(k => `<kbd>${k}</kbd>`).join('');
-  }
 
   document.getElementById('url-input')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.repeat) {
@@ -231,18 +312,36 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   document.addEventListener('keydown', e => {
-    const inInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
-    if (e.key === 'Enter' && !e.repeat && getState().phase === 'error' && !inInput) {
+    const active = document.activeElement;
+    const typing = isKeyboardTypingContext(active);
+    if (e.key === 'Escape' && !e.repeat) {
+      const overlay = document.getElementById('modal-overlay');
+      if (!overlay || overlay.classList.contains('hidden')) {
+        const panel = document.getElementById('left-panel');
+        if (
+          _appShell
+          && panel
+          && panel.contains(document.activeElement)
+          && !panel.classList.contains('left-panel--collapsed')
+        ) {
+          e.preventDefault();
+          e.stopPropagation();
+          _appShell.collapseLeftPanelIfExpanded();
+          return;
+        }
+      }
+    }
+    if (e.key === 'Enter' && !e.repeat && getState().phase === 'error' && !typing) {
       e.preventDefault();
       dispatch('DISMISS_ERROR');
       return;
     }
-    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'b' || e.key === 'B') && !e.shiftKey && !e.altKey) {
       e.preventDefault();
-      _cmdPalette.toggle();
+      _appShell.toggleLeftPanel();
       return;
     }
-    if (inInput) { return; }
+    if (typing) { return; }
     if (e.key === 'e' || e.key === 'E') { _appShell.activateSection('extract'); }
     if (e.key === 'c' || e.key === 'C') {
       const el = document.activeElement;
@@ -266,17 +365,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   document.getElementById('extract-btn')?.addEventListener('click', handleExtraction);
 
-  const closeSidebarToolbarOverflow = () => {
-    document.querySelector('.sidebar-toolbar-overflow')?.removeAttribute('open');
-  };
-
-  document.getElementById('import-report-overflow-btn')?.addEventListener('click', () => {
-    closeSidebarToolbarOverflow();
-    document.getElementById('import-report-input')?.click();
-  });
-
   document.getElementById('delete-all-btn')?.addEventListener('click', async () => {
-    closeSidebarToolbarOverflow();
     await handleDeleteAllReports();
   });
 
@@ -338,36 +427,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (state.phase === 'comparing') {
       _resultPanel?.showComparing?.();
-      _appShell?.setBreadcrumb([{ label: 'Compare' }]);
     } else if (state.phase === 'error') {
       _resultPanel?.showError?.(state.error);
-      _appShell?.setBreadcrumb([{ label: 'Compare' }]);
     } else if (state.comparison && state.phase === 'done') {
       _resultPanel?.render(state.comparison, state.cachedAt ?? null);
-      _appShell?.setBreadcrumb([
-        { label: 'Compare', action: () => _appShell.activateSection('compare') },
-        { label: 'Results' },
-      ]);
     } else if (state.phase === 'idle') {
       _resultPanel?.clear();
-      _appShell?.syncBreadcrumbToActiveSection();
     }
 
-    const titles = {
-      idle: 'UI Comparison',
-      extracting: 'Extracting elements…',
-      comparing: 'Running comparison…',
-      done:
-        state.comparison && state.phase === 'done'
-          ? (() => {
-              const br = (state.reports ?? []).find(r => r.id === state.comparison.baselineId);
-              const host = br?.url ? hostFromUrl(br.url) : '';
-              return host ? `Results — ${host}` : 'UI Comparison';
-            })()
-          : 'UI Comparison',
-      error: 'UI Comparison',
-    };
-    window.electronAPI?.setWindowTitle?.(titles[state.phase] ?? 'UI Comparison');
   });
 });
 

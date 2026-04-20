@@ -74,7 +74,7 @@ function buildComparisonCsv(result) {
 
   rows.push(['MATCHED ELEMENTS']);
   rows.push([
-    'HPID', 'Tag Name', 'Element ID Attr', 'Class Name',
+    'Element ID', 'Tag Name', 'Element ID Attr', 'Class Name',
     'Match Strategy', 'Match Confidence', 'CSS Property Changes', 'Overall Severity'
   ]);
 

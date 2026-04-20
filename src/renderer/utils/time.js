@@ -22,3 +22,10 @@ export function relativeTime(timestamp) {
   const dateStr = `${MONTHS[then.getMonth()]} ${then.getDate()}`;
   return thenYear === thisYear ? dateStr : `${dateStr}, ${thenYear}`;
 }
+
+export function absoluteCalendarDate(timestamp) {
+  if (!timestamp) return '';
+  const then = new Date(timestamp);
+  if (Number.isNaN(then.getTime())) return '';
+  return new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric' }).format(then);
+}

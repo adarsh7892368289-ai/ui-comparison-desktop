@@ -41,12 +41,10 @@ function buildUnmatchedSummary(elements) {
 
 function buildMatchingMetadata(matchingResult) {
   const totalMatched       = matchingResult.matches.length;
-  const ambiguousCount     = (matchingResult.ambiguous ?? []).length;
   const unmatchedBaseCount = matchingResult.unmatchedBaseline.length;
   const unmatchedCmpCount  = matchingResult.unmatchedCompare.length;
   return {
     totalMatched,
-    ambiguousCount,
     unmatchedBaseline: unmatchedBaseCount,
     unmatchedCompare:  unmatchedCmpCount,
     matchRate:         calculateMatchRate(totalMatched, unmatchedBaseCount, unmatchedCmpCount)
@@ -88,10 +86,7 @@ class Comparator {
     const diffTotal       = matchingResult.matches.length;
     let   comparisonResult = null;
 
-    const diffingGen = comparisonMode.compare(
-      matchingResult.matches,
-      matchingResult.ambiguous ?? []
-    );
+    const diffingGen = comparisonMode.compare(matchingResult.matches);
 
     for await (const frame of diffingGen) {
       if (frame.type === 'result') {
@@ -114,7 +109,6 @@ class Comparator {
       comparison: {
         mode:      comparisonResult.modeName,
         results:   comparisonResult.results,
-        ambiguous: comparisonResult.ambiguous,
         summary:   comparisonResult.summary
       },
       unmatchedElements: {

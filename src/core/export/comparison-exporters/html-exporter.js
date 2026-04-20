@@ -266,7 +266,6 @@ function buildSidebar(s, raw) {
   <div class="stat-row"><span class="icon add">\uff0b</span> ${s.added} Only in ${esc(cmpHost)}</div>
   <div class="stat-row"><span class="icon rem">\uff0d</span> ${s.removed} Only in ${esc(baseHost)}</div>
   <div class="stat-row"><span class="icon">\u25cb</span> ${s.unchanged} Unchanged</div>
-  <div class="stat-row"><span class="icon amb">\u25c6</span> ${s.ambiguous} Ambiguous</div>
 </div>
 <div class="sidebar-section filter-buttons">
   <div class="filter-label">Severity</div>
@@ -439,7 +438,7 @@ body{
 .filter-btn:hover{background:var(--bg-hover);border-color:var(--border-strong);color:var(--text-secondary)}
 .filter-btn.active{background:var(--accent-faint);border-color:var(--accent-border);color:var(--accent-light);font-weight:600}
 .icon{width:16px;display:inline-block;text-align:center}
-.icon.add{color:#3fb950}.icon.rem{color:var(--sev-critical-fg)}.icon.amb{color:var(--amber-text)}
+.icon.add{color:#3fb950}.icon.rem{color:var(--sev-critical-fg)}
 
 .center-panel{display:flex;flex-direction:column;overflow:hidden;min-width:0;min-height:0}
 .tree-toolbar{display:flex;align-items:center;gap:8px;padding:0 12px;height:36px;background:var(--bg-surface);border-bottom:1px solid var(--border-subtle);flex-shrink:0}
@@ -575,11 +574,6 @@ body{
 .structural-expand-btn{width:100%;justify-content:center;margin-top:4px;padding:6px}
 .mutation-desc{font-size:12px;color:var(--text-secondary);line-height:1.7;padding:12px;background:var(--bg-hover);border-radius:6px;margin:14px 0}
 .mutation-desc strong{color:var(--text-primary)}
-.ambiguous-notice{background:#2d1900;border:1px solid var(--amber-text);border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:12px;color:var(--amber-text);line-height:1.5}
-.ambiguous-notice strong{display:block;margin-bottom:6px;font-size:13px}
-.candidate-table{width:100%;border-collapse:collapse;margin-top:10px;font-size:12px}
-.candidate-table th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);padding:4px 8px;border-bottom:1px solid var(--border-subtle)}
-.candidate-table td{color:var(--text-secondary);padding:5px 8px;border-bottom:1px solid var(--border-subtle);font-family:ui-monospace,'Geist Mono',monospace;font-variant-numeric:tabular-nums}
 
 .cascade-expander{margin-top:12px;border:1px solid var(--border-subtle);border-radius:6px;overflow:hidden}
 .cascade-header{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg-elevated);cursor:pointer;font-size:12px;color:var(--accent-light);font-weight:600;user-select:none;transition:background .08s}

@@ -194,21 +194,34 @@
 .badge-removed  { background: var(--color-badge-removed-bg); color: var(--color-destructive); font-weight: var(--weight-bold); font-size: var(--text-sm); padding: 3px var(--space-2); }
 
 .env-badge {
+  display: inline-flex;
+  align-items: center;
   font-size: var(--text-xs);
-  font-weight: var(--weight-bold);
+  font-weight: var(--weight-medium);
   letter-spacing: 0.04em;
   border-radius: var(--radius-xs);
-  padding: 2px 6px;
+  padding: 1px var(--space-2);
   flex-shrink: 0;
   flex-grow: 0;
   white-space: nowrap;
   text-transform: uppercase;
-  border-width: 1px;
-  border-style: solid;
+  border-style: none;
+  border-left-style: solid;
+  border-left-width: 2px;
+  background: var(--color-surface-raised);
 }
 
-.env-badge--stage { background: var(--color-warning-subtle); color: var(--color-warning); border-color: var(--color-warning-border); }
-.env-badge--prod  { background: var(--color-success-subtle); color: var(--color-success-fg); border-color: var(--color-success-border); }
+.env-badge--stage {
+  color: var(--env-stage-color);
+  border-left-color: var(--env-stage-color);
+  background: var(--env-stage-color-subtle);
+}
+
+.env-badge--prod {
+  color: var(--env-prod-color);
+  border-left-color: var(--env-prod-color);
+  background: var(--env-prod-color-subtle);
+}
 
 .split-btn {
   display: inline-flex;

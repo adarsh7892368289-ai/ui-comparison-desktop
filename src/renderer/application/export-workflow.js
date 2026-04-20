@@ -2,10 +2,10 @@ import { getState }                          from '../state.js';
 import { Toast }                              from '../ui.js';
 import { sanitizeFilename, hostFromUrl }      from './report-manager.js';
 import { normalizeComparisonResult }          from './compare-workflow.js';
-import { exportToHTML }                       from '../../core/export/comparison-exporters/html-exporter.js';
-import { buildComparisonCsv }                 from '../../core/export/comparison-exporters/csv-exporter.js';
-import { buildComparisonJsonPayload }         from '../../core/export/comparison-exporters/json-exporter.js';
-import { exportToExcel }                      from '../../core/export/comparison-exporters/excel-exporter.js';
+import { exportToHTML }                       from '@core/export/comparison-exporters/html-exporter.js';
+import { buildComparisonCsv }                 from '@core/export/comparison-exporters/csv-exporter.js';
+import { buildComparisonJsonPayload }         from '@core/export/comparison-exporters/json-exporter.js';
+import { exportToExcel }                      from '@core/export/comparison-exporters/excel-exporter.js';
 import {
   buildExtractedReportCsv,
   buildExtractedReportJson,
@@ -13,32 +13,37 @@ import {
   buildAllExtractedReportsJson,
   buildExtractedReportExcel,
   buildAllExtractedReportsExcel,
-} from '../../core/export/extraction-exporters/report-exporter.js';
+} from '@core/export/extraction-exporters/report-exporter.js';
+import {
+  BULK_EXTRACTED_REPORT_EXPORT_FORMATS,
+  SINGLE_EXTRACTED_REPORT_EXPORT_FORMATS,
+} from '@core/export/extraction-exporters/extracted-report-export-catalog.js';
 import storage from '../../infrastructure/idb-repository.js';
 
 const api = window.electronAPI;
 
-const SIDEBAR_EXPORT_FORMAT_KEY = 'sidebar-export-format';
-const VALID_BULK_FORMATS = new Set(['xlsx', 'csv', 'json']);
+const BULK_EXTRACTED_REPORT_EXPORT_FORMAT_STORAGE_KEY = 'sidebar-export-format';
 
-function _readStoredBulkFormat() {
+function _loadPersistedBulkExtractedReportsExportFormat() {
   try {
-    const v = localStorage.getItem(SIDEBAR_EXPORT_FORMAT_KEY);
-    if (v && VALID_BULK_FORMATS.has(v)) { return v; }
+    const stored = localStorage.getItem(BULK_EXTRACTED_REPORT_EXPORT_FORMAT_STORAGE_KEY);
+    if (stored && BULK_EXTRACTED_REPORT_EXPORT_FORMATS.has(stored)) { return stored; }
   } catch { void 0; }
   return 'xlsx';
 }
 
-let _bulkExportFormat = _readStoredBulkFormat();
+let _bulkExtractedReportsExportFormat = _loadPersistedBulkExtractedReportsExportFormat();
 
 function getBulkExportFormat() {
-  return _bulkExportFormat;
+  return _bulkExtractedReportsExportFormat;
 }
 
-function setBulkExportFormat(format) {
-  if (!format || !VALID_BULK_FORMATS.has(format)) { return; }
-  _bulkExportFormat = format;
-  try { localStorage.setItem(SIDEBAR_EXPORT_FORMAT_KEY, format); } catch { void 0; }
+function setBulkExportFormat(exportFormat) {
+  if (!exportFormat || !BULK_EXTRACTED_REPORT_EXPORT_FORMATS.has(exportFormat)) { return; }
+  _bulkExtractedReportsExportFormat = exportFormat;
+  try {
+    localStorage.setItem(BULK_EXTRACTED_REPORT_EXPORT_FORMAT_STORAGE_KEY, exportFormat);
+  } catch { void 0; }
 }
 
 function timedExport(promise, timeoutMs = 120_000) {
@@ -50,7 +55,12 @@ function timedExport(promise, timeoutMs = 120_000) {
   ]);
 }
 
-async function handleExportReport(report, format) {
+async function handleExportReport(report, exportFormat) {
+  if (!SINGLE_EXTRACTED_REPORT_EXPORT_FORMATS.has(exportFormat)) {
+    Toast.error(`Unsupported extracted report export format: ${exportFormat}`);
+    return;
+  }
+
   let fullReport = report;
   try {
     const elements = await storage.loadReportElements(report.id);
@@ -63,7 +73,7 @@ async function handleExportReport(report, format) {
   const host   = sanitizeFilename(hostFromUrl(report.url));
 
   try {
-    if (format === 'json') {
+    if (exportFormat === 'json') {
       const json         = buildExtractedReportJson(fullReport);
       const safeFilename = sanitizeFilename(`report-${host}-${safeId}.json`);
       const res = await timedExport(api.exportFile({ format: 'json', data: json, filename: safeFilename }));
@@ -72,7 +82,7 @@ async function handleExportReport(report, format) {
       return;
     }
 
-    if (format === 'csv') {
+    if (exportFormat === 'csv') {
       const csv          = buildExtractedReportCsv(fullReport);
       const safeFilename = sanitizeFilename(`report-${host}-${safeId}.csv`);
       const res = await timedExport(api.exportFile({ format: 'csv', data: csv, filename: safeFilename }));
@@ -81,7 +91,7 @@ async function handleExportReport(report, format) {
       return;
     }
 
-    if (format === 'excel') {
+    if (exportFormat === 'excel') {
       const result = buildExtractedReportExcel(fullReport);
       if (!result.success) { Toast.error(`Excel build failed: ${result.error}`); return; }
       const raw          = result.data;
@@ -93,7 +103,7 @@ async function handleExportReport(report, format) {
       return;
     }
 
-    Toast.error(`Unknown format: ${format}`);
+    Toast.error(`Unknown format: ${exportFormat}`);
   } catch (err) {
     Toast.error(err.message ?? 'Export failed');
   }
@@ -105,7 +115,11 @@ async function handleExportAllReports() {
 
   if (reports.length === 0) { Toast.info('No reports to export'); return; }
 
-  const format = getBulkExportFormat();
+  const exportFormat = getBulkExportFormat();
+  if (!BULK_EXTRACTED_REPORT_EXPORT_FORMATS.has(exportFormat)) {
+    Toast.error('Unsupported bulk extracted report export format');
+    return;
+  }
 
   let fullReports;
   try {
@@ -123,7 +137,7 @@ async function handleExportAllReports() {
   const ts = new Date().toISOString().slice(0, 10);
 
   try {
-    if (format === 'json') {
+    if (exportFormat === 'json') {
       const json         = buildAllExtractedReportsJson(fullReports);
       const safeFilename = sanitizeFilename(`all-reports-${ts}.json`);
       const res = await timedExport(api.exportFile({ format: 'json', data: json, filename: safeFilename }));
@@ -132,7 +146,7 @@ async function handleExportAllReports() {
       return;
     }
 
-    if (format === 'csv') {
+    if (exportFormat === 'csv') {
       const csv          = buildAllExtractedReportsCsv(fullReports);
       const safeFilename = sanitizeFilename(`all-reports-${ts}.csv`);
       const res = await timedExport(api.exportFile({ format: 'csv', data: csv, filename: safeFilename }));
@@ -141,7 +155,7 @@ async function handleExportAllReports() {
       return;
     }
 
-    if (format === 'xlsx') {
+    if (exportFormat === 'xlsx') {
       const result = buildAllExtractedReportsExcel(fullReports);
       if (!result.success) { Toast.error(`Excel build failed: ${result.error}`); return; }
       const raw          = result.data;
@@ -153,7 +167,7 @@ async function handleExportAllReports() {
       return;
     }
 
-    Toast.error(`Unknown format: ${format}`);
+    Toast.error(`Unknown format: ${exportFormat}`);
   } catch (err) {
     Toast.error(err.message ?? 'Export failed');
   }

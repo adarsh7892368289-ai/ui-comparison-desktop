@@ -1,6 +1,7 @@
 import { sanitize } from '../utils/sanitize.js';
-import { relativeTime } from '../utils/time.js';
+import { relativeTime, absoluteCalendarDate } from '../utils/time.js';
 import { iconArrowUp, iconArrowUpDown, iconFileDown, iconTarget, iconTrash2 } from '../utils/icons.js';
+import { SINGLE_EXTRACTED_REPORT_EXPORT_MENU } from '@core/export/extraction-exporters/extracted-report-export-catalog.js';
 import { handleExportReport } from '../application/export-workflow.js';
 import { Modal } from './modal.js';
 
@@ -14,8 +15,8 @@ const DATE_GROUP_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug
 const DEFAULT_VIEW_CONFIG = {
   density: 'default',
   groupBy: null,
-  sortBy: 'date',
-  sortDir: 'desc',
+  sortField: 'date',
+  sortDirection: 'desc',
 };
 
 function _el(tag, cls, text) {
@@ -41,9 +42,13 @@ function _envTag(url) {
   return STAGE_RE.test(_hostFromUrl(url).toLowerCase()) ? 'STAGE' : 'PROD';
 }
 
-function _filterLabel(filters) {
-  if (!filters) return null;
-  return filters.class || filters.id || filters.tag || null;
+function _filterChipPairs(filters) {
+  if (!filters || typeof filters !== 'object') return [];
+  const out = [];
+  if (filters.class) out.push(['class', filters.class]);
+  if (filters.id) out.push(['id', filters.id]);
+  if (filters.tag) out.push(['tag', filters.tag]);
+  return out;
 }
 
 export class ReportList {
@@ -91,18 +96,50 @@ export class ReportList {
     this._render();
   }
 
-  /**
-   * @param {Partial<{
-   *   density: 'default' | 'compact' | 'comfortable',
-   *   groupBy: string | null,
-   *   sortBy: 'date' | 'elements' | 'name' | string,
-   *   sortDir: 'asc' | 'desc'
-   * }>} patch
-   */
+  getViewConfig() {
+    return { ...this._config };
+  }
+
   setViewConfig(patch) {
+    const prevScroll = this._viewport.scrollTop;
+    const prevOffsets = this._offsets.length ? this._offsets.slice() : [];
+    const prevDensity = this._config.density;
+    const prevRowCount = this._rowItems.length;
+    const prevCardH = this._cardHeight();
+
     Object.assign(this._config, patch);
     this._updateDensityClass();
     this._buildRowItems();
+
+    if (
+      patch.density !== undefined &&
+      patch.density !== prevDensity &&
+      prevOffsets.length > 0 &&
+      prevOffsets.length === this._offsets.length &&
+      prevRowCount === this._rowItems.length
+    ) {
+      let anchor = 0;
+      let frac = 0;
+      for (let i = 0; i < prevOffsets.length; i++) {
+        const rowH = this._rowItems[i].type === 'header' ? HEADER_HEIGHT : prevCardH;
+        const top = prevOffsets[i];
+        const bot = top + rowH;
+        if (bot > prevScroll) {
+          anchor = i;
+          const denom = Math.max(1, rowH);
+          frac = Math.max(0, Math.min(1, (prevScroll - top) / denom));
+          break;
+        }
+        anchor = i;
+        frac = 1;
+      }
+      const newRowH = this._rowItems[anchor].type === 'header' ? HEADER_HEIGHT : this._cardHeight();
+      const viewH = this._viewportCssHeight();
+      const maxScroll = Math.max(0, this._totalHeight - viewH);
+      const nextScroll = this._offsets[anchor] + frac * newRowH;
+      this._viewport.scrollTop = Math.min(Math.max(0, nextScroll), maxScroll);
+    }
+
     this._clampFocusedLogicalIndex();
     this._render();
   }
@@ -118,7 +155,6 @@ export class ReportList {
     }
   }
 
-  /** No-op — selection styling removed; baseline/compare roles only. Kept for callers. */
   setSelected() {
   }
 
@@ -151,9 +187,9 @@ export class ReportList {
   }
 
   _buildRowItems() {
-    const { groupBy, sortBy, sortDir } = this._config;
+    const { groupBy, sortField, sortDirection } = this._config;
     const q = this._query.toLowerCase().trim();
-    const dir = sortDir === 'asc' ? 1 : -1;
+    const dir = sortDirection === 'asc' ? 1 : -1;
 
     let filtered = q
       ? this._reports.filter(r => {
@@ -170,11 +206,11 @@ export class ReportList {
 
     filtered.sort((a, b) => {
       let va, vb;
-      if (sortBy === 'elements') {
+      if (sortField === 'elements') {
         va = a.totalElements ?? 0; vb = b.totalElements ?? 0;
         return (va < vb ? -1 : va > vb ? 1 : 0) * dir;
       }
-      if (sortBy === 'name') {
+      if (sortField === 'name') {
         va = (a.name ?? _hostFromUrl(a.url)).toLowerCase();
         vb = (b.name ?? _hostFromUrl(b.url)).toLowerCase();
         return va < vb ? -dir : va > vb ? dir : 0;
@@ -325,12 +361,25 @@ export class ReportList {
     return c;
   }
 
+  _appendEnvBadge(headerRow, showEnvBadge, env, report) {
+    if (!showEnvBadge || !env) return;
+    const badge = _el('span', `env-badge env-badge--${env.toLowerCase()}`, env);
+    const envTitle = report.environment?.trim()
+      ? report.environment.trim()
+      : env === 'STAGE'
+        ? 'Staging environment'
+        : 'Production environment';
+    badge.title = envTitle;
+    headerRow.appendChild(badge);
+  }
+
   _renderCard(report, displayIndex, showEnvBadge, rowIndex, isRovingFocused) {
     const host = _hostFromUrl(report.url);
     const path = _lastPathSegment(report.url);
     const env = _envTag(report.url);
     const isBaseline = report.id === this._baselineId;
     const isCompare = report.id === this._compareId;
+    const density = this._config.density;
 
     const card = _el('div', 'report-card');
     card.dataset.reportId = report.id;
@@ -358,56 +407,76 @@ export class ReportList {
     body.style.cursor = 'pointer';
     body.title = report.url || '';
 
-    const headerRow = _el('div', 'report-card-header');
-    headerRow.title = report.url || '';
-    if (showEnvBadge && env) {
-      const badge = _el('span', `env-badge env-badge--${env.toLowerCase()}`, env);
-      const envTitle = report.environment?.trim()
-        ? report.environment.trim()
-        : env === 'STAGE'
-          ? 'Staging environment'
-          : 'Production environment';
-      badge.title = envTitle;
-      headerRow.appendChild(badge);
+    if (density === 'compact') {
+      const row = _el('div', 'report-card-line report-card-line--compact');
+      const indexSpan = _el('span', 'report-card-index report-card-index--lead', `R${displayIndex}`);
+      indexSpan.title = report.url || '';
+      row.appendChild(indexSpan);
+      this._appendEnvBadge(row, showEnvBadge, env, report);
+      const hostSpan = _el('span', 'report-card-host report-card-host--secondary', host);
+      hostSpan.title = report.url || '';
+      row.appendChild(hostSpan);
+      body.appendChild(row);
+    } else {
+      const line1 = _el('div', 'report-card-line report-card-line--primary');
+      line1.title = report.url || '';
+      const indexSpan = _el('span', 'report-card-index report-card-index--lead', `R${displayIndex}`);
+      indexSpan.title = report.url || '';
+      line1.appendChild(indexSpan);
+      this._appendEnvBadge(line1, showEnvBadge, env, report);
+      const hostSpan = _el('span', 'report-card-host', host);
+      hostSpan.title = report.url || '';
+      line1.appendChild(hostSpan);
+      body.appendChild(line1);
+
+      const line2 = _el('div', 'report-card-line report-card-line--meta');
+      line2.title = report.url || '';
+      const pathSpan = _el('span', 'meta-path', path);
+      pathSpan.title = report.url || '';
+      line2.appendChild(pathSpan);
+      line2.appendChild(_el('span', 'meta-sep', '·'));
+      if (density === 'comfortable') {
+        line2.appendChild(_el('span', '', `${report.totalElements ?? 0} elements`));
+      } else {
+        line2.appendChild(_el('span', '', `${report.totalElements ?? 0} el`));
+      }
+      const dateStr = density === 'comfortable'
+        ? absoluteCalendarDate(report.timestamp)
+        : relativeTime(report.timestamp);
+      if (dateStr) {
+        line2.appendChild(_el('span', 'meta-sep', '·'));
+        line2.appendChild(_el('span', 'report-card-timestamp', dateStr));
+      }
+      if (report.source === 'imported' && density === 'default') {
+        line2.appendChild(_el('span', 'meta-sep', '·'));
+        const ib = _el('span', 'meta-imported-badge');
+        ib.innerHTML = `${iconArrowUp(12)}<span>imported</span>`;
+        ib.title = 'Uploaded from file';
+        line2.appendChild(ib);
+      }
+      if (report.source === 'imported' && density === 'comfortable') {
+        line2.appendChild(_el('span', 'meta-sep', '·'));
+        const ib = _el('span', 'report-card-chip report-card-chip--imported');
+        ib.innerHTML = `${iconArrowUp(12)}<span>Imported</span>`;
+        ib.title = 'Uploaded from file';
+        line2.appendChild(ib);
+      }
+      body.appendChild(line2);
+
+      if (density === 'comfortable') {
+        const pairs = _filterChipPairs(report.filters);
+        if (pairs.length > 0) {
+          const line3 = _el('div', 'report-card-line report-card-line--chips');
+          for (const [k, v] of pairs) {
+            const chip = _el('span', 'report-card-chip', `${k}: ${v}`);
+            chip.title = 'Extraction filter';
+            line3.appendChild(chip);
+          }
+          body.appendChild(line3);
+        }
+      }
     }
-    const titleLine = _el('div', 'report-card-title-line');
-    titleLine.title = report.url || '';
-    const hostSpan = _el('span', 'report-card-host', host);
-    hostSpan.title = report.url;
-    titleLine.appendChild(hostSpan);
-    const indexSpan = _el('span', 'report-card-index', `R${displayIndex}`);
-    indexSpan.title = report.url || '';
-    titleLine.appendChild(indexSpan);
-    headerRow.appendChild(titleLine);
-    body.appendChild(headerRow);
 
-    const meta = _el('div', 'report-card-meta');
-    meta.title = report.url || '';
-    const pathSpan = _el('span', 'meta-path', path);
-    pathSpan.title = report.url || '';
-    meta.appendChild(pathSpan);
-    meta.appendChild(_el('span', 'meta-sep', '·'));
-    meta.appendChild(_el('span', '', `${report.totalElements ?? 0} el`));
-    meta.appendChild(_el('span', 'meta-sep', '·'));
-    meta.appendChild(_el('span', 'report-card-timestamp', relativeTime(report.timestamp)));
-
-    const filter = _filterLabel(report.filters);
-    if (filter) {
-      meta.appendChild(_el('span', 'meta-sep', '·'));
-      const fs = _el('span', 'meta-filter', filter);
-      fs.title = 'Extraction filter';
-      meta.appendChild(fs);
-    }
-
-    if (report.source === 'imported') {
-      meta.appendChild(_el('span', 'meta-sep', '·'));
-      const ib = _el('span', 'meta-imported-badge');
-      ib.innerHTML = `${iconArrowUp(12)}<span>imported</span>`;
-      ib.title = 'Uploaded from file';
-      meta.appendChild(ib);
-    }
-
-    body.appendChild(meta);
     body.addEventListener('click', () => this._cb.onSelect?.(report));
     card.appendChild(body);
 
@@ -433,15 +502,18 @@ export class ReportList {
     summary.innerHTML = iconFileDown(14);
     summary.title = 'Export options';
     summary.setAttribute('aria-label', 'Export report options');
+    summary.addEventListener('click', e => { e.stopPropagation(); });
     details.appendChild(summary);
     const menu = _el('div', 'export-menu');
     menu.setAttribute('role', 'menu');
-    for (const [fmt, lbl] of [['excel', 'Excel'], ['json', 'JSON'], ['csv', 'CSV']]) {
-      const btn = _el('button', 'export-menu-item', lbl);
+    for (const { format, label } of SINGLE_EXTRACTED_REPORT_EXPORT_MENU) {
+      const btn = _el('button', 'export-menu-item', label);
       btn.setAttribute('role', 'menuitem');
-      btn.addEventListener('click', () => {
+      btn.type = 'button';
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
         details.removeAttribute('open');
-        handleExportReport(report, fmt);
+        handleExportReport(report, format);
       });
       menu.appendChild(btn);
     }
@@ -460,11 +532,11 @@ export class ReportList {
 
     const badge = _el('span', 'report-role-badge');
     if (isBaseline) {
-      badge.classList.add('report-role-badge--baseline');
+      badge.classList.add('report-role-badge--baseline', 'report-role-badge--visible');
       badge.textContent = 'B';
       badge.title = 'Baseline report';
     } else if (isCompare) {
-      badge.classList.add('report-role-badge--compare');
+      badge.classList.add('report-role-badge--compare', 'report-role-badge--visible');
       badge.textContent = 'C';
       badge.title = 'Compare report';
     }
@@ -603,30 +675,15 @@ export class ReportList {
         badge = _el('span', 'report-role-badge');
         card.appendChild(badge);
       }
-      const hadVisible = badge.classList.contains('report-role-badge--visible');
       badge.classList.remove('report-role-badge--baseline', 'report-role-badge--compare');
       if (needsBaseline) {
-        badge.classList.add('report-role-badge--baseline');
+        badge.classList.add('report-role-badge--baseline', 'report-role-badge--visible');
         badge.textContent = 'B';
         badge.title = 'Baseline report';
-        if (!hadVisible) {
-          requestAnimationFrame(() => {
-            badge.classList.add('report-role-badge--visible');
-          });
-        } else {
-          badge.classList.add('report-role-badge--visible');
-        }
       } else if (needsCompare) {
-        badge.classList.add('report-role-badge--compare');
+        badge.classList.add('report-role-badge--compare', 'report-role-badge--visible');
         badge.textContent = 'C';
         badge.title = 'Compare report';
-        if (!hadVisible) {
-          requestAnimationFrame(() => {
-            badge.classList.add('report-role-badge--visible');
-          });
-        } else {
-          badge.classList.add('report-role-badge--visible');
-        }
       } else {
         badge.textContent = '';
         badge.title = '';

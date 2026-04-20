@@ -1,6 +1,5 @@
 .result-panel {
   animation: result-panel-enter var(--dur-base) var(--ease-decelerate) both;
-  padding-bottom: 64px;
 }
 
 @keyframes result-panel-enter {
@@ -248,23 +247,10 @@
   margin-bottom: var(--space-4);
 }
 
-.rp-no-diffs .rp-inline-icon,
-.rp-ambiguous-note .rp-inline-icon {
+.rp-no-diffs .rp-inline-icon {
   display: inline-flex;
   flex-shrink: 0;
   color: inherit;
-}
-
-.rp-ambiguous-note {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  font-size: var(--text-sm);
-  color: var(--color-warning);
-  background: var(--color-warning-subtle);
-  border-radius: var(--radius-sm);
-  margin-bottom: var(--space-3);
 }
 
 .result-actions {
@@ -272,14 +258,13 @@
   flex-direction: row;
   justify-content: space-between;
   align-items: center;
-  position: fixed;
-  bottom: var(--status-bar-height);
-  right: 0;
-  width: calc(100% - var(--sidebar-width, 300px));
+  position: sticky;
+  bottom: 0;
+  margin-top: var(--space-4);
   background: var(--color-surface-base);
-  padding: 12px 16px;
+  padding: var(--space-3) var(--space-4);
   border-top: 1px solid var(--color-border-subtle);
-  z-index: 10;
+  z-index: 13;
 }
 
 .export-format-row {
@@ -294,6 +279,40 @@
   text-align: center;
   color: var(--color-text-secondary);
   font-size: var(--text-sm);
+}
+
+.result-empty-state--idle.result-empty-state--compact {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+}
+
+.result-empty-state--idle.result-empty-state--compact .result-empty-icon {
+  flex-shrink: 0;
+  margin: 0;
+  color: var(--color-text-tertiary);
+}
+
+.result-empty-state--idle.result-empty-state--compact .result-empty-compact-copy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.result-empty-state--idle.result-empty-state--compact .result-empty-title {
+  margin: 0;
+}
+
+.result-empty-state--idle.result-empty-state--compact .result-empty-hint {
+  margin: 0;
+  max-width: none;
 }
 
 .result-empty-state--idle .result-empty-icon {

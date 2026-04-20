@@ -1,5 +1,22 @@
 # UI Comparison Desktop
 
+## Table of contents
+
+- [What this system does](#what-this-system-does)
+- [Architecture overview](#architecture-overview)
+- [Repository map](#repository-map)
+- [Repository root (build, tooling, docs)](#repository-root-build-tooling-docs)
+- [Package scripts](#package-scripts)
+- [Dependencies](#dependencies)
+- [Complete file index under `src/`](#complete-file-index-under-src)
+- [Data flow: end to end](#data-flow-end-to-end)
+- [Core subsystems - deep dives](#core-subsystems-deep-dives)
+- [Getting started](#getting-started)
+- [Development workflows](#development-workflows)
+- [Debugging guide](#debugging-guide)
+- [Key engineering decisions](#key-engineering-decisions)
+- [Critical risk assessment](#critical-risk-assessment)
+
 ## What This System Does
 
 UI Comparison Desktop is an Electron application that captures the complete DOM structure and computed CSS of any web page using Playwright, then pairs elements across two captures and diffs every tracked CSS property to produce a severity-ranked comparison report. It exists because screenshot-based visual regression tools cannot tell you *which element changed* or *which CSS property caused the change* — this tool operates at the semantic DOM level, producing per-element, per-property diffs with configurable tolerances, confidence-scored matching, and automatic cascade suppression to eliminate false positives caused by CSS inheritance.
@@ -40,6 +57,10 @@ core (extraction, comparison, normalization, export)     infrastructure (IDB, lo
 **Main resolve aliases:** `@core`, `@config`, `@infra` (same folders).
 
 The renderer entry `src/renderer/app.js` is written as **ES modules**; it imports `logger` and `errorTracker` from infrastructure on startup, then wires components and workflows on `DOMContentLoaded`.
+
+### Main process hardening
+
+`src/main/index.js` calls `app.enableSandbox()` so renderer processes run in Chromium’s sandbox. Preload uses `contextBridge` only (no `nodeIntegration` in the renderer); the renderer talks to Node capabilities exclusively through the typed `window.electronAPI` surface from `preload.js`.
 
 ### Dual-Process Electron Split
 
@@ -94,7 +115,9 @@ All IPC communication uses named channels defined in `src/main/ipc-channels.js`.
 
 ## Repository Map
 
-The tree below matches the **current** `src/` layout (every file under `src/` is listed; **83** files). Build scripts and webpack configs live at the **repository root**, not inside `src/`.
+The tree below matches the **current** `src/` layout (every file under `src/` is listed; **85** files). Build scripts and webpack configs live at the **repository root**, not inside `src/`.
+
+For a plain sorted list of every path under `src/`, see [Complete file index under `src/`](#complete-file-index-under-src).
 
 ### `src/` — application source
 
@@ -145,7 +168,8 @@ src/
 │   │   │   └── report-transformer.js # BFS cascade suppression, content intelligence,
 │   │   │                              # impact scoring, deduplication, grouped report building.
 │   │   └── extraction-exporters/
-│   │       └── report-exporter.js # Export extraction reports as CSV/JSON/Excel.
+│   │       ├── extracted-report-export-catalog.js # Frozen menus + format sets for single vs bulk extraction exports.
+│   │       └── report-exporter.js # Builds CSV/JSON/Excel payloads for one or all saved extraction reports.
 │   │
 │   ├── normalization/
 │   │   ├── cache.js             # Dual LRU cache: absolute (context-free) + relative (context-dependent).
@@ -190,12 +214,11 @@ src/
     ├── index.html               # Main HTML template with all section markup.
     ├── application/
     │   ├── compare-workflow.js  # Loads elements from IDB, invokes IPC, persists results, cache by pair+mode.
-    │   ├── export-workflow.js   # Format-specific export handlers (HTML/CSV/JSON/Excel).
+    │   ├── export-workflow.js   # Comparison exports (HTML/CSV/JSON/Excel) + single/bulk extraction exports; timed IPC to disk.
     │   ├── import-workflow.js   # Per-slot import JSON / CSV / Excel (.xlsx, .xls) → parse → save to IDB.
     │   └── report-manager.js    # Init, WAL replay, report list, extraction, combobox wiring, context menu.
     ├── components/
-    │   ├── app-shell.js         # Accordion navigation, breadcrumb, panel toggle.
-    │   ├── command-palette.js   # Ctrl+K command palette with fuzzy search.
+    │   ├── app-shell.js         # Accordion, `#left-panel` width/collapse (`#panel-toggle-btn`), resize handle.
     │   ├── modal.js             # Promise-based confirm dialog.
     │   ├── progress-bar.js      # Progress bar show/update/hide.
     │   ├── report-list.js       # Virtual-scroll report list with grouping, sorting, density.
@@ -203,15 +226,17 @@ src/
     │   ├── result-panel.js      # Comparison result rendering: severity bars, coverage, actions.
     │   ├── status-bar.js        # Bottom status bar: report count, phase indicator, shortcuts.
     │   ├── system-banner.js     # Persistent warning/error banner for storage degradation.
-    │   └── toast.js             # Notification toasts (success/error/warning/info).
+    │   ├── toast.js             # Notification toasts (success/error/warning/info).
+    │   └── tooltip/
+    │       └── tooltip.js       # `attachTooltip(trigger, getText)` — positioned hover hints using design tokens.
     ├── stubs/
     │   └── electron.js          # No-op Electron API stubs for webpack renderer bundle.
     ├── styles/
     │   ├── tokens.css           # Design tokens: colors, spacing, typography, shadows.
     │   ├── base.css             # Reset, body, typography, form elements.
-    │   ├── shell.css            # App shell layout: toolbar, left panel, main content, status bar.
+    │   ├── shell.css            # App shell layout: banner slot, left panel, main content, status bar.
     │   ├── components.css       # Buttons, cards, badges, modals, toasts, toggles.
-    │   ├── navigation.css       # Accordion nav sections, breadcrumb, command palette.
+    │   ├── navigation.css       # Accordion nav sections, panel toggle.
     │   ├── report-list.css      # Virtual scroll viewport, report cards, export dropdowns.
     │   └── result-panel.css     # Result panel: severity bars, coverage meters, element rows.
     └── utils/
@@ -220,19 +245,63 @@ src/
         └── time.js              # Relative time formatting (just now, 5m ago, 2h ago, 3d ago).
 ```
 
-### Repository root (build, packaging, checks)
+### Repository root (build, tooling, docs)
 
-These files are **not** under `src/` but define how the app is built and shipped:
+These paths are **not** under `src/` but define how the app is built, linted, packaged, and optionally documented:
 
 | Path | Role |
 |------|------|
-| `scripts/check-env.js` | `prebuild`: requires `PLAYWRIGHT_BROWSERS_PATH` and a `chromium-*` folder inside it. |
-| `webpack.main.config.js` | Main + preload → `dist/index.js`, `dist/preload.js` (`electron-main`, Playwright external). |
-| `webpack.renderer.config.js` | Renderer → `dist/renderer/app.js` (`web`), copies `index.html` and `styles/`. |
-| `webpack.extractor.config.js` | In-page bundle → `dist/extractor-bundle.js` (UMD `window.__uiCompare`). |
-| `electron-builder.config.js` | Installers to `dist-installer/`, `asarUnpack` for extractor + Playwright. |
-| `package.json` / `package-lock.json` | Scripts and dependency lockfile. |
-| `.eslintrc.json` | ESLint config (`npm run lint`). |
+| `scripts/check-env.js` | `prebuild`: requires `PLAYWRIGHT_BROWSERS_PATH` to exist, be readable, and contain a directory whose name starts with `chromium` (Playwright’s Chromium install). |
+| `webpack.main.config.js` | Main + preload → `dist/index.js`, `dist/preload.js` (`target: electron-main`; Playwright left external). Emits source maps in development. |
+| `webpack.renderer.config.js` | Renderer → `dist/renderer/app.js` (`target: web`). After emit, copies `src/renderer/index.html` and the full `src/renderer/styles/` tree into `dist/renderer/`. |
+| `webpack.extractor.config.js` | In-page bundle → `dist/extractor-bundle.js` (UMD global `window.__uiCompare`). |
+| `electron-builder.config.js` | Packaging: `asar: true` with `asarUnpack` for `dist/extractor-bundle.js`, `**/node_modules/playwright/**`, and `**/*.node` (native addons). Copies browser binaries from `${env.PLAYWRIGHT_BROWSERS_PATH}` into `extraResources` as `browsers/`. Output directory: `dist-installer/`. Windows NSIS + macOS DMG targets; `build/` holds `icon.ico`, `icon.icns`, and macOS entitlements plist (that folder is gitignored except placeholders — create it locally for branded builds). |
+| `package.json` / `package-lock.json` | Scripts, dependencies, and lockfile. |
+| `.eslintrc.json` | ESLint: `eslint:recommended`, `ecmaVersion: latest`, `sourceType: module`, ignores `dist/`, `node_modules/`, `out/`. |
+| `README.md` | This document (the only Markdown file intentionally tracked when using the repo’s `*.md` gitignore rule — adjust if you need other `.md` files versioned). |
+| `docs/specs/` | Optional design and implementation specs (for example the panel-toggle audit, component spec, design spec, systems research, and implementation plan). Not required at runtime. |
+
+**Build artifacts (`dist/`, not committed):** after `npm run build`, expect `dist/index.js`, `dist/preload.js`, `dist/extractor-bundle.js`, `dist/renderer/app.js`, `dist/renderer/index.html`, `dist/renderer/styles/*.css`, plus `.map` files when webpack devtool is enabled.
+
+**Installers (`dist-installer/`, not committed):** produced by `npm run dist` / `dist:win` / `dist:mac`.
+
+### Package scripts
+
+| Script | Command | Purpose |
+|--------|---------|---------|
+| `start` | `concurrently` | Runs `watch:main`, `watch:renderer`, and `electron .` together. |
+| `watch:main` | `webpack --config webpack.main.config.js --watch` | Rebuilds main + preload on change. |
+| `watch:renderer` | `webpack --config webpack.renderer.config.js --watch` | Rebuilds renderer and copies static assets on change. |
+| `prebuild` | `node scripts/check-env.js` | Runs automatically before `build`; validates Playwright browser path. |
+| `prepackage` | inline `node -e ...` | Ensures `PLAYWRIGHT_BROWSERS_PATH` is set before packaging (used by dist flow). |
+| `build:extractor` | webpack extractor config | Produces `dist/extractor-bundle.js` only. |
+| `build:main` | webpack main config | Produces `dist/index.js` + `dist/preload.js`. |
+| `build:renderer` | webpack renderer config | Produces `dist/renderer/app.js` and copies HTML/CSS. |
+| `build` | extractor + main + renderer | Full production compile of all three bundles. |
+| `smoke-test` | `electron . --smoke-test` | Exits early: verifies extractor bundle exists on candidate paths and `app.getVersion()` is non-empty. |
+| `lint` | `eslint .` | Static analysis for the whole repo (respecting ignore patterns). |
+| `format` | `prettier --write .` | Formats tracked files. |
+| `dist` | `npm run build && electron-builder` | Build + package for the current host OS. |
+| `dist:win` / `dist:mac` | build + `electron-builder --win/--mac` | Targeted installers. |
+| `install:browsers` | `playwright install chromium firefox webkit` | Installs all three browser families into `PLAYWRIGHT_BROWSERS_PATH`. |
+| `postinstall` | `electron-builder install-app-deps` | Prepares native deps after `npm install`. |
+
+### Dependencies
+
+| Package | Role in this codebase |
+|---------|------------------------|
+| `electron` | Desktop shell: main process, preload, Chromium renderer. |
+| `playwright` | Headless (or headed) browser automation for extraction, comparison screenshots, and CDP-driven capture where applicable. |
+| `electron-log` | Structured logging in the main process (`src/main/index.js` and related modules). |
+| `better-sqlite3` | Declared dependency; **no SQLite usage in current `src/`** — storage is IndexedDB in the renderer. May be reserved for future main-process persistence. |
+| `electron-updater` | Declared dependency; **not imported in current `src/`** — `electron-builder.config.js` includes a generic `publish` URL placeholder for future auto-update wiring. |
+| `xlsx` (SheetJS) | Excel import (`import-workflow.js`) and Excel export paths in comparison and extraction exporters. |
+| `webpack`, `webpack-cli`, `@babel/core`, `@babel/preset-env`, `babel-loader` | Compile all bundles. |
+| `concurrently` | Dev `npm start` orchestration. |
+| `cross-env` | Available for cross-platform env vars in scripts (see `package.json` if adopted). |
+| `electron-builder` | Installers and packaging. |
+| `eslint`, `prettier` | Lint and format. |
+| `fake-indexeddb` | DevDependency for **potential** unit tests against IndexedDB APIs; **not referenced in application `src/`** today. |
 
 ### Count check
 
@@ -242,7 +311,98 @@ To verify the map against disk (PowerShell):
 (Get-ChildItem -Path src -Recurse -File).Count
 ```
 
-Expect **83** (currently all files are `.js`, `.html`, or `.css`). If you add or remove modules, update the tree above and this number.
+Expect **85** (extensions under `src/`: `.js`, `.html`, `.css` only). If you add or remove modules, update the tree above, the [complete index](#complete-file-index-under-src), and this number.
+
+### Complete file index under `src/`
+
+Alphabetical list of every file under `src/` (85 paths):
+
+```
+src/config/defaults.js
+src/config/validator.js
+src/core/comparison/async-utils.js
+src/core/comparison/color-utils.js
+src/core/comparison/comparator.js
+src/core/comparison/comparison-modes.js
+src/core/comparison/differ.js
+src/core/comparison/keyframe-grouper.js
+src/core/comparison/matcher.js
+src/core/comparison/severity-analyzer.js
+src/core/comparison/url-compatibility.js
+src/core/export/comparison-exporters/csv-exporter.js
+src/core/export/comparison-exporters/excel-exporter.js
+src/core/export/comparison-exporters/html-exporter.js
+src/core/export/comparison-exporters/json-exporter.js
+src/core/export/export-utils/csv-utils.js
+src/core/export/export-utils/download-trigger.js
+src/core/export/export-utils/report-transformer.js
+src/core/export/extraction-exporters/extracted-report-export-catalog.js
+src/core/export/extraction-exporters/report-exporter.js
+src/core/extraction/_page_stubs_/electron-log.js
+src/core/extraction/_page_stubs_/electron.js
+src/core/extraction/attribute-collector.js
+src/core/extraction/dom-enrichment.js
+src/core/extraction/dom-traversal.js
+src/core/extraction/element-classifier.js
+src/core/extraction/extraction-filter.js
+src/core/extraction/extractor.js
+src/core/extraction/readiness-gate.js
+src/core/extraction/section-detector.js
+src/core/extraction/style-collector.js
+src/core/normalization/cache.js
+src/core/normalization/color-normalizer.js
+src/core/normalization/font-normalizer.js
+src/core/normalization/normalizer-engine.js
+src/core/normalization/shorthand-expander.js
+src/core/normalization/unit-normalizer.js
+src/core/selectors/css/generator.js
+src/core/selectors/css/strategies.js
+src/core/selectors/css/validator.js
+src/core/selectors/selector-engine.js
+src/core/selectors/selector-utils.js
+src/core/selectors/xpath/generator.js
+src/core/selectors/xpath/strategies.js
+src/core/selectors/xpath/validator.js
+src/infrastructure/error-tracker.js
+src/infrastructure/idb-repository.js
+src/infrastructure/logger.js
+src/infrastructure/performance-monitor.js
+src/main/index.js
+src/main/ipc-channels.js
+src/main/ipc-handlers.js
+src/main/playwright-manager.js
+src/main/preload.js
+src/main/protocol-handler.js
+src/renderer/app.js
+src/renderer/application/compare-workflow.js
+src/renderer/application/export-workflow.js
+src/renderer/application/import-workflow.js
+src/renderer/application/report-manager.js
+src/renderer/components/app-shell.js
+src/renderer/components/modal.js
+src/renderer/components/progress-bar.js
+src/renderer/components/report-list.js
+src/renderer/components/report-select-combobox.js
+src/renderer/components/result-panel.js
+src/renderer/components/status-bar.js
+src/renderer/components/system-banner.js
+src/renderer/components/toast.js
+src/renderer/components/tooltip/tooltip.js
+src/renderer/index.html
+src/renderer/state.js
+src/renderer/stubs/electron.js
+src/renderer/styles/base.css
+src/renderer/styles/components.css
+src/renderer/styles/navigation.css
+src/renderer/styles/report-list.css
+src/renderer/styles/result-panel.css
+src/renderer/styles/shell.css
+src/renderer/styles/tokens.css
+src/renderer/ui.js
+src/renderer/utils/icons.js
+src/renderer/utils/sanitize.js
+src/renderer/utils/time.js
+```
 
 ## Data Flow: End to End
 
@@ -365,7 +525,7 @@ This traces a single comparison operation from user action to rendered result.
 39. **Renderer receives result:** Saves comparison metadata and diffs to IndexedDB (`saveComparison(meta, slimResults)`). Saves visual blobs, keyframes, and rect records separately. Dispatches `COMPARISON_COMPLETE` to state.
 40. `ResultPanel.render()` builds the result panel: match rate circle, element coverage bar (unchanged/modified/added/removed segments), severity breakdown bars, unmatched element sections, export/report action buttons.
 
-## Core Subsystems — Deep Dives
+## Core Subsystems - Deep Dives
 
 ### DOM Snapshot Capture Pipeline
 
@@ -477,21 +637,21 @@ Renderer subscriptions: `report-manager.js` registers `onContextAction` during `
 
 **Bridge hard fail:** If `window.electronAPI` is missing (misconfigured preload), `app.js` replaces the body with a fatal message and throws — the app does not run half-connected.
 
-**State (`src/renderer/state.js`):** Single store with `dispatch` / `subscribe` / `getState`. Notable actions include `REPORTS_LOADED`, `REPORT_DELETED`, `EXTRACTION_PROGRESS`, `COMPARISON_STARTED` / `COMPARISON_PROGRESS` / `COMPARISON_COMPLETE` / `COMPARISON_ERROR`, `BASELINE_SELECTED`, `COMPARE_SELECTED`, `MODE_CHANGED`, `RESET_COMPARISON`, `DISMISS_ERROR` (resets phase while preserving reports and selections), `FILTERS_UPDATED`, and `EXPORT_STARTED` / `EXPORT_COMPLETE` / `EXPORT_ERROR`. `phase` drives window title updates via `electronAPI.setWindowTitle` in the `subscribe` callback in `app.js`.
+**State (`src/renderer/state.js`):** Single store with `dispatch` / `subscribe` / `getState`. Notable actions include `REPORTS_LOADED`, `REPORT_DELETED`, `EXTRACTION_PROGRESS`, `COMPARISON_STARTED` / `COMPARISON_PROGRESS` / `COMPARISON_COMPLETE` / `COMPARISON_ERROR`, `BASELINE_SELECTED`, `COMPARE_SELECTED`, `MODE_CHANGED`, `RESET_COMPARISON`, `DISMISS_ERROR` (resets phase while preserving reports and selections), `FILTERS_UPDATED`, and `EXPORT_STARTED` / `EXPORT_COMPLETE` / `EXPORT_ERROR`. The window title stays **UI Comparison**; `electronAPI.setWindowTitle` is called once at renderer startup in `app.js` (comparison context appears in the status bar center, not the title bar).
 
-**Toolbar and shell:** `app-shell.js` drives the Extract / Compare accordion, breadcrumb (including “Results” when `phase === 'done'`), and left panel collapse (`#panel-toggle-btn`). `status-bar.js` shows phase and report count.
+**Toolbar and shell:** `app-shell.js` drives the Extract / Compare accordion and the left reports column (`#left-panel`) width and collapse via `#panel-toggle-btn`, `--sidebar-width`, and `localStorage` keys `sidebar-width` / `sidebar-collapsed`. `status-bar.js` shows phase and report count.
 
 **Sidebar list:** `report-list.js` virtual-scrolls saved reports with **group by** (none / host / date / environment), **sort by** (date / elements / name), **density** toggle (compact 44px, default 64px, comfortable 80px), and **search** (`#search-reports`, debounced). Right-click (when available) calls `electronAPI.showContextMenu({ reportId })`; the native menu sends actions back through `electronAPI.onContextAction`, handled in `initializeApp()` to set baseline/compare, export (JSON / Excel / CSV / HTML), or delete.
 
-**Bulk actions:** Export all reports (`#export-all-btn` + `#export-all-format`) and delete all (`#delete-all-btn` in overflow menu) live in the sidebar card.
+**Bulk actions:** Export all reports (`#export-all-btn` + `#export-all-format`) and delete all (`#delete-all-btn` in overflow menu) live in the sidebar card. Bulk extraction export format (`xlsx` \| `json` \| `csv`) is constrained by `BULK_EXTRACTED_REPORT_EXPORT_FORMATS` in `extracted-report-export-catalog.js` and persisted in `localStorage` under the key `sidebar-export-format` (see `export-workflow.js`). Per-report extraction exports use `SINGLE_EXTRACTED_REPORT_EXPORT_FORMATS` (`excel` \| `json` \| `csv` labels vs disk formats are normalized inside the workflow).
 
 **Compare UX:** Segmented **dynamic** vs **static** mode, **Visual Diff** checkbox (`#visual-diff-toggle` → `includeScreenshots`), per-slot **Import file** inputs.
 
-**Command palette and shortcuts (`app.js`):** **Ctrl+K** / **⌘K** toggles the palette. With focus outside inputs: **E** / **C** switch sections, **R** focuses the report list search field, **/** also focuses search, **Escape** clears search text and re-renders the list. **Ctrl+Shift+D** on Windows/Linux or **⌘⇧D** on macOS opens a performance overlay fed by `getPerfMetrics()`. **Enter** dismisses error phase when not in an input.
+**Keyboard shortcuts (`app.js`):** With focus outside typing contexts (`INPUT`, `TEXTAREA`, `SELECT`, `contentEditable`): **E** / **C** switch sections, **/** focuses `#search-reports`, **Escape** clears search text and re-renders the list when the search box has a value. **Ctrl+B** / **⌘B** toggles the sidebar. **Ctrl+Shift+D** on Windows/Linux or **⌘⇧D** on macOS opens a performance overlay fed by `getPerfMetrics()`. **Enter** dismisses error phase when not in a typing context.
 
 **Token System:** `src/renderer/styles/tokens.css` defines CSS custom properties for colors (primary, neutral, semantic), spacing (4px base scale), typography (Inter + JetBrains Mono), border-radius, shadows, and z-index layers. Component styles are expected to use these tokens.
 
-**CSS Grid Shell:** `src/renderer/styles/shell.css` defines the app layout as a CSS Grid (toolbar, system banner slot, main content, status bar; sidebar + main column).
+**CSS Grid Shell:** `src/renderer/styles/shell.css` defines the app layout as a CSS Grid (system banner slot, main content, status bar; sidebar + main column). On macOS, `html.platform-darwin #app-root` adds left padding for the traffic-light region.
 
 **Result Panel:** `src/renderer/components/result-panel.js` renders comparison results (match rate, coverage, severity, unmatched sections, exports / full report).
 
@@ -499,9 +659,14 @@ Renderer subscriptions: `report-manager.js` registers `onContextAction` during `
 
 ### Prerequisites
 
-- **Node.js** 18+ (LTS recommended)
-- **Windows 10+**, **macOS 12+**, or **Linux** (Ubuntu 20.04+)
-- **PLAYWRIGHT_BROWSERS_PATH** environment variable set to a directory where Playwright browser binaries will be stored
+- **Node.js** 18+ (LTS recommended; the repo uses modern ES modules and current ESLint `ecmaVersion: latest`).
+- **Windows 10+**, **macOS 12+**, or **Linux** (Ubuntu 20.04+).
+- **PLAYWRIGHT_BROWSERS_PATH** environment variable set to a directory where Playwright browser binaries will be stored (required for `prebuild`, `prepackage`, and `electron-builder` extra resources).
+- **Pinned major versions** (see `package.json` for exact semver): **Electron** `^41.x`, **Playwright** `^1.48.x`, **electron-builder** `^26.x`, **webpack** `^5.x`, **Babel** `^7.x`.
+
+### Automated checks
+
+There is **no Jest/Mocha test script** in `package.json` today. The only automated check wired as an npm script is **`npm run smoke-test`** (extractor bundle presence + `app.getVersion()`). **`fake-indexeddb`** is present as a devDependency for optional future unit tests but is not imported by the app sources.
 
 ### Install
 

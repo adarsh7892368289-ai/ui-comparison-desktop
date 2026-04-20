@@ -2,14 +2,6 @@
 
 const STATUS_CLASSES = ['status--active', 'status--success', 'status--error'];
 
-function _isMacPlatform() {
-  const p = typeof window !== 'undefined' ? window.electronAPI?.platform : undefined;
-  if (typeof p === 'string') {
-    return p === 'darwin';
-  }
-  return typeof navigator !== 'undefined' && navigator.platform.startsWith('Mac');
-}
-
 export class StatusBar {
   constructor() {
     this._left   = document.querySelector('#status-bar .status-left');
@@ -28,46 +20,20 @@ export class StatusBar {
     return k;
   }
 
-  _appendModPlusKey(frag, keyLetter) {
-    const isMac = _isMacPlatform();
-    frag.appendChild(this._kbd(isMac ? '⌘' : 'Ctrl'));
-    frag.appendChild(document.createTextNode('+'));
-    frag.appendChild(this._kbd(keyLetter));
-  }
-
   updateRightHint(state) {
     if (!this._right) { return; }
     this._right.replaceChildren();
 
     const phase = state?.phase ?? 'idle';
-    const reportCount = state?.reports?.length ?? 0;
 
-    if (phase === 'idle' && reportCount === 0) {
+    if (phase === 'idle' || phase === 'extracting' || phase === 'done') {
       return;
     }
 
     const frag = document.createDocumentFragment();
 
-    if (phase === 'idle' && reportCount > 0) {
-      this._appendModPlusKey(frag, 'K');
-      frag.appendChild(document.createTextNode(' Quick actions'));
-      this._right.appendChild(frag);
-      return;
-    }
-
-    if (phase === 'extracting') {
-      return;
-    }
-
     if (phase === 'comparing') {
       frag.appendChild(document.createTextNode('Comparing…'));
-      this._right.appendChild(frag);
-      return;
-    }
-
-    if (phase === 'done') {
-      this._appendModPlusKey(frag, 'K');
-      frag.appendChild(document.createTextNode(' Export or search'));
       this._right.appendChild(frag);
       return;
     }

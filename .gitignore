@@ -48,3 +48,5 @@ project-structure.txt
 
 # Ignore zip files
 *.zip
+
+.docs

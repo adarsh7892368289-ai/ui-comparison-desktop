@@ -9,26 +9,54 @@ import {
   updateProgress,
   syncCompareButton,
 } from '../ui.js';
+import { SINGLE_EXTRACTED_REPORT_EXPORT_FORMATS } from '@core/export/extraction-exporters/extracted-report-export-catalog.js';
 import { handleExportReport } from './export-workflow.js';
 import { tryLoadCachedComparison } from './compare-workflow.js';
 import { relativeTime } from '../utils/time.js';
 import { createReportList } from '../components/report-list.js';
+import { attachTooltip } from '../components/tooltip/tooltip.js';
 import {
   wireReportSelect,
   refreshReportSelectPanel,
   syncReportSelectTrigger,
 } from '../components/report-select-combobox.js';
-import { iconArrowDown, iconArrowUp, iconLayoutGrid, iconSpinner } from '../utils/icons.js';
+import {
+  iconArrowUpDown,
+  iconCheck,
+  iconLayers,
+  iconLayoutGrid,
+  iconList,
+  iconRowsComfortable,
+  iconSearch,
+  iconSpinner,
+  iconX,
+} from '../utils/icons.js';
 
 let _reportList = null;
 let _statusBar = null;
 
-const _densityStates = ['default', 'compact', 'comfortable'];
-let _densityIdx = 0;
-let _sortDir = 'desc';
-
-/** Previously bound #empty-clear-search for safe removeEventListener on re-init. */
 let _emptyClearSearchButton = null;
+let _sortMenuDocDown = null;
+let _groupMenuDocDown = null;
+let _sidebarTooltipDisposers = [];
+
+const SORT_PRESETS = [
+  { sortField: 'date', sortDirection: 'desc', menuLabel: 'Date — newest first' },
+  { sortField: 'date', sortDirection: 'asc', menuLabel: 'Date — oldest first' },
+  { sortField: 'name', sortDirection: 'asc', menuLabel: 'Host — A to Z' },
+  { sortField: 'name', sortDirection: 'desc', menuLabel: 'Host — Z to A' },
+  { sortField: 'elements', sortDirection: 'desc', menuLabel: 'Elements — most first' },
+  { sortField: 'elements', sortDirection: 'asc', menuLabel: 'Elements — fewest first' },
+];
+
+const DENSITY_CYCLE_ORDER = ['compact', 'default', 'comfortable'];
+
+const GROUP_OPTIONS = [
+  { key: null, label: 'No grouping' },
+  { key: 'host', label: 'By Host' },
+  { key: 'date', label: 'By Date' },
+  { key: 'environment', label: 'By Environment' },
+];
 
 const VIEW_CONFIG_KEY = 'sidebar-view-config';
 const LEGACY_VIEW_CONFIG_KEY = 'report-view-config';
@@ -59,23 +87,308 @@ function _saveViewConfig(patch) {
   } catch { void 0; }
 }
 
-function _syncDensityToggleButton() {
-  const btn = document.getElementById('density-toggle-btn');
-  if (!btn) return;
-  const d = _densityStates[_densityIdx];
-  btn.setAttribute('aria-label', `Density: ${d}`);
-  btn.title = `Density: ${d}`;
-  btn.innerHTML = iconLayoutGrid(14);
+function _normalizeViewConfig(raw) {
+  const o = typeof raw === 'object' && raw !== null ? raw : {};
+  let sortField = o.sortField ?? o.sortBy;
+  let sortDirection = o.sortDirection ?? o.sortDir;
+  if (sortField !== 'date' && sortField !== 'elements' && sortField !== 'name') {
+    sortField = 'date';
+  }
+  if (sortDirection !== 'asc' && sortDirection !== 'desc') {
+    sortDirection = 'desc';
+  }
+  const density = ['default', 'compact', 'comfortable'].includes(o.density)
+    ? o.density
+    : 'default';
+  let groupBy = o.groupBy ?? null;
+  if (groupBy === '') { groupBy = null; }
+  return { sortField, sortDirection, density, groupBy };
 }
 
-function _syncSortDirButton() {
-  const btn = document.getElementById('sort-dir-btn');
+function _persistListViewConfig() {
+  const cfg = _reportList?.getViewConfig();
+  if (!cfg) return;
+  _saveViewConfig({
+    groupBy: cfg.groupBy,
+    sortField: cfg.sortField,
+    sortDirection: cfg.sortDirection,
+    density: cfg.density,
+  });
+}
+
+function _removeSortMenuListener() {
+  if (_sortMenuDocDown) {
+    document.removeEventListener('pointerdown', _sortMenuDocDown, true);
+    _sortMenuDocDown = null;
+  }
+}
+
+function _removeGroupMenuListener() {
+  if (_groupMenuDocDown) {
+    document.removeEventListener('pointerdown', _groupMenuDocDown, true);
+    _groupMenuDocDown = null;
+  }
+}
+
+function _closeSortMenu() {
+  const menu = document.getElementById('sort-control-menu');
+  const btn = document.getElementById('sort-control-btn');
+  if (menu) { menu.hidden = true; }
+  if (btn) { btn.setAttribute('aria-expanded', 'false'); }
+  _removeSortMenuListener();
+}
+
+function _closeGroupMenu() {
+  const menu = document.getElementById('group-control-menu');
+  const btn = document.getElementById('group-control-btn');
+  if (menu) { menu.hidden = true; }
+  if (btn) { btn.setAttribute('aria-expanded', 'false'); }
+  _removeGroupMenuListener();
+}
+
+function _sortTooltipText(cfg) {
+  const p = SORT_PRESETS.find(
+    x => x.sortField === cfg.sortField && x.sortDirection === cfg.sortDirection
+  );
+  return p ? `Sort: ${p.menuLabel}` : 'Sort: Date — newest first';
+}
+
+function _groupTooltipText(cfg) {
+  if (!cfg.groupBy) return 'No grouping';
+  const g = GROUP_OPTIONS.find(x => x.key === cfg.groupBy);
+  return g ? `Group: ${g.label}` : 'No grouping';
+}
+
+function _rebuildSortMenu() {
+  const menu = document.getElementById('sort-control-menu');
+  if (!menu) return;
+  const cfg = _reportList?.getViewConfig() ?? { sortField: 'date', sortDirection: 'desc' };
+  menu.textContent = '';
+  const groups = [
+    { title: 'Date', keys: ['date'] },
+    { title: 'Host', keys: ['name'] },
+    { title: 'Elements', keys: ['elements'] },
+  ];
+  let first = true;
+  for (const g of groups) {
+    if (!first) {
+      const div = document.createElement('li');
+      div.className = 'filter-rail__dropdown-divider';
+      div.setAttribute('role', 'separator');
+      menu.appendChild(div);
+    }
+    first = false;
+    const head = document.createElement('li');
+    head.className = 'filter-rail__dropdown-heading';
+    head.textContent = g.title;
+    head.setAttribute('role', 'presentation');
+    menu.appendChild(head);
+    const presets = SORT_PRESETS.filter(p => g.keys.includes(p.sortField));
+    for (const preset of presets) {
+      const active = cfg.sortField === preset.sortField && cfg.sortDirection === preset.sortDirection;
+      const li = document.createElement('li');
+      li.setAttribute('role', 'none');
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'filter-rail__dropdown-item' + (active ? ' filter-rail__dropdown-item--active' : '');
+      row.setAttribute('role', 'menuitem');
+      row.dataset.sortField = preset.sortField;
+      row.dataset.sortDirection = preset.sortDirection;
+      const check = document.createElement('span');
+      check.className = 'filter-rail__dropdown-item-check';
+      check.innerHTML = active ? iconCheck(14) : '';
+      check.setAttribute('aria-hidden', 'true');
+      const lab = document.createElement('span');
+      lab.className = 'filter-rail__dropdown-item-label';
+      const short = preset.menuLabel.includes(' — ')
+        ? preset.menuLabel.split(' — ')[1]
+        : preset.menuLabel;
+      lab.textContent = short;
+      row.appendChild(check);
+      row.appendChild(lab);
+      row.addEventListener('click', () => {
+        _reportList?.setViewConfig({
+          sortField: preset.sortField,
+          sortDirection: preset.sortDirection,
+        });
+        _persistListViewConfig();
+        _syncSortControl();
+        _closeSortMenu();
+      });
+      li.appendChild(row);
+      menu.appendChild(li);
+    }
+  }
+}
+
+function _rebuildGroupMenu() {
+  const menu = document.getElementById('group-control-menu');
+  if (!menu) return;
+  const cfg = _reportList?.getViewConfig() ?? { groupBy: null };
+  menu.textContent = '';
+  for (const { key, label } of GROUP_OPTIONS) {
+    const li = document.createElement('li');
+    li.setAttribute('role', 'none');
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'filter-rail__dropdown-item' + ((cfg.groupBy || null) === (key || null) ? ' filter-rail__dropdown-item--active' : '');
+    row.setAttribute('role', 'menuitem');
+    row.dataset.groupKey = key === null ? '' : key;
+    const check = document.createElement('span');
+    check.className = 'filter-rail__dropdown-item-check';
+    check.innerHTML = (cfg.groupBy || null) === (key || null) ? iconCheck(14) : '';
+    check.setAttribute('aria-hidden', 'true');
+    const lab = document.createElement('span');
+    lab.className = 'filter-rail__dropdown-item-label';
+    lab.textContent = label;
+    row.appendChild(check);
+    row.appendChild(lab);
+    row.addEventListener('click', () => {
+      const next = key === null ? null : key;
+      _reportList?.setViewConfig({ groupBy: next });
+      _persistListViewConfig();
+      _syncGroupControl();
+      _closeGroupMenu();
+    });
+    li.appendChild(row);
+    menu.appendChild(li);
+  }
+}
+
+function _openSortMenu() {
+  const menu = document.getElementById('sort-control-menu');
+  const btn = document.getElementById('sort-control-btn');
+  if (!menu || !btn) return;
+  _closeGroupMenu();
+  _rebuildSortMenu();
+  menu.hidden = false;
+  btn.setAttribute('aria-expanded', 'true');
+  setTimeout(() => {
+    _sortMenuDocDown = (ev) => {
+      if (btn.contains(ev.target) || menu.contains(ev.target)) return;
+      _closeSortMenu();
+    };
+    document.addEventListener('pointerdown', _sortMenuDocDown, true);
+  }, 0);
+}
+
+function _openGroupMenu() {
+  const menu = document.getElementById('group-control-menu');
+  const btn = document.getElementById('group-control-btn');
+  if (!menu || !btn) return;
+  _closeSortMenu();
+  _rebuildGroupMenu();
+  menu.hidden = false;
+  btn.setAttribute('aria-expanded', 'true');
+  setTimeout(() => {
+    _groupMenuDocDown = (ev) => {
+      if (btn.contains(ev.target) || menu.contains(ev.target)) return;
+      _closeGroupMenu();
+    };
+    document.addEventListener('pointerdown', _groupMenuDocDown, true);
+  }, 0);
+}
+
+function _syncSortControl() {
+  const btn = document.getElementById('sort-control-btn');
   if (!btn) return;
-  const isDesc = _sortDir === 'desc';
-  btn.dataset.dir = _sortDir;
-  btn.setAttribute('aria-label', `Sort direction: ${isDesc ? 'newest' : 'oldest'} first`);
-  btn.setAttribute('title', `Sort direction: ${isDesc ? 'newest' : 'oldest'} first`);
-  btn.innerHTML = isDesc ? iconArrowDown(13) : iconArrowUp(13);
+  const cfg = _reportList?.getViewConfig() ?? { sortField: 'date', sortDirection: 'desc' };
+  const preset = SORT_PRESETS.find(
+    x => x.sortField === cfg.sortField && x.sortDirection === cfg.sortDirection
+  ) ?? SORT_PRESETS[0];
+  btn.innerHTML = `${iconArrowUpDown(14)}<span class="filter-rail__toolbar-btn-label">${preset.menuLabel}</span>`;
+  btn.setAttribute('aria-label', _sortTooltipText(cfg));
+}
+
+function _syncGroupControl() {
+  const btn = document.getElementById('group-control-btn');
+  if (!btn) return;
+  const cfg = _reportList?.getViewConfig() ?? { groupBy: null };
+  const g = GROUP_OPTIONS.find(x => (x.key || null) === (cfg.groupBy || null));
+  const label = g?.label ?? 'No grouping';
+  btn.innerHTML = `${iconLayers(14)}<span class="filter-rail__toolbar-btn-label">${label}</span>`;
+  btn.classList.toggle('filter-rail__toolbar-btn--active', Boolean(cfg.groupBy));
+  btn.setAttribute('aria-label', _groupTooltipText(cfg));
+}
+
+function _densityTooltipLabel(density) {
+  if (density === 'compact') return 'Compact view — click to switch density';
+  if (density === 'comfortable') return 'Expanded view — click to switch density';
+  return 'Default view — click to switch density';
+}
+
+function _syncDensityCycleButton() {
+  const btn = document.getElementById('density-cycle-btn');
+  if (!btn) return;
+  const cfg = _reportList?.getViewConfig() ?? { density: 'default' };
+  const d = cfg.density;
+  if (d === 'compact') {
+    btn.innerHTML = iconList(14);
+  } else if (d === 'comfortable') {
+    btn.innerHTML = iconLayoutGrid(14);
+  } else {
+    btn.innerHTML = iconRowsComfortable(14);
+  }
+  btn.setAttribute('aria-label', _densityTooltipLabel(d));
+}
+
+function _disposeSidebarTooltips() {
+  for (const d of _sidebarTooltipDisposers) {
+    try { d(); } catch { void 0; }
+  }
+  _sidebarTooltipDisposers = [];
+}
+
+function _wireSidebarTooltips() {
+  _disposeSidebarTooltips();
+  const sortBtn = document.getElementById('sort-control-btn');
+  if (sortBtn) {
+    _sidebarTooltipDisposers.push(attachTooltip(sortBtn, () => {
+      const cfg = _reportList?.getViewConfig() ?? { sortField: 'date', sortDirection: 'desc' };
+      return _sortTooltipText(cfg);
+    }));
+  }
+  const groupBtn = document.getElementById('group-control-btn');
+  if (groupBtn) {
+    _sidebarTooltipDisposers.push(attachTooltip(groupBtn, () => {
+      const cfg = _reportList?.getViewConfig() ?? { groupBy: null };
+      return _groupTooltipText(cfg);
+    }));
+  }
+  const densityBtn = document.getElementById('density-cycle-btn');
+  if (densityBtn) {
+    _sidebarTooltipDisposers.push(attachTooltip(densityBtn, () => {
+      const d = _reportList?.getViewConfig()?.density ?? 'default';
+      if (d === 'compact') return 'Compact view';
+      if (d === 'comfortable') return 'Expanded view';
+      return 'Default view';
+    }));
+  }
+  const clearBtn = document.getElementById('search-reports-clear');
+  if (clearBtn) {
+    _sidebarTooltipDisposers.push(attachTooltip(clearBtn, () => 'Clear search'));
+  }
+}
+
+function _injectSidebarControlIcons() {
+  const si = document.getElementById('search-reports-icon');
+  if (si && !si.querySelector('svg')) {
+    si.innerHTML = iconSearch(14);
+  }
+  const clear = document.getElementById('search-reports-clear');
+  if (clear && !clear.querySelector('svg')) {
+    clear.innerHTML = iconX(12);
+  }
+  _syncDensityCycleButton();
+}
+
+function _syncSearchClearVisibility() {
+  const input = document.getElementById('search-reports');
+  const clear = document.getElementById('search-reports-clear');
+  if (!clear) return;
+  const empty = (input?.value ?? '').trim().length === 0;
+  clear.classList.toggle('filter-rail__search-clear--off', empty);
+  clear.setAttribute('aria-hidden', empty ? 'true' : 'false');
 }
 
 const api = window.electronAPI;
@@ -372,33 +685,14 @@ async function initializeApp(statusBar) {
     });
   }
 
-  const savedView = _loadViewConfigFromStorage();
-
-  if (savedView.groupBy !== undefined) {
-    const sel = document.getElementById('group-by-select');
-    if (sel) { sel.value = savedView.groupBy || ''; }
-    _reportList?.setViewConfig({ groupBy: savedView.groupBy ?? null });
-  }
-
-  if (savedView.sortBy) {
-    const sel = document.getElementById('sort-by-select');
-    if (sel) { sel.value = savedView.sortBy; }
-    _reportList?.setViewConfig({ sortBy: savedView.sortBy });
-  }
-
-  if (savedView.sortDir === 'asc' || savedView.sortDir === 'desc') {
-    _sortDir = savedView.sortDir;
-    _reportList?.setViewConfig({ sortDir: _sortDir });
-  }
-
-  if (savedView.density) {
-    const idx = _densityStates.indexOf(savedView.density);
-    if (idx !== -1) {
-      _densityIdx = idx;
-      _reportList?.setViewConfig({ density: savedView.density });
-      _syncDensityToggleButton();
-    }
-  }
+  const savedView = _normalizeViewConfig(_loadViewConfigFromStorage());
+  _reportList?.setViewConfig({
+    groupBy: savedView.groupBy,
+    sortField: savedView.sortField,
+    sortDirection: savedView.sortDirection,
+    density: savedView.density,
+  });
+  _persistListViewConfig();
 
   if (typeof api?.onContextAction === 'function') {
     api.onContextAction((payload) => {
@@ -414,7 +708,7 @@ async function initializeApp(statusBar) {
           selectCompareFromReport(report);
           break;
         case 'export':
-          if (['json', 'csv', 'excel'].includes(payload.format)) {
+          if (SINGLE_EXTRACTED_REPORT_EXPORT_FORMATS.has(payload.format)) {
             handleExportReport(report, payload.format);
           }
           break;
@@ -432,33 +726,52 @@ async function initializeApp(statusBar) {
     _reportList?.setCompare(state.selectedCompare ?? null);
   });
 
-  document.getElementById('group-by-select')?.addEventListener('change', e => {
-    _reportList?.setViewConfig({ groupBy: e.target.value || null });
-    _saveViewConfig({ groupBy: e.target.value || null });
+  _injectSidebarControlIcons();
+
+  document.getElementById('sort-control-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const menu = document.getElementById('sort-control-menu');
+    const open = menu && !menu.hidden;
+    if (open) {
+      _closeSortMenu();
+    } else {
+      _openSortMenu();
+    }
   });
 
-  document.getElementById('sort-by-select')?.addEventListener('change', e => {
-    _reportList?.setViewConfig({ sortBy: e.target.value });
-    _saveViewConfig({ sortBy: e.target.value });
+  document.getElementById('group-control-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const menu = document.getElementById('group-control-menu');
+    const open = menu && !menu.hidden;
+    if (open) {
+      _closeGroupMenu();
+    } else {
+      _openGroupMenu();
+    }
   });
 
-  document.getElementById('sort-dir-btn')?.addEventListener('click', () => {
-    _sortDir = _sortDir === 'desc' ? 'asc' : 'desc';
-    _syncSortDirButton();
-    _reportList?.setViewConfig({ sortDir: _sortDir });
-    _saveViewConfig({ sortDir: _sortDir });
+  document.getElementById('density-cycle-btn')?.addEventListener('click', () => {
+    const cur = _reportList?.getViewConfig()?.density ?? 'default';
+    let i = DENSITY_CYCLE_ORDER.indexOf(cur);
+    if (i < 0) { i = DENSITY_CYCLE_ORDER.indexOf('default'); }
+    const safeNext = DENSITY_CYCLE_ORDER[(i + 1) % DENSITY_CYCLE_ORDER.length];
+    _reportList?.setViewConfig({ density: safeNext });
+    _persistListViewConfig();
+    _syncDensityCycleButton();
   });
 
-  document.getElementById('density-toggle-btn')?.addEventListener('click', () => {
-    _densityIdx = (_densityIdx + 1) % _densityStates.length;
-    const d = _densityStates[_densityIdx];
-    _reportList?.setViewConfig({ density: d });
-    _saveViewConfig({ density: d });
-    _syncDensityToggleButton();
+  const searchClear = document.getElementById('search-reports-clear');
+  searchClear?.addEventListener('click', () => {
+    const input = document.getElementById('search-reports');
+    if (!input) return;
+    input.value = '';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.focus();
   });
 
   let _searchDebounce;
   document.getElementById('search-reports')?.addEventListener('input', e => {
+    _syncSearchClearVisibility();
     clearTimeout(_searchDebounce);
     _searchDebounce = setTimeout(() => {
       renderReportList(getState().reports ?? [], e.target.value);
@@ -467,8 +780,11 @@ async function initializeApp(statusBar) {
 
   wireEmptyClearSearchButton();
 
-  _syncSortDirButton();
-  _syncDensityToggleButton();
+  _syncSortControl();
+  _syncGroupControl();
+  _syncDensityCycleButton();
+  _syncSearchClearVisibility();
+  _wireSidebarTooltips();
 
   const baselineSelect = document.getElementById('baseline-report');
   const compareSelect = document.getElementById('compare-report');

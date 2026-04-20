@@ -129,7 +129,22 @@
 
   --status-bar-height: 28px;
 
+  --z-dropdown: 10;
+  --main-pane-sticky-offset: 56px;
+  --z-tooltip: 10000;
+
+  --env-prod-color:         var(--color-success);
+  --env-stage-color:        var(--color-warning);
+  --env-prod-color-subtle:  var(--color-success-subtle);
+  --env-stage-color-subtle: var(--color-warning-subtle);
+
+  --color-surface-active: var(--color-surface-hover);
+
   --transition-fast:   var(--dur-fast) var(--ease-standard);
   --transition-normal: var(--dur-base) var(--ease-standard);
   --transition-slow:   var(--dur-slow) var(--ease-standard);
+
+  --sidebar-rail-width:            var(--space-12);
+  --sidebar-transition-duration:   var(--dur-base);
+  --sidebar-transition-easing:     var(--ease-standard);
 }

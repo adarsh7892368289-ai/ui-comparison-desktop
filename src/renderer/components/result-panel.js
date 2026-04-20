@@ -1,7 +1,7 @@
 import { relativeTime } from '../utils/time.js';
 import { handleExport, handleFullReport } from '../application/export-workflow.js';
 import { dispatch } from '../state.js';
-import { iconAlertCircle, iconAlertTriangle, iconCheck, iconGitCompare } from '../utils/icons.js';
+import { iconAlertCircle, iconCheck, iconGitCompare } from '../utils/icons.js';
 
 function _ce(tag, className) {
   const el = document.createElement(tag);
@@ -128,19 +128,6 @@ export class ResultPanel {
       checkIc.innerHTML = iconCheck(16);
       noDiffs.append(checkIc, document.createTextNode('No style differences in matched elements'));
       root.appendChild(noDiffs);
-    }
-
-    if (matching.ambiguousCount > 0) {
-      const note = _ce('div', 'rp-ambiguous-note');
-      const warnIc = _ce('span', 'rp-inline-icon');
-      warnIc.innerHTML = iconAlertTriangle(16);
-      note.append(
-        warnIc,
-        document.createTextNode(
-          `${matching.ambiguousCount} element${matching.ambiguousCount !== 1 ? 's' : ''} had ambiguous matches — see full report for details`
-        )
-      );
-      root.appendChild(note);
     }
 
     root.appendChild(this._buildActionsBar());
@@ -365,12 +352,14 @@ export class ResultPanel {
   showIdle() {
     this._removeListeners();
     this._container.replaceChildren();
-    const root = _ce('div', 'result-empty-state result-empty-state--idle');
+    const root = _ce('div', 'result-empty-state result-empty-state--idle result-empty-state--compact');
     root.setAttribute('role', 'status');
     root.innerHTML = `
-      <div class="result-empty-icon" aria-hidden="true">${iconGitCompare(40)}</div>
-      <p class="result-empty-title">No comparison yet</p>
-      <p class="result-empty-hint">Extract two pages and compare them to see results here.</p>`;
+      <div class="result-empty-icon" aria-hidden="true">${iconGitCompare(22)}</div>
+      <div class="result-empty-compact-copy">
+        <p class="result-empty-title">No comparison yet</p>
+        <p class="result-empty-hint">Extract two pages and compare them to see results here.</p>
+      </div>`;
     this._container.appendChild(root);
   }
 

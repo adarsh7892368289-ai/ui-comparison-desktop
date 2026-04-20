@@ -601,40 +601,9 @@ function buildMatchedGroups(results) {
   return groups;
 }
 
-function buildAmbiguousGroup(ambiguousList) {
-  return ambiguousList.map(entry => {
-    const el = entry.baselineElement ?? {
-      tagName:     entry.tagName,
-      elementId:   entry.elementId,
-      className:   entry.className,
-      cssSelector: entry.cssSelector,
-      xpath:       entry.xpath
-    };
-    return {
-      elementKey:      elementLabel(el),
-      breadcrumb:      elementBreadcrumb(el),
-      elementId:       el.elementId   ?? null,
-      tagName:         el.tagName,
-      cssSelector:     el.cssSelector ?? null,
-      xpath:           el.xpath       ?? null,
-      isAmbiguous:     true,
-      candidateCount:  entry.candidateCount ?? entry.ambiguousCandidates?.length ?? 0,
-      candidates:      (entry.ambiguousCandidates ?? []).map(c => ({
-        compareIndex:  c.compareIndex  ?? null,
-        confidence:    c.confidence    ?? 0,
-        strategy:      c.strategy      ?? null,
-        deltaFromBest: c.deltaFromBest ?? null
-      })),
-      matchConfidence: entry.confidence,
-      matchStrategy:   entry.strategy
-    };
-  });
-}
-
 function transformToGroupedReport(comparisonResult) {
   const { comparison, unmatchedElements, matching } = comparisonResult;
   const results         = comparison?.results   ?? [];
-  const ambiguousList   = comparison?.ambiguous ?? [];
   const rawDiffCount    = results.length;
 
   const resultsClean    = runBFSSuppression(results);
@@ -676,18 +645,15 @@ function transformToGroupedReport(comparisonResult) {
       tier:         el.tier         ?? null,
       status:       'removed'
     })),
-    ambiguous: buildAmbiguousGroup(ambiguousList)
   };
 
   const summary = {
     matchRate:        matching?.matchRate        ?? 0,
     totalMatched:     matching?.totalMatched     ?? 0,
-    ambiguousCount:   matching?.ambiguousCount   ?? 0,
     modified:         comparison?.summary?.modifiedElements  ?? 0,
     unchanged:        comparison?.summary?.unchangedElements ?? 0,
     added:            unmatchedCompare.length,
     removed:          unmatchedBaseline.length,
-    ambiguous:        ambiguousList.length,
     severityCounts:   comparison?.summary?.severityCounts   ?? { critical: 0, high: 0, medium: 0, low: 0 },
     totalDifferences: comparison?.summary?.totalDifferences ?? 0
   };

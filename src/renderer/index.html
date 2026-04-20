@@ -25,91 +25,63 @@
 
   <div id="app-root">
 
-    <div id="app-toolbar" role="banner" aria-label="Application toolbar">
-      <div class="header-brand">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-brand)" stroke-width="2.5" aria-hidden="true">
-          <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
-        </svg>
-      </div>
-      <div class="toolbar-breadcrumb" id="toolbar-breadcrumb">
-        <span class="breadcrumb-current">Extract</span>
-      </div>
-      <button class="cmd-palette-trigger-btn" id="cmd-palette-trigger"
-              aria-label="Open command palette" aria-keyshortcuts="Control+K Meta+K">
-        <span class="cmd-trigger-icon" aria-hidden="true"></span>
-        <span class="cmd-trigger-placeholder">Search or jump to…</span>
-        <span class="cmd-trigger-shortcut" id="cmd-palette-shortcut" aria-hidden="true"></span>
-      </button>
-    </div>
-
     <div id="system-banner-slot" aria-live="assertive"></div>
 
-    <div id="left-panel" role="complementary" aria-label="Saved reports">
-      <button type="button" class="panel-toggle-btn" id="panel-toggle-btn" aria-label="Collapse sidebar" aria-expanded="true"></button>
+    <div id="left-panel" role="complementary" aria-label="Reports" data-rail-state="full">
+      <div class="left-panel__top">
+        <button type="button" class="panel-toggle-btn" id="panel-toggle-btn" aria-controls="left-panel" aria-label="Collapse sidebar" aria-expanded="true"></button>
 
-      <div class="card card--toolbar">
-        <h2 class="section-title">Saved Reports</h2>
-        <div class="section-row-actions">
-          <div class="split-btn" id="export-split-btn" role="group" aria-label="Export all reports">
-            <button type="button" class="split-btn__primary" id="export-all-btn"
-                    title="Export all as Excel" aria-label="Export all reports as Excel">
-              <span class="split-btn__label">Excel</span>
+        <div class="card card--toolbar">
+          <h2 class="section-title">Reports</h2>
+          <div class="section-row-actions" data-sidebar-toolbar>
+            <div class="split-btn" id="export-split-btn" role="group" aria-label="Export all reports">
+              <button type="button" class="split-btn__primary" id="export-all-btn"
+                      title="Export all as Excel" aria-label="Export all reports as Excel">
+                <span class="btn-label split-btn__label">Excel</span>
+                <span class="format-badge" aria-hidden="true">XLSX</span>
+              </button>
+              <button type="button" class="split-btn__arrow" id="export-format-trigger"
+                      aria-label="Choose export format" aria-haspopup="menu" aria-expanded="false"></button>
+              <div class="split-btn__menu" role="menu" id="export-format-menu" hidden></div>
+            </div>
+            <button type="button" class="btn-icon-ghost sidebar-import-btn" id="import-report-btn"
+                    title="Import report from file" aria-label="Import report from file">
+              <span class="btn-label" id="import-label">Import</span>
             </button>
-            <button type="button" class="split-btn__arrow" id="export-format-trigger"
-                    aria-label="Choose export format" aria-haspopup="menu" aria-expanded="false"></button>
-            <div class="split-btn__menu" role="menu" id="export-format-menu" hidden>
-              <button type="button" class="split-btn__menu-item" role="menuitem" data-format="xlsx">Excel (.xlsx)</button>
-              <button type="button" class="split-btn__menu-item" role="menuitem" data-format="csv">CSV</button>
-              <button type="button" class="split-btn__menu-item" role="menuitem" data-format="json">JSON</button>
-            </div>
+            <input type="file" id="import-report-input" accept=".json,.csv,.xlsx,.xls" hidden>
+            <button type="button" class="btn-icon-ghost sidebar-import-btn sidebar-delete-all-btn" id="delete-all-btn"
+                    title="Delete all reports" aria-label="Delete all reports">
+              <span class="btn-label delete-all-btn__label">Delete All</span>
+            </button>
           </div>
-          <button type="button" class="btn-icon-ghost sidebar-import-btn" id="import-report-btn"
-                  title="Import report from file" aria-label="Import report from file">
-            <span id="import-label">Import</span>
-          </button>
-          <input type="file" id="import-report-input" accept=".json,.csv,.xlsx,.xls" hidden>
-          <details class="export-dropdown sidebar-toolbar-overflow">
-            <summary class="btn-ghost btn-sm sidebar-overflow__summary" aria-label="More actions"></summary>
-            <div class="export-menu" role="menu">
-              <button type="button" class="export-menu-item" id="import-report-overflow-btn" role="menuitem">Import report from file</button>
-              <div class="export-menu-sep" role="separator" aria-hidden="true"></div>
-              <button type="button" class="export-menu-item export-menu-item--danger" id="delete-all-btn" role="menuitem">Delete all reports</button>
-            </div>
-          </details>
         </div>
       </div>
 
       <div class="filter-rail">
-        <input class="filter-rail__search" id="search-reports" type="search"
-               placeholder="Search reports…" aria-label="Search reports"
-               role="searchbox" aria-autocomplete="list" aria-controls="reports-list">
+        <div class="filter-rail__search-field" id="search-reports-field">
+          <span class="filter-rail__search-icon" id="search-reports-icon" aria-hidden="true"></span>
+          <input class="filter-rail__search-input" id="search-reports" type="search"
+                 placeholder="Search reports (press /)" aria-label="Search reports"
+                 role="searchbox" aria-autocomplete="list" aria-controls="reports-list" autocomplete="off">
+          <button type="button" class="filter-rail__search-clear filter-rail__search-clear--off" id="search-reports-clear" aria-label="Clear search"></button>
+        </div>
         <div class="filter-rail__controls">
-          <select class="filter-rail__select" id="group-by-select" aria-label="Group by">
-            <option value="">No grouping</option>
-            <option value="host">Host</option>
-            <option value="date">Date</option>
-            <option value="environment">Environment</option>
-          </select>
-          <select class="filter-rail__select" id="sort-by-select" aria-label="Sort by">
-            <option value="date">Date</option>
-            <option value="elements">Elements</option>
-            <option value="name">Name</option>
-          </select>
-          <button type="button" class="btn-icon-ghost btn-sm" id="sort-dir-btn"
-                  aria-label="Sort direction: newest first"
-                  title="Sort direction: newest first"
-                  data-dir="desc">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
-          </button>
-          <button type="button" class="filter-rail__density-btn" id="density-toggle-btn"
-                  aria-label="Toggle display density" title="Toggle display density">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>
-          </button>
+          <div class="filter-rail__menu-anchor filter-rail__menu-anchor--shrink-label">
+            <button type="button" class="filter-rail__toolbar-btn" id="group-control-btn"
+                    aria-expanded="false" aria-haspopup="menu" aria-controls="group-control-menu"></button>
+            <ul class="filter-rail__dropdown" id="group-control-menu" role="menu" hidden></ul>
+          </div>
+          <div class="filter-rail__menu-anchor filter-rail__menu-anchor--grow">
+            <button type="button" class="filter-rail__toolbar-btn filter-rail__toolbar-btn--sort" id="sort-control-btn"
+                    aria-expanded="false" aria-haspopup="menu" aria-controls="sort-control-menu"></button>
+            <ul class="filter-rail__dropdown" id="sort-control-menu" role="menu" hidden></ul>
+          </div>
+          <button type="button" class="filter-rail__density-cycle" id="density-cycle-btn" aria-label="List density"></button>
         </div>
       </div>
 
       <div id="report-list-announcer" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
-      <div id="reports-list" class="reports-list" aria-label="Saved reports"></div>
+      <div id="reports-list" class="reports-list" aria-label="Reports"></div>
 
       <div id="reports-empty" class="empty-state hidden" data-filtered="false" aria-live="polite">
         <div class="empty-state__panel" data-state="empty">
@@ -132,20 +104,25 @@
            aria-orientation="vertical"
            aria-label="Resize sidebar"
            aria-valuenow="300"
-           aria-valuemin="220"
-           aria-valuemax="480"
+           aria-valuemin="200"
+           aria-valuemax="900"
            tabindex="0"></div>
 
     </div>
 
     <div id="main-content" role="main">
 
+      <nav id="main-pane-section-nav" class="main-pane-section-nav" aria-label="Main pane sections">
+        <button type="button" class="main-pane-section-nav__btn" data-main-pane-section="extract">Extract</button>
+        <button type="button" class="main-pane-section-nav__btn" data-main-pane-section="compare">Compare</button>
+        <button type="button" class="main-pane-section-nav__btn" data-main-pane-section="results">Results</button>
+      </nav>
+
       <div id="main-controls">
 
       <div class="nav-section nav-section--expanded nav-section--active" id="section-extract">
         <button class="nav-section__header" id="header-extract" aria-expanded="true" aria-controls="body-extract">
           <span class="nav-section__header-leading">
-            <span class="workflow-step-indicator" aria-hidden="true">1</span>
             <span>Extract</span>
           </span>
           <svg class="nav-section__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
@@ -205,7 +182,6 @@
       <div class="nav-section" id="section-compare">
         <button class="nav-section__header" id="header-compare" aria-expanded="false" aria-controls="body-compare">
           <span class="nav-section__header-leading">
-            <span class="workflow-step-indicator" aria-hidden="true">2</span>
             <span>Compare</span>
           </span>
           <svg class="nav-section__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
@@ -309,12 +285,12 @@
 
           </section>
 
+          <div id="compare-results"></div>
+
         </div>
       </div>
 
       </div>
-
-      <div id="compare-results"></div>
 
     </div>
 
