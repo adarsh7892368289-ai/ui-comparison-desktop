@@ -2,7 +2,7 @@
 
 const { protocol, net } = require('electron');
 const path = require('path');
-const log  = require('electron-log');
+const log = require('electron-log');
 
 const MAX_BLOB_CACHE_BYTES = 512 * 1024 * 1024;
 
@@ -21,7 +21,7 @@ function _evictOldestComparisonGroup() {
     break;
   }
 
-  if (!targetId) { return; }
+  if (!targetId) {return;}
 
   let freedBytes = 0;
   for (const [key, entry] of blobCache) {
@@ -32,7 +32,7 @@ function _evictOldestComparisonGroup() {
   }
 
   _cacheTotalBytes -= freedBytes;
-  if (_cacheTotalBytes < 0) { _cacheTotalBytes = 0; }
+  if (_cacheTotalBytes < 0) {_cacheTotalBytes = 0;}
 
   log.warn('[Protocol] BlobCache eviction triggered', { evictedComparisonId: targetId, freedBytes });
 }
@@ -57,7 +57,7 @@ function blobCacheDelete(key) {
   const entry = blobCache.get(key);
   if (entry) {
     _cacheTotalBytes -= entry.buffer.byteLength;
-    if (_cacheTotalBytes < 0) { _cacheTotalBytes = 0; }
+    if (_cacheTotalBytes < 0) {_cacheTotalBytes = 0;}
     blobCache.delete(key);
   }
 }
@@ -72,7 +72,7 @@ function registerProtocolHandler() {
 
       if (url.pathname.startsWith('/blob/')) {
         const blobId = decodeURIComponent(url.pathname.slice('/blob/'.length));
-        const entry  = blobCache.get(blobId);
+        const entry = blobCache.get(blobId);
 
         if (!entry) {
           log.warn('[Protocol] Blob not found in cache', { blobId });
@@ -82,9 +82,9 @@ function registerProtocolHandler() {
         return new Response(entry.buffer, {
           status: 200,
           headers: {
-            'Content-Type':  entry.mimeType ?? 'image/webp',
-            'Cache-Control': 'no-store',
-          },
+            'Content-Type': entry.mimeType ?? 'image/webp',
+            'Cache-Control': 'no-store'
+          }
         });
       }
 

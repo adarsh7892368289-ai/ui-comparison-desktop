@@ -3,59 +3,59 @@ import storage from '../../../infrastructure/idb-repository.js';
 import { transformToGroupedReport } from '../export-utils/report-transformer.js';
 
 async function exportToHTML(comparisonResult) {
-  const grouped          = transformToGroupedReport(comparisonResult);
-  const manifest         = resolveVisualManifest(comparisonResult.visualDiffs ?? null);
+  const grouped = transformToGroupedReport(comparisonResult);
+  const manifest = resolveVisualManifest(comparisonResult.visualDiffs ?? null);
   const visualDiffStatus = comparisonResult.visualDiffStatus ?? null;
-  const blobData         = await loadBlobData(manifest, comparisonResult.id ?? null);
-  const html             = buildDocument(grouped, comparisonResult, manifest, blobData, visualDiffStatus);
+  const blobData = await loadBlobData(manifest, comparisonResult.id ?? null);
+  const html = buildDocument(grouped, comparisonResult, manifest, blobData, visualDiffStatus);
   logger.info('HTML export built', {
-    elements:         grouped.summary.totalMatched,
-    impactScore:      grouped.summary.impactScore,
-    rootCauses:       grouped.summary.rootCauseCount,
-    visualDiffs:      Object.keys(manifest).length,
-    blobsEmbedded:    Object.keys(blobData).length,
+    elements: grouped.summary.totalMatched,
+    impactScore: grouped.summary.impactScore,
+    rootCauses: grouped.summary.rootCauseCount,
+    visualDiffs: Object.keys(manifest).length,
+    blobsEmbedded: Object.keys(blobData).length,
     visualDiffStatus: visualDiffStatus?.status ?? 'none'
   });
   return html;
 }
 
 function resolveVisualManifest(visualDiffs) {
-  if (!visualDiffs) { return {}; }
-  const out     = Object.create(null);
+  if (!visualDiffs) {return {};}
+  const out = Object.create(null);
   const entries = visualDiffs instanceof Map ? visualDiffs.entries() : Object.entries(visualDiffs);
   for (const [key, entry] of entries) {
     const { baseline, compare, diffs } = entry ?? {};
-    if (!baseline && !compare) { continue; }
+    if (!baseline && !compare) {continue;}
     out[key] = {
-      baselineKeyframeId:        baseline?.keyframeId         ?? null,
-      baselineRect:              baseline?.viewportRect        ?? null,
-      baselineRawRect:           baseline?.rawViewportRect     ?? null,
-      baselineActualDPR:         baseline?.dpr ?? 2,
-      baselineDocumentY:         baseline?.documentY           ?? null,
-      baselineDocumentHeight:    baseline?.totalDocumentHeight ?? null,
-      baselineKfScrollY:         baseline?.kfScrollY           ?? null,
-      baselinePseudoBefore:      baseline?.pseudoBefore        ?? null,
-      baselinePseudoAfter:       baseline?.pseudoAfter         ?? null,
-      baselineMisaligned:        baseline?.misaligned          ?? false,
-      baselineMisalignReason:    baseline?.misalignReason      ?? null,
-      baselineSelectorAmbiguous: baseline?.selectorAmbiguous   ?? false,
-      baselineSelectorMatchCount:baseline?.selectorMatchCount  ?? null,
-      baselineRectClipped:       baseline?.rectClipped         ?? false,
-      compareKeyframeId:         compare?.keyframeId          ?? null,
-      compareRect:               compare?.viewportRect         ?? null,
-      compareRawRect:            compare?.rawViewportRect      ?? null,
-      compareActualDPR:          compare?.dpr  ?? 2,
-      compareDocumentY:          compare?.documentY            ?? null,
-      compareDocumentHeight:     compare?.totalDocumentHeight  ?? null,
-      compareKfScrollY:          compare?.kfScrollY            ?? null,
-      comparePseudoBefore:       compare?.pseudoBefore         ?? null,
-      comparePseudoAfter:        compare?.pseudoAfter          ?? null,
-      compareMisaligned:         compare?.misaligned           ?? false,
-      compareMisalignReason:     compare?.misalignReason       ?? null,
-      compareSelectorAmbiguous:  compare?.selectorAmbiguous    ?? false,
-      compareSelectorMatchCount: compare?.selectorMatchCount   ?? null,
-      compareRectClipped:        compare?.rectClipped          ?? false,
-      diffs:                     diffs ?? []
+      baselineKeyframeId: baseline?.keyframeId ?? null,
+      baselineRect: baseline?.viewportRect ?? null,
+      baselineRawRect: baseline?.rawViewportRect ?? null,
+      baselineActualDPR: baseline?.dpr ?? 2,
+      baselineDocumentY: baseline?.documentY ?? null,
+      baselineDocumentHeight: baseline?.totalDocumentHeight ?? null,
+      baselineKfScrollY: baseline?.kfScrollY ?? null,
+      baselinePseudoBefore: baseline?.pseudoBefore ?? null,
+      baselinePseudoAfter: baseline?.pseudoAfter ?? null,
+      baselineMisaligned: baseline?.misaligned ?? false,
+      baselineMisalignReason: baseline?.misalignReason ?? null,
+      baselineSelectorAmbiguous: baseline?.selectorAmbiguous ?? false,
+      baselineSelectorMatchCount: baseline?.selectorMatchCount ?? null,
+      baselineRectClipped: baseline?.rectClipped ?? false,
+      compareKeyframeId: compare?.keyframeId ?? null,
+      compareRect: compare?.viewportRect ?? null,
+      compareRawRect: compare?.rawViewportRect ?? null,
+      compareActualDPR: compare?.dpr ?? 2,
+      compareDocumentY: compare?.documentY ?? null,
+      compareDocumentHeight: compare?.totalDocumentHeight ?? null,
+      compareKfScrollY: compare?.kfScrollY ?? null,
+      comparePseudoBefore: compare?.pseudoBefore ?? null,
+      comparePseudoAfter: compare?.pseudoAfter ?? null,
+      compareMisaligned: compare?.misaligned ?? false,
+      compareMisalignReason: compare?.misalignReason ?? null,
+      compareSelectorAmbiguous: compare?.selectorAmbiguous ?? false,
+      compareSelectorMatchCount: compare?.selectorMatchCount ?? null,
+      compareRectClipped: compare?.rectClipped ?? false,
+      diffs: diffs ?? []
     };
   }
   return out;
@@ -65,7 +65,7 @@ async function blobToDataUri(blob) {
   let bytes;
   let mimeType = 'image/webp';
   if (blob instanceof Blob) {
-    bytes    = new Uint8Array(await blob.arrayBuffer());
+    bytes = new Uint8Array(await blob.arrayBuffer());
     mimeType = blob.type || 'image/webp';
   } else if (blob instanceof Uint8Array) {
     bytes = blob;
@@ -76,7 +76,7 @@ async function blobToDataUri(blob) {
     bytes = buf instanceof ArrayBuffer ? new Uint8Array(buf) : new Uint8Array(0);
   }
   const chunk = 0x8000;
-  let binary  = '';
+  let binary = '';
   for (let i = 0; i < bytes.length; i += chunk) {
     binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
   }
@@ -86,35 +86,35 @@ async function blobToDataUri(blob) {
 async function loadBlobData(manifest, comparisonId) {
   const ids = new Set();
   for (const entry of Object.values(manifest)) {
-    if (entry.baselineKeyframeId) { ids.add(entry.baselineKeyframeId); }
-    if (entry.compareKeyframeId)  { ids.add(entry.compareKeyframeId); }
+    if (entry.baselineKeyframeId) {ids.add(entry.baselineKeyframeId);}
+    if (entry.compareKeyframeId) {ids.add(entry.compareKeyframeId);}
   }
   const out = Object.create(null);
   for (const id of ids) {
     const idbKey = comparisonId ? `${comparisonId}:${id}` : id;
     const blob = await storage.loadVisualBlob(idbKey);
-    if (blob) { out[id] = await blobToDataUri(blob); }
+    if (blob) {out[id] = await blobToDataUri(blob);}
   }
   return out;
 }
 
 function esc(str) {
-  return String(str ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+  return String(str ?? '').
+  replace(/&/g, '&amp;').
+  replace(/</g, '&lt;').
+  replace(/>/g, '&gt;').
+  replace(/"/g, '&quot;');
 }
 
 function buildDiagnosticBanner(vds) {
-  if (!vds || vds.status === 'success' || vds.status === 'completed' || vds.status === 'devtools-blocked') { return ''; }
-  const isFailed  = vds.status === 'failed';
-  const bg        = isFailed ? '#7f1d1d' : '#78350f';
-  const border    = isFailed ? '#ef4444' : '#f97316';
+  if (!vds || vds.status === 'success' || vds.status === 'completed' || vds.status === 'devtools-blocked') {return '';}
+  const isFailed = vds.status === 'failed';
+  const bg = isFailed ? '#7f1d1d' : '#78350f';
+  const border = isFailed ? '#ef4444' : '#f97316';
   const iconLabel = isFailed ? '\u2716 Visual Capture Failed' : '\u26a0 Visual Diff Skipped';
-  const hint      = isFailed
-    ? 'Close DevTools on both pages and run the comparison again.'
-    : 'Screenshots not available \u2014 property diffs are still complete.';
+  const hint = isFailed ?
+  'Close DevTools on both pages and run the comparison again.' :
+  'Screenshots not available \u2014 property diffs are still complete.';
   return `<div style="position:sticky;top:0;z-index:9999;background:${bg};border-bottom:3px solid ${border};padding:10px 16px;display:flex;align-items:flex-start;gap:10px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;">
   <span style="font-weight:800;color:#fff;white-space:nowrap;">${iconLabel}</span>
   <span style="flex:1;" class="u-text-secondary">${esc(vds.reason || 'No reason provided.')}</span>
@@ -123,11 +123,11 @@ function buildDiagnosticBanner(vds) {
 }
 
 function buildPreFlightBanner(w) {
-  if (!w || w.classification !== 'CAUTION') { return ''; }
+  if (!w || w.classification !== 'CAUTION') {return '';}
   const { mismatchDelta, estimatedFalseNegatives } = w;
   const parts = [];
-  if (mismatchDelta?.hash)        { parts.push(`SPA hash mismatch: <code>${esc(mismatchDelta.hash.baseline)}</code> vs <code>${esc(mismatchDelta.hash.compare)}</code>`); }
-  if (mismatchDelta?.queryParams) { parts.push(`Query differences: ${mismatchDelta.queryParams.map(p => esc(p.key)).join(', ')}`); }
+  if (mismatchDelta?.hash) {parts.push(`SPA hash mismatch: <code>${esc(mismatchDelta.hash.baseline)}</code> vs <code>${esc(mismatchDelta.hash.compare)}</code>`);}
+  if (mismatchDelta?.queryParams) {parts.push(`Query differences: ${mismatchDelta.queryParams.map((p) => esc(p.key)).join(', ')}`);}
   const fn = estimatedFalseNegatives !== null ? ` ~${estimatedFalseNegatives} false negatives estimated.` : '';
   return `<div style="position:sticky;top:0;z-index:9998;background:#1e3a5f;border-bottom:3px solid #3b82f6;padding:10px 16px;display:flex;align-items:flex-start;gap:10px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;">
   <span style="font-weight:800;color:#93c5fd;white-space:nowrap;">\u26a0 Page State Mismatch</span>
@@ -173,9 +173,9 @@ function buildModalHtml() {
 }
 
 function buildDevToolsBanner(warnings) {
-  if (!warnings || warnings.length === 0) { return ''; }
-  const details = warnings.map(w =>
-    `<span style="display:block;margin-top:4px;">${esc(w.role)} tab: DevTools was open (viewport reduced to ${esc(String(w.originalHeight))}px). Screenshots taken at ${esc(String(w.bypassHeight))}px using virtual viewport override.</span>`
+  if (!warnings || warnings.length === 0) {return '';}
+  const details = warnings.map((w) =>
+  `<span style="display:block;margin-top:4px;">${esc(w.role)} tab: DevTools was open (viewport reduced to ${esc(String(w.originalHeight))}px). Screenshots taken at ${esc(String(w.bypassHeight))}px using virtual viewport override.</span>`
   ).join('');
   return `<div style="position:sticky;top:0;z-index:9998;background:#1e3a5f;border-bottom:3px solid #3b82f6;padding:10px 16px;display:flex;align-items:flex-start;gap:10px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;">
   <span style="font-weight:800;color:#93c5fd;white-space:nowrap;">&#8505; DevTools Detected &#8212; Capture Bypassed Successfully</span>
@@ -200,8 +200,8 @@ ${buildDiagnosticBanner(visualDiffStatus)}${buildDevToolsBanner(raw.devToolsWarn
     <span class="topbar-title">UI Comparison</span>
     <div class="topbar-direction" title="Comparison direction">&#x25B6; ${esc(raw.baseline?.url ? new URL(raw.baseline.url).hostname : 'Baseline')} &#x2192; ${esc(raw.compare?.url ? new URL(raw.compare.url).hostname : 'Compare')}</div>
     <div class="topbar-urls">
-      <div class="topbar-url baseline-url" title="${esc(raw.baseline?.url||'')}"><span class="url-label">B</span>${esc(raw.baseline?.url||'Baseline')}</div>
-      <div class="topbar-url compare-url" title="${esc(raw.compare?.url||'')}"><span class="url-label">C</span>${esc(raw.compare?.url||'Compare')}</div>
+      <div class="topbar-url baseline-url" title="${esc(raw.baseline?.url || '')}"><span class="url-label">B</span>${esc(raw.baseline?.url || 'Baseline')}</div>
+      <div class="topbar-url compare-url" title="${esc(raw.compare?.url || '')}"><span class="url-label">C</span>${esc(raw.compare?.url || 'Compare')}</div>
     </div>
     <div class="topbar-search"><input id="search" type="text" placeholder="Filter elements\u2026" autocomplete="off"></div>
   </header>
@@ -239,13 +239,13 @@ ${buildModalHtml()}
 }
 
 function buildSidebar(s, raw) {
-  const bar         = Math.round(s.matchRate ?? 0);
-  const sev         = s.severityBreakdown ?? { critical: 0, high: 0, medium: 0, low: 0 };
-  const cmpHost     = (() => { try { return new URL(raw?.compare?.url ?? '').hostname; } catch { return 'Compare'; } })();
-  const baseHost    = (() => { try { return new URL(raw?.baseline?.url ?? '').hostname; } catch { return 'Baseline'; } })();
-  const suppInfo    = s.suppressedChildCount > 0
-    ? `<div class="stat-row stat-row--subdued" title="${s.suppressedChildCount} child elements absorbed into parent diffs (CSS cascade suppression)"><span class="icon">\u2514</span> +${s.suppressedChildCount} cascaded</div>`
-    : '';
+  const bar = Math.round(s.matchRate ?? 0);
+  const sev = s.severityBreakdown ?? { critical: 0, high: 0, medium: 0, low: 0 };
+  const cmpHost = (() => {try {return new URL(raw?.compare?.url ?? '').hostname;} catch {return 'Compare';}})();
+  const baseHost = (() => {try {return new URL(raw?.baseline?.url ?? '').hostname;} catch {return 'Baseline';}})();
+  const suppInfo = s.suppressedChildCount > 0 ?
+  `<div class="stat-row stat-row--subdued" title="${s.suppressedChildCount} child elements absorbed into parent diffs (CSS cascade suppression)"><span class="icon">\u2514</span> +${s.suppressedChildCount} cascaded</div>` :
+  '';
   return `
 <div class="sidebar-section">
   <div class="stat-headline">${bar}%</div>
@@ -727,21 +727,21 @@ body{
 }
 
 function buildJs(grouped, manifest, blobData, raw) {
-  const data         = JSON.stringify(grouped);
+  const data = JSON.stringify(grouped);
   const manifestJson = JSON.stringify(manifest ?? {});
-  const blobJson     = JSON.stringify(blobData ?? {});
+  const blobJson = JSON.stringify(blobData ?? {});
   const hpidMetaJson = JSON.stringify(
     Object.fromEntries(
-      (raw?.comparison?.results ?? [])
-        .filter(r => r.hpid)
-        .map(r => [r.hpid, { t: r.tagName ?? null, c: r.className ?? null, id: r.elementId ?? null }])
+      (raw?.comparison?.results ?? []).
+      filter((r) => r.hpid).
+      map((r) => [r.hpid, { t: r.tagName ?? null, c: r.className ?? null, id: r.elementId ?? null }])
     )
   );
-  const meta         = JSON.stringify({
-    baselineUrl:  raw?.baseline?.url  ?? '',
-    compareUrl:   raw?.compare?.url   ?? '',
-    baselineHost: (() => { try { return new URL(raw?.baseline?.url ?? '').hostname; } catch { return 'Baseline'; } })(),
-    compareHost:  (() => { try { return new URL(raw?.compare?.url  ?? '').hostname; } catch { return 'Compare';  } })(),
+  const meta = JSON.stringify({
+    baselineUrl: raw?.baseline?.url ?? '',
+    compareUrl: raw?.compare?.url ?? '',
+    baselineHost: (() => {try {return new URL(raw?.baseline?.url ?? '').hostname;} catch {return 'Baseline';}})(),
+    compareHost: (() => {try {return new URL(raw?.compare?.url ?? '').hostname;} catch {return 'Compare';}})()
   });
 
   return `(function(){

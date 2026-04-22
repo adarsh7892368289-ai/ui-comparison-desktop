@@ -14,10 +14,12 @@ function sidebarMaxW() {
   return Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, window.innerWidth - 200));
 }
 
+const DEFAULT_SIDEBAR_EXPANDED_PX = 400;
+
 function clampSidebarWidth(px) {
   const n = Math.round(px);
   if (!Number.isFinite(n)) {
-    return Math.min(300, sidebarMaxW());
+    return Math.min(DEFAULT_SIDEBAR_EXPANDED_PX, sidebarMaxW());
   }
   return Math.max(SIDEBAR_MIN_W, Math.min(sidebarMaxW(), n));
 }
@@ -399,7 +401,7 @@ export class AppShell {
   }
 
   _sidebarExpandedWidthPx() {
-    const def = 300;
+    const def = DEFAULT_SIDEBAR_EXPANDED_PX;
     try {
       const saved = parseInt(localStorage.getItem('sidebar-width'), 10);
       if (!Number.isNaN(saved) && saved >= SIDEBAR_MIN_W && saved <= SIDEBAR_MAX_W) {

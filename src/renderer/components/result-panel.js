@@ -5,7 +5,7 @@ import { iconAlertCircle, iconCheck, iconGitCompare } from '../utils/icons.js';
 
 function _ce(tag, className) {
   const el = document.createElement(tag);
-  if (className) { el.className = className; }
+  if (className) {el.className = className;}
   return el;
 }
 
@@ -16,13 +16,13 @@ function _text(tag, className, content) {
 }
 
 function _buildSevRow(label, count, type, sevTotal) {
-  const pct  = sevTotal > 0 ? ((count / sevTotal) * 100).toFixed(1) : 0;
-  const row  = _ce('div', 'rp-sev-row');
+  const pct = sevTotal > 0 ? (count / sevTotal * 100).toFixed(1) : 0;
+  const row = _ce('div', 'rp-sev-row');
   row.setAttribute('role', 'listitem');
   row.setAttribute('aria-label', `${label}: ${count} element${count !== 1 ? 's' : ''}`);
   const badge = _text('span', `badge badge-${type}`, label);
-  const wrap  = _ce('div', 'rp-sev-bar-wrap');
-  const fill  = _ce('div', `rp-sev-bar-fill sev-${type}`);
+  const wrap = _ce('div', 'rp-sev-bar-wrap');
+  const fill = _ce('div', `rp-sev-bar-fill sev-${type}`);
   fill.style.width = `${pct}%`;
   wrap.appendChild(fill);
   const countEl = _text('span', 'sev-count', String(count));
@@ -31,20 +31,20 @@ function _buildSevRow(label, count, type, sevTotal) {
 }
 
 function shortenUrl(url) {
-  try { const u = new URL(url); return u.hostname + (u.pathname !== '/' ? u.pathname : ''); }
-  catch { return url ?? '—'; }
+  try {const u = new URL(url);return u.hostname + (u.pathname !== '/' ? u.pathname : '');}
+  catch {return url ?? '—';}
 }
 
 function getMatchRateColor(pct) {
-  if (pct >= 75) { return 'var(--color-success)'; }
-  if (pct >= 60) { return 'hsl(25 85% 52%)'; }
+  if (pct >= 75) {return 'var(--color-success)';}
+  if (pct >= 60) {return 'hsl(25 85% 52%)';}
   return 'var(--color-destructive)';
 }
 
 function _truncateElText(s, max = 40) {
-  if (s == null || s === '') { return ''; }
+  if (s == null || s === '') {return '';}
   const t = String(s).replace(/\s+/g, ' ').trim();
-  if (t.length <= max) { return t; }
+  if (t.length <= max) {return t;}
   return `${t.slice(0, max)}…`;
 }
 
@@ -58,7 +58,7 @@ function _elementTagClassLine(el) {
 function _buildElRow(el) {
   const row = _ce('div', 'el-row');
   const sel = el.cssSelector ?? el.xpath ?? '';
-  if (sel) { row.title = sel; }
+  if (sel) {row.title = sel;}
 
   const info = _ce('div', 'el-info');
   const tagLine = _elementTagClassLine(el);
@@ -79,12 +79,12 @@ function _buildElRow(el) {
 
 export class ResultPanel {
   constructor(containerEl) {
-    this._container  = containerEl;
-    this._listeners  = [];
+    this._container = containerEl;
+    this._listeners = [];
   }
 
-  render(result, cachedAt = null) {
-    if (!result) { this.clear(); return; }
+  render(result, cachedAt = null, fromCache = false) {
+    if (!result) {this.clear();return;}
 
     const { matching, comparison, mode, duration } = result;
     const { summary } = comparison;
@@ -94,15 +94,15 @@ export class ResultPanel {
       totalDifferences,
       propertyDiffCount,
       modifiedElements,
-      unchangedElements,
+      unchangedElements
     } = summary;
 
     const { critical = 0, high = 0, medium = 0, low = 0 } = severityBreakdown ?? severityCounts ?? {};
-    const sevTotal    = (critical + high + medium + low) || 1;
+    const sevTotal = critical + high + medium + low || 1;
     const sevElements = critical + high + medium + low;
     const propChanges = propertyDiffCount ?? totalDifferences ?? 0;
 
-    const added   = result.unmatchedElements?.compare  ?? [];
+    const added = result.unmatchedElements?.compare ?? [];
     const removed = result.unmatchedElements?.baseline ?? [];
 
     this._removeListeners();
@@ -110,7 +110,7 @@ export class ResultPanel {
 
     const root = _ce('div', 'result-panel');
 
-    root.appendChild(this._buildSummaryBar(matching, mode, duration, cachedAt, result.baselineUrl, result.compareUrl));
+    root.appendChild(this._buildSummaryBar(matching, mode, duration, cachedAt, fromCache, result.baselineUrl, result.compareUrl));
     root.appendChild(this._buildCoverageSection(matching, modifiedElements, unchangedElements, added, removed));
 
     if (added.length > 0) {
@@ -135,36 +135,36 @@ export class ResultPanel {
     this._container.appendChild(root);
   }
 
-  _buildSummaryBar(matching, mode, duration, cachedAt, baselineUrl, compareUrl) {
+  _buildSummaryBar(matching, mode, duration, cachedAt, fromCache, baselineUrl, compareUrl) {
     const bar = _ce('div', 'result-summary-bar');
 
-    const pct    = matching.matchRate ?? 0;
-    const r      = 30;
-    const cx     = 40;
-    const cy     = 40;
-    const circ   = 2 * Math.PI * r;
-    const filled = (pct / 100) * circ;
-    const gap    = circ - filled;
+    const pct = matching.matchRate ?? 0;
+    const r = 30;
+    const cx = 40;
+    const cy = 40;
+    const circ = 2 * Math.PI * r;
+    const filled = pct / 100 * circ;
+    const gap = circ - filled;
 
     const arcColor = getMatchRateColor(pct);
 
     const svgNS = 'http://www.w3.org/2000/svg';
     const svgEl = document.createElementNS(svgNS, 'svg');
-    svgEl.setAttribute('width',   '80');
-    svgEl.setAttribute('height',  '80');
+    svgEl.setAttribute('width', '80');
+    svgEl.setAttribute('height', '80');
     svgEl.setAttribute('viewBox', '0 0 80 80');
-    svgEl.setAttribute('class',   'match-rate-donut');
+    svgEl.setAttribute('class', 'match-rate-donut');
     svgEl.setAttribute('aria-label', `${pct}% match rate`);
     svgEl.setAttribute('role', 'img');
 
     const track = document.createElementNS(svgNS, 'circle');
-    track.setAttribute('cx', cx); track.setAttribute('cy', cy); track.setAttribute('r', r);
+    track.setAttribute('cx', cx);track.setAttribute('cy', cy);track.setAttribute('r', r);
     track.setAttribute('fill', 'none');
     track.setAttribute('stroke', 'var(--color-surface-raised)');
     track.setAttribute('stroke-width', '8');
 
     const arc = document.createElementNS(svgNS, 'circle');
-    arc.setAttribute('cx', cx); arc.setAttribute('cy', cy); arc.setAttribute('r', r);
+    arc.setAttribute('cx', cx);arc.setAttribute('cy', cy);arc.setAttribute('r', r);
     arc.setAttribute('fill', 'none');
     arc.setAttribute('stroke', arcColor);
     arc.setAttribute('stroke-width', '8');
@@ -174,7 +174,7 @@ export class ResultPanel {
 
     const label = document.createElementNS(svgNS, 'text');
     label.setAttribute('class', 'match-rate-value');
-    label.setAttribute('x', cx); label.setAttribute('y', cy);
+    label.setAttribute('x', cx);label.setAttribute('y', cy);
     label.setAttribute('dominant-baseline', 'central');
     label.setAttribute('text-anchor', 'middle');
     label.setAttribute('font-size', '16');
@@ -197,21 +197,21 @@ export class ResultPanel {
     meta.appendChild(_text('span', 'result-mode-badge', mode));
     meta.appendChild(_text('span', '', `${duration}ms`));
 
-    if (cachedAt) {
-      const cached = _ce('span', 'result-cached-badge');
-      cached.title       = 'Loaded from cache — run Compare to refresh';
+    if (fromCache && cachedAt) {
+      const cached = _ce('span', 'result-mode-badge');
+      cached.title = 'Loaded from cache — run Compare to refresh';
       cached.textContent = `Cached · ${relativeTime(cachedAt)}`;
       meta.appendChild(cached);
     }
 
     detail.appendChild(meta);
 
-    const urlRow  = _ce('div', 'result-url-row');
-    const urlAEl  = _text('span', 'result-url result-url--baseline', shortenUrl(baselineUrl));
-    urlAEl.title  = baselineUrl ?? '';
-    const sep     = _text('span', 'result-url-sep', '↔');
-    const urlBEl  = _text('span', 'result-url result-url--compare', shortenUrl(compareUrl));
-    urlBEl.title  = compareUrl ?? '';
+    const urlRow = _ce('div', 'result-url-row');
+    const urlAEl = _text('span', 'result-url result-url--baseline', shortenUrl(baselineUrl));
+    urlAEl.title = baselineUrl ?? '';
+    const sep = _text('span', 'result-url-sep', '↔');
+    const urlBEl = _text('span', 'result-url result-url--compare', shortenUrl(compareUrl));
+    urlBEl.title = compareUrl ?? '';
     urlRow.append(urlAEl, sep, urlBEl);
     detail.appendChild(urlRow);
 
@@ -220,13 +220,13 @@ export class ResultPanel {
   }
 
   _buildCoverageSection(matching, modifiedElements, unchangedElements, added, removed) {
-    const total     = matching.totalElements
-                   ?? ((matching.totalMatched ?? 0) + (matching.unmatchedBaseline ?? 0) + (matching.unmatchedCompare ?? 0));
-    const matched   = matching.totalMatched ?? 0;
+    const total = matching.totalElements ??
+    (matching.totalMatched ?? 0) + (matching.unmatchedBaseline ?? 0) + (matching.unmatchedCompare ?? 0);
+    const matched = matching.totalMatched ?? 0;
     const unchanged = matching.unchangedCount ?? unchangedElements ?? 0;
-    const modified  = matching.modifiedCount  ?? modifiedElements  ?? 0;
-    const addedCnt  = matching.addedCount     ?? (added?.length   ?? 0);
-    const removedCnt= matching.removedCount   ?? (removed?.length ?? 0);
+    const modified = matching.modifiedCount ?? modifiedElements ?? 0;
+    const addedCnt = matching.addedCount ?? added?.length ?? 0;
+    const removedCnt = matching.removedCount ?? removed?.length ?? 0;
     const unmatched = addedCnt + removedCnt;
 
     const pct = (n) => total > 0 ? Math.round(n / total * 100) : 0;
@@ -249,12 +249,12 @@ export class ResultPanel {
 
     const tree = _ce('div', 'coverage-tree');
     tree.appendChild(this._buildCoverageGroup('Matched', matched, pct(matched),
-      [{ label: 'Unchanged', val: unchanged, symbol: '●', note: 'no differences', cls: 'unchanged' },
-       { label: 'Modified',  val: modified,  symbol: '●', note: 'CSS changes',    cls: 'modified'  }]
+    [{ label: 'Unchanged', val: unchanged, symbol: '●', note: 'no differences', cls: 'unchanged' },
+    { label: 'Modified', val: modified, symbol: '●', note: 'CSS changes', cls: 'modified' }]
     ));
     tree.appendChild(this._buildCoverageGroup('Unmatched', unmatched, pct(unmatched),
-      [{ label: 'Added',   val: addedCnt,   symbol: '+', note: 'new in compare',       cls: 'added'   },
-       { label: 'Removed', val: removedCnt, symbol: '−', note: 'missing from baseline', cls: 'removed' }]
+    [{ label: 'Added', val: addedCnt, symbol: '+', note: 'new in compare', cls: 'added' },
+    { label: 'Removed', val: removedCnt, symbol: '−', note: 'missing from baseline', cls: 'removed' }]
     ));
     section.appendChild(tree);
     return section;
@@ -274,19 +274,19 @@ export class ResultPanel {
   }
 
   _buildCoverageGroup(label, total, pct, children) {
-    const group  = _ce('div', 'coverage-group');
+    const group = _ce('div', 'coverage-group');
     const header = _ce('div', 'coverage-group-header');
-    const lbl    = _ce('span', 'cg-label');  lbl.textContent  = label;
-    const val    = _ce('span', 'cg-value');  val.textContent  = String(total);
-    const pctEl  = _ce('span', 'cg-pct');   pctEl.textContent = `${pct}%`;
+    const lbl = _ce('span', 'cg-label');lbl.textContent = label;
+    const val = _ce('span', 'cg-value');val.textContent = String(total);
+    const pctEl = _ce('span', 'cg-pct');pctEl.textContent = `${pct}%`;
     header.append(lbl, val, pctEl);
     group.appendChild(header);
     for (const child of children) {
-      const row  = _ce('div', `coverage-child coverage-child--${child.cls}`);
-      const sym  = _ce('span', 'cc-sym');   sym.textContent  = child.symbol;
-      const cLbl = _ce('span', 'cc-label'); cLbl.textContent = child.label;
-      const cVal = _ce('span', 'cc-val');   cVal.textContent = String(child.val);
-      const note = _ce('span', 'cc-note');  note.textContent = child.note;
+      const row = _ce('div', `coverage-child coverage-child--${child.cls}`);
+      const sym = _ce('span', 'cc-sym');sym.textContent = child.symbol;
+      const cLbl = _ce('span', 'cc-label');cLbl.textContent = child.label;
+      const cVal = _ce('span', 'cc-val');cVal.textContent = String(child.val);
+      const note = _ce('span', 'cc-note');note.textContent = child.note;
       row.append(sym, cLbl, cVal, note);
       group.appendChild(row);
     }
@@ -303,10 +303,10 @@ export class ResultPanel {
 
     const list = _ce('div');
     list.setAttribute('role', 'list');
-    if (critical > 0) { list.appendChild(_buildSevRow('Critical', critical, 'critical', sevTotal)); }
-    if (high     > 0) { list.appendChild(_buildSevRow('High',     high,     'high',     sevTotal)); }
-    if (medium   > 0) { list.appendChild(_buildSevRow('Medium',   medium,   'medium',   sevTotal)); }
-    if (low      > 0) { list.appendChild(_buildSevRow('Low',      low,      'low',      sevTotal)); }
+    if (critical > 0) {list.appendChild(_buildSevRow('Critical', critical, 'critical', sevTotal));}
+    if (high > 0) {list.appendChild(_buildSevRow('High', high, 'high', sevTotal));}
+    if (medium > 0) {list.appendChild(_buildSevRow('Medium', medium, 'medium', sevTotal));}
+    if (low > 0) {list.appendChild(_buildSevRow('Low', low, 'low', sevTotal));}
     frame.appendChild(list);
     section.appendChild(frame);
 
@@ -314,34 +314,34 @@ export class ResultPanel {
   }
 
   _buildActionsBar() {
-    const bar     = _ce('div', 'result-actions');
-    const fmtRow  = _ce('div', 'export-format-row');
+    const bar = _ce('div', 'result-actions');
+    const fmtRow = _ce('div', 'export-format-row');
 
-    const select  = _ce('select', 'select select-sm');
-    select.id     = 'export-format-select';
+    const select = _ce('select', 'select select-sm');
+    select.id = 'export-format-select';
     select.setAttribute('aria-label', 'Export format');
     [['html', 'HTML'], ['xlsx', 'Excel'], ['csv', 'CSV'], ['json', 'JSON']].forEach(([val, label]) => {
-      const opt   = _ce('option');
-      opt.value   = val;
+      const opt = _ce('option');
+      opt.value = val;
       opt.textContent = label;
       select.appendChild(opt);
     });
 
-    const exportBtn      = _ce('button', 'btn-ghost btn-sm');
-    exportBtn.id         = 'export-comparison-btn';
+    const exportBtn = _ce('button', 'btn-ghost btn-sm');
+    exportBtn.id = 'export-comparison-btn';
     exportBtn.textContent = 'Export';
-    const exportHandler   = () => handleExport();
+    const exportHandler = () => handleExport();
     exportBtn.addEventListener('click', exportHandler);
     this._listeners.push({ el: exportBtn, type: 'click', fn: exportHandler });
 
     fmtRow.append(select, exportBtn);
 
-    const reportBtn       = _ce('button', 'btn-primary');
-    reportBtn.id          = 'view-report-btn';
+    const reportBtn = _ce('button', 'btn-primary');
+    reportBtn.id = 'view-report-btn';
     reportBtn.style.width = 'auto';
     reportBtn.style.padding = '0 var(--space-5)';
     reportBtn.textContent = 'Full Report';
-    const reportHandler   = () => handleFullReport();
+    const reportHandler = () => handleFullReport();
     reportBtn.addEventListener('click', reportHandler);
     this._listeners.push({ el: reportBtn, type: 'click', fn: reportHandler });
 
@@ -381,13 +381,13 @@ export class ResultPanel {
     const root = _ce('div', 'result-empty-state result-empty-state--error');
     root.setAttribute('role', 'alert');
     const raw =
-      message == null
-        ? 'Unknown error'
-        : typeof message === 'string'
-          ? message
-          : typeof message === 'object' && message.message != null
-            ? String(message.message)
-            : String(message);
+    message == null ?
+    'Unknown error' :
+    typeof message === 'string' ?
+    message :
+    typeof message === 'object' && message.message != null ?
+    String(message.message) :
+    String(message);
     const short = raw.length > 80 ? `${raw.slice(0, 80)}…` : raw;
     root.innerHTML = `
       <div class="result-empty-icon result-empty-icon--error" aria-hidden="true">${iconAlertCircle(40)}</div>

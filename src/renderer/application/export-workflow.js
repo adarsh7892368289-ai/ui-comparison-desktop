@@ -1,6 +1,7 @@
 import { getState }                          from '../state.js';
 import { Toast }                              from '../ui.js';
-import { sanitizeFilename, hostFromUrl }      from './report-manager.js';
+import { sanitizeFilename }                    from '../utils/sanitize.js';
+import { hostFromUrl }                         from '../utils/report-metadata.js';
 import { normalizeComparisonResult }          from './compare-workflow.js';
 import { exportToHTML }                       from '@core/export/comparison-exporters/html-exporter.js';
 import { buildComparisonCsv }                 from '@core/export/comparison-exporters/csv-exporter.js';

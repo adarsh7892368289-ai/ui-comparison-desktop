@@ -13,8 +13,11 @@ module.exports = Object.freeze({
   GET_PERF_METRICS:               'GET_PERF_METRICS',
   COMPARISON_PROGRESS:            'COMPARISON_PROGRESS',
   EXTRACTION_PROGRESS:            'EXTRACTION_PROGRESS',
+  CANCEL_OPERATION:               'CANCEL_OPERATION',
+  OPERATION_CANCELLED:            'OPERATION_CANCELLED',
   SET_WINDOW_TITLE:               'SET_WINDOW_TITLE',
   SHOW_CONTEXT_MENU:              'show-context-menu',
   CONTEXT_ACTION:                 'context-action',
   MENU_ACTION:                    'menu-action',
+  APP_NOTIFICATION:               'APP_NOTIFICATION',
 });

@@ -172,6 +172,10 @@ body {
 .btn-primary:hover:not(:disabled) { background: var(--color-brand-hover); box-shadow: 0 4px 12px var(--color-brand-glow); }
 .btn-primary:active:not(:disabled) { transform: scale(0.98); }
 
+.btn-primary.btn-primary--operation-cancel {
+  opacity: 0.85;
+}
+
 .btn-ghost {
   display: inline-flex;
   align-items: center;

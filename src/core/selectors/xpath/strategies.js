@@ -7,8 +7,8 @@ import {
   collectStableAttributes,
   getStableAncestorChain,
   findBestSemanticAncestor,
-  getUniversalTag
-} from '../selector-utils.js';
+  getUniversalTag } from
+'../selector-utils.js';
 import { escapeXPath } from './validator.js';
 
 const TIER_ROBUSTNESS = {
@@ -42,7 +42,7 @@ class XPathStrategies {
 
   static tier2StableId(element, tag) {
     const results = [];
-    const {id} = element;
+    const { id } = element;
     if (id && isStableId(id)) {
       results.push({ xpath: `//${tag}[@id=${escapeXPath(id)}]`, strategy: 'stable-id', tier: 2 });
     }
@@ -149,7 +149,7 @@ class XPathStrategies {
     const text = cleanText(element.textContent);
     if (!text || text.length < 5 || text.length > 200) {return results;}
     if (!isStaticText(text)) {return results;}
-    const words = text.split(/\s+/).filter(w => w.length > 0);
+    const words = text.split(/\s+/).filter((w) => w.length > 0);
     if (words.length >= 2) {
       const partial = words.slice(0, Math.min(4, words.length)).join(' ');
       if (partial.length >= 5) {
@@ -166,7 +166,7 @@ class XPathStrategies {
     const parentTag = getUniversalTag(parent);
     const parentId = parent.id;
     if (parentId && isStableId(parentId)) {
-      const sameTagSiblings = Array.from(parent.children).filter(c => c.tagName === element.tagName);
+      const sameTagSiblings = Array.from(parent.children).filter((c) => c.tagName === element.tagName);
       if (sameTagSiblings.length === 1) {
         results.push({ xpath: `//${parentTag}[@id=${escapeXPath(parentId)}]/${tag}`, strategy: 'parent-id', tier: 13 });
       } else {
@@ -182,7 +182,7 @@ class XPathStrategies {
     const classAttr = element.getAttribute('class');
     if (!classAttr || !classAttr.trim()) {return results;}
     const unstablePatterns = [/^Mui[A-Z]/, /^makeStyles-/, /^css-[a-z0-9]+$/i, /^jss\d+$/, /^sc-/, /^emotion-/, /lwc-/i, /^_[a-z0-9]{5,}$/i];
-    const stable = classAttr.trim().split(/\s+/).filter(c => c.length >= 2 && !unstablePatterns.some(p => p.test(c)));
+    const stable = classAttr.trim().split(/\s+/).filter((c) => c.length >= 2 && !unstablePatterns.some((p) => p.test(c)));
     if (stable.length === 0) {return results;}
     results.push({ xpath: `//${tag}[contains(@class,${escapeXPath(stable[0])})]`, strategy: 'class-single', tier: 14 });
     if (stable.length >= 2) {
@@ -255,7 +255,7 @@ class XPathStrategies {
         break;
       }
       const currTag = getUniversalTag(current);
-      const sameTag = Array.from(parent.children).filter(c => c.tagName === current.tagName);
+      const sameTag = Array.from(parent.children).filter((c) => c.tagName === current.tagName);
       if (sameTag.length === 1) {
         path.unshift(currTag);
       } else {
@@ -274,7 +274,7 @@ class XPathStrategies {
     const results = [];
     const parent = element.parentElement;
     if (!parent) {return results;}
-    const directSameTag = Array.from(parent.children).filter(c => c.tagName === element.tagName);
+    const directSameTag = Array.from(parent.children).filter((c) => c.tagName === element.tagName);
     const index = directSameTag.indexOf(element);
     if (index !== -1) {
       const parentTag = getUniversalTag(parent);
@@ -287,7 +287,7 @@ class XPathStrategies {
     const results = [];
     const parent = element.parentElement;
     if (!parent || !parent.parentElement) {return results;}
-    const sameTag = Array.from(parent.children).filter(el => el.tagName === element.tagName);
+    const sameTag = Array.from(parent.children).filter((el) => el.tagName === element.tagName);
     const index = sameTag.indexOf(element);
     if (index !== -1) {
       const parentTag = getUniversalTag(parent);
@@ -310,30 +310,30 @@ class XPathStrategies {
 
 function getAllStrategies() {
   return [
-    { tier: 0,  fn: (el, tag) => XPathStrategies.tier0ExactText(el, tag),             name: 'exact-text' },
-    { tier: 1,  fn: (el, tag) => XPathStrategies.tier1TestAttributes(el, tag),         name: 'test-attr' },
-    { tier: 2,  fn: (el, tag) => XPathStrategies.tier2StableId(el, tag),               name: 'stable-id' },
-    { tier: 3,  fn: (el, tag) => XPathStrategies.tier3NormalizedText(el, tag),         name: 'normalized-text' },
-    { tier: 4,  fn: (el, tag) => XPathStrategies.tier4StableAttributes(el, tag),       name: 'stable-attr' },
-    { tier: 5,  fn: (el, tag) => XPathStrategies.tier5DataAttributes(el, tag),         name: 'data-attr' },
-    { tier: 6,  fn: (el, tag) => XPathStrategies.tier6SemanticAncestor(el, tag),       name: 'semantic-ancestor' },
-    { tier: 7,  fn: (el, tag) => XPathStrategies.tier7NearbyText(el, tag),             name: 'nearby-text' },
-    { tier: 8,  fn: (el, tag) => XPathStrategies.tier8SiblingContext(el, tag),         name: 'sibling-context' },
-    { tier: 9,  fn: (el, tag) => XPathStrategies.tier9AncestorChain(el, tag),          name: 'ancestor-chain' },
-    { tier: 10, fn: (el, tag) => XPathStrategies.tier10TypeAndName(el, tag),           name: 'type-name' },
-    { tier: 11, fn: (el, tag) => XPathStrategies.tier11AriaLabel(el, tag),             name: 'aria-label' },
-    { tier: 12, fn: (el, tag) => XPathStrategies.tier12PartialText(el, tag),           name: 'partial-text' },
-    { tier: 13, fn: (el, tag) => XPathStrategies.tier13ParentWithId(el, tag),          name: 'parent-id' },
-    { tier: 14, fn: (el, tag) => XPathStrategies.tier14ClassCombination(el, tag),      name: 'class-combo' },
-    { tier: 15, fn: (el, tag) => XPathStrategies.tier15AncestorAttributePath(el, tag), name: 'ancestor-attr' },
-    { tier: 16, fn: (el, tag) => XPathStrategies.tier16RoleAttribute(el, tag),         name: 'role' },
-    { tier: 17, fn: (el, tag) => XPathStrategies.tier17HrefOrSrc(el, tag),             name: 'href-src' },
-    { tier: 18, fn: (el, tag) => XPathStrategies.tier18AltOrTitle(el, tag),            name: 'alt-title' },
-    { tier: 19, fn: (el, tag) => XPathStrategies.tier19AbsolutePath(el, tag),          name: 'absolute-path' },
-    { tier: 20, fn: (el, tag) => XPathStrategies.tier20TagWithPosition(el, tag),       name: 'tag-position' },
-    { tier: 21, fn: (el, tag) => XPathStrategies.tier21TypePosition(el, tag),          name: 'type-position' },
-    { tier: 22, fn: (el)      => XPathStrategies.tier22FallbackIndex(el),              name: 'fallback-index' }
-  ];
+  { tier: 0, fn: (el, tag) => XPathStrategies.tier0ExactText(el, tag), name: 'exact-text' },
+  { tier: 1, fn: (el, tag) => XPathStrategies.tier1TestAttributes(el, tag), name: 'test-attr' },
+  { tier: 2, fn: (el, tag) => XPathStrategies.tier2StableId(el, tag), name: 'stable-id' },
+  { tier: 3, fn: (el, tag) => XPathStrategies.tier3NormalizedText(el, tag), name: 'normalized-text' },
+  { tier: 4, fn: (el, tag) => XPathStrategies.tier4StableAttributes(el, tag), name: 'stable-attr' },
+  { tier: 5, fn: (el, tag) => XPathStrategies.tier5DataAttributes(el, tag), name: 'data-attr' },
+  { tier: 6, fn: (el, tag) => XPathStrategies.tier6SemanticAncestor(el, tag), name: 'semantic-ancestor' },
+  { tier: 7, fn: (el, tag) => XPathStrategies.tier7NearbyText(el, tag), name: 'nearby-text' },
+  { tier: 8, fn: (el, tag) => XPathStrategies.tier8SiblingContext(el, tag), name: 'sibling-context' },
+  { tier: 9, fn: (el, tag) => XPathStrategies.tier9AncestorChain(el, tag), name: 'ancestor-chain' },
+  { tier: 10, fn: (el, tag) => XPathStrategies.tier10TypeAndName(el, tag), name: 'type-name' },
+  { tier: 11, fn: (el, tag) => XPathStrategies.tier11AriaLabel(el, tag), name: 'aria-label' },
+  { tier: 12, fn: (el, tag) => XPathStrategies.tier12PartialText(el, tag), name: 'partial-text' },
+  { tier: 13, fn: (el, tag) => XPathStrategies.tier13ParentWithId(el, tag), name: 'parent-id' },
+  { tier: 14, fn: (el, tag) => XPathStrategies.tier14ClassCombination(el, tag), name: 'class-combo' },
+  { tier: 15, fn: (el, tag) => XPathStrategies.tier15AncestorAttributePath(el, tag), name: 'ancestor-attr' },
+  { tier: 16, fn: (el, tag) => XPathStrategies.tier16RoleAttribute(el, tag), name: 'role' },
+  { tier: 17, fn: (el, tag) => XPathStrategies.tier17HrefOrSrc(el, tag), name: 'href-src' },
+  { tier: 18, fn: (el, tag) => XPathStrategies.tier18AltOrTitle(el, tag), name: 'alt-title' },
+  { tier: 19, fn: (el, tag) => XPathStrategies.tier19AbsolutePath(el, tag), name: 'absolute-path' },
+  { tier: 20, fn: (el, tag) => XPathStrategies.tier20TagWithPosition(el, tag), name: 'tag-position' },
+  { tier: 21, fn: (el, tag) => XPathStrategies.tier21TypePosition(el, tag), name: 'type-position' },
+  { tier: 22, fn: (el) => XPathStrategies.tier22FallbackIndex(el), name: 'fallback-index' }];
+
 }
 
 export { XPathStrategies, getAllStrategies, TIER_ROBUSTNESS };

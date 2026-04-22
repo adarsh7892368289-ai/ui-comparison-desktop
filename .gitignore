@@ -28,6 +28,11 @@ pids
 
 electron-builder-cache/
 
+# Playwright browser downloads (PLAYWRIGHT_BROWSERS_PATH / electron-builder extraResources source).
+# Ignore any of these if you keep the cache inside the repo; default OS cache (~/.cache/ms-playwright, etc.) is outside the repo.
+.playwright-browsers/
+playwright-browsers/
+
 .nyc_output
 coverage/
 *.tsbuildinfo

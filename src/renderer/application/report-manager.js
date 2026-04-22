@@ -7,20 +7,22 @@ import {
   showProgress,
   hideProgress,
   updateProgress,
-  syncCompareButton,
-} from '../ui.js';
+  syncCompareButton } from
+'../ui.js';
 import { SINGLE_EXTRACTED_REPORT_EXPORT_FORMATS } from '@core/export/extraction-exporters/extracted-report-export-catalog.js';
 import { handleExportReport } from './export-workflow.js';
 import { tryLoadCachedComparison } from './compare-workflow.js';
 import { relativeTime } from '../utils/time.js';
+import { hostFromUrl, lastPathSegment, envTag } from '../utils/report-metadata.js';
 import { createReportList } from '../components/report-list.js';
 import { attachTooltip } from '../components/tooltip/tooltip.js';
 import {
   wireReportSelect,
   refreshReportSelectPanel,
-  syncReportSelectTrigger,
-} from '../components/report-select-combobox.js';
+  syncReportSelectTrigger } from
+'../components/report-select-combobox.js';
 import {
+  iconAlertTriangle,
   iconArrowUpDown,
   iconCheck,
   iconLayers,
@@ -28,9 +30,8 @@ import {
   iconList,
   iconRowsComfortable,
   iconSearch,
-  iconSpinner,
-  iconX,
-} from '../utils/icons.js';
+  iconX } from
+'../utils/icons.js';
 
 let _reportList = null;
 let _statusBar = null;
@@ -41,22 +42,22 @@ let _groupMenuDocDown = null;
 let _sidebarTooltipDisposers = [];
 
 const SORT_PRESETS = [
-  { sortField: 'date', sortDirection: 'desc', menuLabel: 'Date — newest first' },
-  { sortField: 'date', sortDirection: 'asc', menuLabel: 'Date — oldest first' },
-  { sortField: 'name', sortDirection: 'asc', menuLabel: 'Host — A to Z' },
-  { sortField: 'name', sortDirection: 'desc', menuLabel: 'Host — Z to A' },
-  { sortField: 'elements', sortDirection: 'desc', menuLabel: 'Elements — most first' },
-  { sortField: 'elements', sortDirection: 'asc', menuLabel: 'Elements — fewest first' },
-];
+{ sortField: 'date', sortDirection: 'desc', menuLabel: 'Date — newest first' },
+{ sortField: 'date', sortDirection: 'asc', menuLabel: 'Date — oldest first' },
+{ sortField: 'name', sortDirection: 'asc', menuLabel: 'Host — A to Z' },
+{ sortField: 'name', sortDirection: 'desc', menuLabel: 'Host — Z to A' },
+{ sortField: 'elements', sortDirection: 'desc', menuLabel: 'Elements — most first' },
+{ sortField: 'elements', sortDirection: 'asc', menuLabel: 'Elements — fewest first' }];
+
 
 const DENSITY_CYCLE_ORDER = ['compact', 'default', 'comfortable'];
 
 const GROUP_OPTIONS = [
-  { key: null, label: 'No grouping' },
-  { key: 'host', label: 'By Host' },
-  { key: 'date', label: 'By Date' },
-  { key: 'environment', label: 'By Environment' },
-];
+{ key: null, label: 'No grouping' },
+{ key: 'host', label: 'By Host' },
+{ key: 'date', label: 'By Date' },
+{ key: 'environment', label: 'By Environment' }];
+
 
 const VIEW_CONFIG_KEY = 'sidebar-view-config';
 const LEGACY_VIEW_CONFIG_KEY = 'report-view-config';
@@ -64,8 +65,8 @@ const LEGACY_VIEW_CONFIG_KEY = 'report-view-config';
 function _loadViewConfigFromStorage() {
   try {
     const cur = localStorage.getItem(VIEW_CONFIG_KEY);
-    if (cur) { return JSON.parse(cur); }
-  } catch { void 0; }
+    if (cur) {return JSON.parse(cur);}
+  } catch {void 0;}
   try {
     const leg = localStorage.getItem(LEGACY_VIEW_CONFIG_KEY);
     if (leg) {
@@ -73,10 +74,10 @@ function _loadViewConfigFromStorage() {
       try {
         localStorage.setItem(VIEW_CONFIG_KEY, leg);
         localStorage.removeItem(LEGACY_VIEW_CONFIG_KEY);
-      } catch { void 0; }
+      } catch {void 0;}
       return typeof parsed === 'object' && parsed !== null ? parsed : {};
     }
-  } catch { void 0; }
+  } catch {void 0;}
   return {};
 }
 
@@ -84,7 +85,7 @@ function _saveViewConfig(patch) {
   try {
     const existing = JSON.parse(localStorage.getItem(VIEW_CONFIG_KEY) || '{}');
     localStorage.setItem(VIEW_CONFIG_KEY, JSON.stringify({ ...existing, ...patch }));
-  } catch { void 0; }
+  } catch {void 0;}
 }
 
 function _normalizeViewConfig(raw) {
@@ -97,11 +98,11 @@ function _normalizeViewConfig(raw) {
   if (sortDirection !== 'asc' && sortDirection !== 'desc') {
     sortDirection = 'desc';
   }
-  const density = ['default', 'compact', 'comfortable'].includes(o.density)
-    ? o.density
-    : 'default';
+  const density = ['default', 'compact', 'comfortable'].includes(o.density) ?
+  o.density :
+  'default';
   let groupBy = o.groupBy ?? null;
-  if (groupBy === '') { groupBy = null; }
+  if (groupBy === '') {groupBy = null;}
   return { sortField, sortDirection, density, groupBy };
 }
 
@@ -112,7 +113,7 @@ function _persistListViewConfig() {
     groupBy: cfg.groupBy,
     sortField: cfg.sortField,
     sortDirection: cfg.sortDirection,
-    density: cfg.density,
+    density: cfg.density
   });
 }
 
@@ -133,29 +134,29 @@ function _removeGroupMenuListener() {
 function _closeSortMenu() {
   const menu = document.getElementById('sort-control-menu');
   const btn = document.getElementById('sort-control-btn');
-  if (menu) { menu.hidden = true; }
-  if (btn) { btn.setAttribute('aria-expanded', 'false'); }
+  if (menu) {menu.hidden = true;}
+  if (btn) {btn.setAttribute('aria-expanded', 'false');}
   _removeSortMenuListener();
 }
 
 function _closeGroupMenu() {
   const menu = document.getElementById('group-control-menu');
   const btn = document.getElementById('group-control-btn');
-  if (menu) { menu.hidden = true; }
-  if (btn) { btn.setAttribute('aria-expanded', 'false'); }
+  if (menu) {menu.hidden = true;}
+  if (btn) {btn.setAttribute('aria-expanded', 'false');}
   _removeGroupMenuListener();
 }
 
 function _sortTooltipText(cfg) {
   const p = SORT_PRESETS.find(
-    x => x.sortField === cfg.sortField && x.sortDirection === cfg.sortDirection
+    (x) => x.sortField === cfg.sortField && x.sortDirection === cfg.sortDirection
   );
   return p ? `Sort: ${p.menuLabel}` : 'Sort: Date — newest first';
 }
 
 function _groupTooltipText(cfg) {
   if (!cfg.groupBy) return 'No grouping';
-  const g = GROUP_OPTIONS.find(x => x.key === cfg.groupBy);
+  const g = GROUP_OPTIONS.find((x) => x.key === cfg.groupBy);
   return g ? `Group: ${g.label}` : 'No grouping';
 }
 
@@ -165,10 +166,10 @@ function _rebuildSortMenu() {
   const cfg = _reportList?.getViewConfig() ?? { sortField: 'date', sortDirection: 'desc' };
   menu.textContent = '';
   const groups = [
-    { title: 'Date', keys: ['date'] },
-    { title: 'Host', keys: ['name'] },
-    { title: 'Elements', keys: ['elements'] },
-  ];
+  { title: 'Date', keys: ['date'] },
+  { title: 'Host', keys: ['name'] },
+  { title: 'Elements', keys: ['elements'] }];
+
   let first = true;
   for (const g of groups) {
     if (!first) {
@@ -183,7 +184,7 @@ function _rebuildSortMenu() {
     head.textContent = g.title;
     head.setAttribute('role', 'presentation');
     menu.appendChild(head);
-    const presets = SORT_PRESETS.filter(p => g.keys.includes(p.sortField));
+    const presets = SORT_PRESETS.filter((p) => g.keys.includes(p.sortField));
     for (const preset of presets) {
       const active = cfg.sortField === preset.sortField && cfg.sortDirection === preset.sortDirection;
       const li = document.createElement('li');
@@ -200,16 +201,16 @@ function _rebuildSortMenu() {
       check.setAttribute('aria-hidden', 'true');
       const lab = document.createElement('span');
       lab.className = 'filter-rail__dropdown-item-label';
-      const short = preset.menuLabel.includes(' — ')
-        ? preset.menuLabel.split(' — ')[1]
-        : preset.menuLabel;
+      const short = preset.menuLabel.includes(' — ') ?
+      preset.menuLabel.split(' — ')[1] :
+      preset.menuLabel;
       lab.textContent = short;
       row.appendChild(check);
       row.appendChild(lab);
       row.addEventListener('click', () => {
         _reportList?.setViewConfig({
           sortField: preset.sortField,
-          sortDirection: preset.sortDirection,
+          sortDirection: preset.sortDirection
         });
         _persistListViewConfig();
         _syncSortControl();
@@ -294,7 +295,7 @@ function _syncSortControl() {
   if (!btn) return;
   const cfg = _reportList?.getViewConfig() ?? { sortField: 'date', sortDirection: 'desc' };
   const preset = SORT_PRESETS.find(
-    x => x.sortField === cfg.sortField && x.sortDirection === cfg.sortDirection
+    (x) => x.sortField === cfg.sortField && x.sortDirection === cfg.sortDirection
   ) ?? SORT_PRESETS[0];
   btn.innerHTML = `${iconArrowUpDown(14)}<span class="filter-rail__toolbar-btn-label">${preset.menuLabel}</span>`;
   btn.setAttribute('aria-label', _sortTooltipText(cfg));
@@ -304,7 +305,7 @@ function _syncGroupControl() {
   const btn = document.getElementById('group-control-btn');
   if (!btn) return;
   const cfg = _reportList?.getViewConfig() ?? { groupBy: null };
-  const g = GROUP_OPTIONS.find(x => (x.key || null) === (cfg.groupBy || null));
+  const g = GROUP_OPTIONS.find((x) => (x.key || null) === (cfg.groupBy || null));
   const label = g?.label ?? 'No grouping';
   btn.innerHTML = `${iconLayers(14)}<span class="filter-rail__toolbar-btn-label">${label}</span>`;
   btn.classList.toggle('filter-rail__toolbar-btn--active', Boolean(cfg.groupBy));
@@ -334,7 +335,7 @@ function _syncDensityCycleButton() {
 
 function _disposeSidebarTooltips() {
   for (const d of _sidebarTooltipDisposers) {
-    try { d(); } catch { void 0; }
+    try {d();} catch {void 0;}
   }
   _sidebarTooltipDisposers = [];
 }
@@ -393,6 +394,150 @@ function _syncSearchClearVisibility() {
 
 const api = window.electronAPI;
 
+const _extractCancelAck = new Set();
+
+let _activeExtractCancel = null;
+let _extractBusy = false;
+
+export function routeExtractBtnClick() {
+  if (_activeExtractCancel) {
+    void _activeExtractCancel();
+    return;
+  }
+  void handleExtraction();
+}
+
+function _filterClause(filters) {
+  if (!filters || typeof filters !== 'object') return 'none';
+  const parts = [];
+  if (filters.class?.trim()) parts.push(`class="${filters.class.trim()}"`);
+  if (filters.id?.trim()) parts.push(`id="${filters.id.trim()}"`);
+  if (filters.tag?.trim()) parts.push(`tag="${filters.tag.trim()}"`);
+  return parts.length ? parts.join(', ') : 'none';
+}
+
+function _reportDisplayLabel(reportId) {
+  const reports = getState().reports ?? [];
+  const total = reports.length;
+  const idx = reports.findIndex((r) => r.id === reportId);
+  if (idx < 0) return '';
+  return `R${total - idx}`;
+}
+
+function _clearExtractSummary() {
+  const el = document.getElementById('extract-summary');
+  if (!el) return;
+  el.replaceChildren();
+  el.hidden = true;
+}
+
+function _renderExtractSummary(payload) {
+  const slot = document.getElementById('extract-summary');
+  if (!slot) return;
+  slot.replaceChildren();
+  const { status } = payload;
+  const card = document.createElement('div');
+  card.className = 'operation-summary-card';
+
+  const body = document.createElement('div');
+  body.className = 'operation-summary-card__body';
+
+  if (status === 'success') {
+    const header = document.createElement('div');
+    header.className = 'operation-summary-card__header';
+    const dot = document.createElement('span');
+    dot.className = 'operation-summary-card__status-dot';
+    dot.setAttribute('aria-hidden', 'true');
+    const primary = document.createElement('span');
+    primary.className = 'operation-summary-card__primary';
+    const num = document.createElement('span');
+    num.className = 'operation-summary-card__stat-num';
+    num.textContent = String(payload.elementCount ?? 0);
+    const lab = document.createElement('span');
+    lab.className = 'operation-summary-card__stat-suffix';
+    lab.textContent = 'elements';
+    primary.appendChild(num);
+    primary.appendChild(lab);
+    const chips = document.createElement('div');
+    chips.className = 'operation-summary-card__chips';
+    const durSec = payload.durationMs != null ? (payload.durationMs / 1000).toFixed(1) : '0';
+    const durChip = document.createElement('span');
+    durChip.className = 'operation-summary-card__chip';
+    durChip.textContent = `${durSec}s`;
+    chips.appendChild(durChip);
+    const rid = payload.reportId ? _reportDisplayLabel(payload.reportId) : '';
+    if (rid) {
+      const idChip = document.createElement('span');
+      idChip.className = 'operation-summary-card__chip';
+      idChip.textContent = rid;
+      chips.appendChild(idChip);
+    }
+    header.appendChild(dot);
+    header.appendChild(primary);
+    header.appendChild(chips);
+    body.appendChild(header);
+
+    const metaRow = document.createElement('div');
+    metaRow.className = 'operation-summary-card__meta-row';
+    const urlSpan = document.createElement('span');
+    urlSpan.className = 'operation-summary-card__url';
+    const u = payload.url ?? '';
+    urlSpan.textContent = u;
+    urlSpan.title = u;
+    metaRow.appendChild(urlSpan);
+    const clause = payload.filterClause ?? 'none';
+    if (clause !== 'none') {
+      const sep = document.createElement('span');
+      sep.className = 'operation-summary-card__filters';
+      sep.textContent = ` · Filters: ${clause}`;
+      metaRow.appendChild(sep);
+    }
+    body.appendChild(metaRow);
+
+    if (payload.captureQuality === 'DEGRADED') {
+      const wr = document.createElement('div');
+      wr.className = 'operation-summary-card__warnline';
+      const ic = document.createElement('span');
+      ic.setAttribute('aria-hidden', 'true');
+      ic.innerHTML = iconAlertTriangle(14);
+      const wt = document.createElement('span');
+      wt.textContent =
+      'Page was still loading during extraction — captured elements may be incomplete.';
+      wr.appendChild(ic);
+      wr.appendChild(wt);
+      body.appendChild(wr);
+    }
+  } else if (status === 'cancelled') {
+    const header = document.createElement('div');
+    header.className = 'operation-summary-card__header';
+    const dot = document.createElement('span');
+    dot.className = 'operation-summary-card__status-dot operation-summary-card__status-dot--muted';
+    dot.setAttribute('aria-hidden', 'true');
+    const line = document.createElement('span');
+    line.className = 'operation-summary-card__cancelled-only';
+    line.textContent = 'Extraction cancelled';
+    header.appendChild(dot);
+    header.appendChild(line);
+    body.appendChild(header);
+  } else {
+    const header = document.createElement('div');
+    header.className = 'operation-summary-card__header';
+    const dot = document.createElement('span');
+    dot.className = 'operation-summary-card__status-dot operation-summary-card__status-dot--error';
+    dot.setAttribute('aria-hidden', 'true');
+    const line = document.createElement('span');
+    line.className = 'operation-summary-card__error-only';
+    line.textContent = payload.message || 'Extraction failed';
+    header.appendChild(dot);
+    header.appendChild(line);
+    body.appendChild(header);
+  }
+
+  card.appendChild(body);
+  slot.appendChild(card);
+  slot.hidden = false;
+}
+
 function handleEmptyClearSearchClick() {
   const input = document.getElementById('search-reports');
   if (!input) return;
@@ -414,7 +559,7 @@ function wireEmptyClearSearchButton() {
 
 function announceReportList(message) {
   const el = document.getElementById('report-list-announcer');
-  if (el) { el.textContent = message; }
+  if (el) {el.textContent = message;}
 }
 
 function selectBaselineFromReport(report) {
@@ -443,38 +588,9 @@ function selectCompareFromReport(report) {
   announceReportList(`Set as compare — ${hostFromUrl(report.url)}`);
 }
 
-const STAGE_RE = /\b(stage|staging|dev|test|qa|uat|preview|sandbox|canary)\b/i;
-
-function hostFromUrl(url) {
-  try { return new URL(url).hostname; } catch { return url; }
-}
-
-function lastPathSegment(url) {
-  try {
-    const seg = new URL(url).pathname.replace(/\/$/, '').split('/').filter(Boolean).pop();
-    return seg ? `/${seg}` : '/';
-  } catch { return ''; }
-}
-
-function sanitizeFilename(name) {
-  const cleaned = String(name ?? 'export')
-    .replace(/[^a-zA-Z0-9_.-]+/g, '-')
-    .replace(/[-_.]{2,}/g, '-')
-    .replace(/^[-_.]+|[-_.]+$/g, '')
-    .slice(0, 200);
-  return cleaned || 'export';
-}
-
-function envTag(url) {
-  if (!url) { return null; }
-  const host = hostFromUrl(url).toLowerCase();
-  if (STAGE_RE.test(host)) { return 'STAGE'; }
-  return 'PROD';
-}
-
 function insertReportListSkeletonOverlay() {
   const c = document.getElementById('reports-list');
-  if (!c || c.querySelector('.report-list-skeleton-overlay')) { return; }
+  if (!c || c.querySelector('.report-list-skeleton-overlay')) {return;}
   const o = document.createElement('div');
   o.className = 'report-list-skeleton-overlay';
   o.setAttribute('aria-hidden', 'true');
@@ -491,12 +607,12 @@ function filteredReportCount(reports, searchQuery) {
   const rawQ = searchQuery ?? '';
   const q = rawQ.toLowerCase().trim();
   if (!q) return list.length;
-  return list.filter(r =>
-    (hostFromUrl(r.url) || '').toLowerCase().includes(q) ||
-    (r.url || '').toLowerCase().includes(q) ||
-    (lastPathSegment(r.url) || '').toLowerCase().includes(q) ||
-    (r.environment || '').toLowerCase().includes(q) ||
-    (r.name || '').toLowerCase().includes(q)).length;
+  return list.filter((r) =>
+  (hostFromUrl(r.url) || '').toLowerCase().includes(q) ||
+  (r.url || '').toLowerCase().includes(q) ||
+  (lastPathSegment(r.url) || '').toLowerCase().includes(q) ||
+  (r.environment || '').toLowerCase().includes(q) ||
+  (r.name || '').toLowerCase().includes(q)).length;
 }
 
 function renderReportList(reports, searchQuery) {
@@ -506,7 +622,7 @@ function renderReportList(reports, searchQuery) {
   const count = filteredReportCount(reports, searchQuery);
   _statusBar?.updateReportCount(reports, count);
   const empty = document.getElementById('reports-empty');
-  if (!empty) { return; }
+  if (!empty) {return;}
   empty.classList.toggle('hidden', count > 0);
   const isFiltered = typeof searchQuery === 'string' && searchQuery.trim().length > 0;
   empty.dataset.filtered = String(isFiltered);
@@ -524,7 +640,7 @@ function renderReportList(reports, searchQuery) {
     }
   } else {
     const titleEl = filteredPanel?.querySelector('.empty-title');
-    if (titleEl) { titleEl.textContent = 'No results'; }
+    if (titleEl) {titleEl.textContent = 'No results';}
   }
 }
 
@@ -538,34 +654,48 @@ async function loadAndRenderReports() {
 }
 
 function populateReportSelectors(reports) {
-  const total       = reports.length;
-  const envTags     = reports.map(r => envTag(r.url));
-  const hasMultiEnv = envTags.some(e => e === 'STAGE');
+  const total = reports.length;
+  const envTags = reports.map((r) => envTag(r.url));
+  const hasMultiEnv = envTags.some((e) => e === 'STAGE');
 
-  ['baseline-report', 'compare-report'].forEach(selId => {
+  ['baseline-report', 'compare-report'].forEach((selId) => {
     const sel = document.getElementById(selId);
-    if (!sel) { return; }
+    if (!sel) {return;}
     const current = sel.value;
     sel.textContent = '';
     sel.appendChild(new Option('Select report…', ''));
     reports.forEach((r, i) => {
-      const host        = hostFromUrl(r.url).replace(/^www\./, '');
-      const path        = lastPathSegment(r.url);
-      const displayIdx  = total - i;
-      const envPrefix   = hasMultiEnv ? `${envTag(r.url)} · ` : '';
+      const host = hostFromUrl(r.url).replace(/^www\./, '');
+      const path = lastPathSegment(r.url);
+      const displayIdx = total - i;
+      const envPrefix = hasMultiEnv ? `${envTag(r.url)} · ` : '';
       const importedPfx = r.source === 'imported' ? '[↑] ' : '';
-      const label       = `${importedPfx}R${displayIdx} · ${envPrefix}${host}${path}`;
-      const opt         = new Option(label, r.id);
-      opt.title         = `${r.url} · ${r.totalElements ?? 0} elements · ${relativeTime(r.timestamp)}`;
-      opt.dataset.reportUrl       = r.url || '';
-      opt.dataset.reportElements  = String(r.totalElements ?? 0);
-      opt.dataset.reportTime      = relativeTime(r.timestamp);
-      if (r.id === current) { opt.selected = true; }
+      const label = `${importedPfx}R${displayIdx} · ${envPrefix}${host}${path}`;
+      const opt = new Option(label, r.id);
+      opt.title = `${r.url} · ${r.totalElements ?? 0} elements · ${relativeTime(r.timestamp)}`;
+      opt.dataset.reportUrl = r.url || '';
+      opt.dataset.reportElements = String(r.totalElements ?? 0);
+      opt.dataset.reportTime = relativeTime(r.timestamp);
+      if (r.id === current) {opt.selected = true;}
       sel.appendChild(opt);
     });
     refreshReportSelectPanel(sel);
   });
+  const br = document.getElementById('baseline-report');
+  const cr = document.getElementById('compare-report');
+  const bv = br?.value ?? '';
+  const cv = cr?.value ?? '';
+  const stSel = getState();
+  if (bv && bv !== stSel.selectedBaseline) {
+    dispatch('BASELINE_SELECTED', { id: bv });
+  }
+  if (cv && cv !== stSel.selectedCompare) {
+    dispatch('COMPARE_SELECTED', { id: cv });
+  }
   syncCompareButton();
+  if (bv && cv && bv !== cv) {
+    void tryLoadCachedComparison();
+  }
 }
 
 async function handleDeleteReport(report) {
@@ -574,7 +704,7 @@ async function handleDeleteReport(report) {
     `Delete "${report.title || hostFromUrl(report.url)}"? This cannot be undone.`,
     { confirmText: 'Delete', destructive: true }
   );
-  if (!confirmed) { return; }
+  if (!confirmed) {return;}
   try {
     await storage.deleteReport(report.id);
     await loadAndRenderReports();
@@ -585,16 +715,16 @@ async function handleDeleteReport(report) {
 }
 
 async function handleDeleteAllReports() {
-  const state   = getState();
+  const state = getState();
   const reports = state.reports ?? [];
-  if (reports.length === 0) { Toast.info('No reports to delete'); return; }
+  if (reports.length === 0) {Toast.info('No reports to delete');return;}
 
   const confirmed = await Modal.confirm(
     'Delete all reports',
     `This permanently deletes all ${reports.length} saved report${reports.length !== 1 ? 's' : ''}. This cannot be undone.`,
     { confirmText: 'Delete All', destructive: true }
   );
-  if (!confirmed) { return; }
+  if (!confirmed) {return;}
   try {
     await storage.deleteAllReports();
     await loadAndRenderReports();
@@ -606,66 +736,123 @@ async function handleDeleteAllReports() {
 
 async function handleExtraction() {
   const extractBtn = document.getElementById('extract-btn');
-  const urlInput   = document.getElementById('url-input');
-  if (!extractBtn || !urlInput) { return; }
+  const urlInput = document.getElementById('url-input');
+  if (!extractBtn || !urlInput) {return;}
+
+  if (_extractBusy) {
+    return;
+  }
 
   const url = urlInput.value.trim();
-  if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) {
+  if (!url || !url.startsWith('http://') && !url.startsWith('https://')) {
     setError('extract', 'Enter a valid URL starting with http:// or https://');
     return;
   }
+
+  _extractBusy = true;
   setError('extract', '');
+  _clearExtractSummary();
+
   const originalHTML = extractBtn.innerHTML;
-  extractBtn.style.minWidth = extractBtn.offsetWidth + 'px';
-  extractBtn.disabled  = true;
-  extractBtn.innerHTML = `${iconSpinner(14)} <span>Extracting…</span>`;
-  showProgress('extract', 'Starting…');
+  const originalClass = extractBtn.className;
+  extractBtn.style.minWidth = `${extractBtn.offsetWidth}px`;
+  extractBtn.className = 'btn-primary btn-primary--operation-cancel';
+  extractBtn.textContent = 'Cancel';
+  extractBtn.disabled = false;
+
+  const operationId = crypto.randomUUID();
+
+  _activeExtractCancel = async () => {
+    const ack = await api.cancelOperation({ operationId, kind: 'extract' });
+    if (ack?.acknowledged) {
+      _extractCancelAck.add(operationId);
+      dispatch('OPERATION_CANCELLING', {});
+      const lbl = document.getElementById('extract-progress-label');
+      if (lbl) {lbl.textContent = 'Cancelling…';}
+      extractBtn.disabled = true;
+    }
+  };
+
+  dispatch('EXTRACTION_STARTED', { label: 'Starting…', pct: 0 });
+
+  const filterClass = document.getElementById('filter-class')?.value.trim() ?? '';
+  const filterId = document.getElementById('filter-id')?.value.trim() ?? '';
+  const filterTag = document.getElementById('filter-tag')?.value.trim() ?? '';
+  const filters = {};
+  if (filterClass) {filters.class = filterClass;}
+  if (filterId) {filters.id = filterId;}
+  if (filterTag) {filters.tag = filterTag;}
+  const options = Object.keys(filters).length > 0 ? { filters } : {};
+  const filterClause = _filterClause(Object.keys(filters).length ? filters : {});
 
   const offExtraction = api.onExtractionProgress((data) => {
+    if (data?.operationId && data.operationId !== operationId) return;
     updateProgress('extract', data.pct, data.label);
+    dispatch('EXTRACTION_PROGRESS', { label: data.label, pct: data.pct });
   });
 
+  showProgress('extract', 'Starting…');
+
   try {
-    const filterClass = document.getElementById('filter-class')?.value.trim() ?? '';
-    const filterId    = document.getElementById('filter-id')?.value.trim()    ?? '';
-    const filterTag   = document.getElementById('filter-tag')?.value.trim()   ?? '';
-    const filters     = {};
-    if (filterClass) { filters.class = filterClass; }
-    if (filterId)    { filters.id    = filterId;    }
-    if (filterTag)   { filters.tag   = filterTag;   }
-    const options = Object.keys(filters).length > 0 ? { filters } : {};
-    const result  = await api.extractElements({ url, options });
+    const result = await api.extractElements({ url, options, operationId });
+
+    if (_extractCancelAck.has(operationId) || result.cancelled) {
+      hideProgress('extract');
+      _renderExtractSummary({ status: 'cancelled' });
+      return;
+    }
 
     if (!result.success) {
-      setError('extract', result.error ?? 'Extraction failed');
+      hideProgress('extract');
+      const errText = result.error ?? 'Extraction failed';
+      setError('extract', errText);
+      _renderExtractSummary({ status: 'error', message: errText });
+      return;
+    }
+
+    if (_extractCancelAck.has(operationId)) {
+      hideProgress('extract');
+      _renderExtractSummary({ status: 'cancelled' });
       return;
     }
 
     const report = Object.assign({}, result.report, {
-      id:        result.report.id        ?? crypto.randomUUID(),
+      id: result.report.id ?? crypto.randomUUID(),
       timestamp: result.report.timestamp ?? new Date().toISOString(),
-      url:       result.report.url       ?? url,
-      duration:  result.report?.duration ?? result.duration,
+      url: result.report.url ?? url,
+      duration: result.report?.duration ?? result.duration
     });
 
-    if (result.report.captureQuality === 'DEGRADED') {
-      Toast.warning('Page was still loading during extraction — captured elements may be incomplete.');
-    }
+    hideProgress('extract');
 
     await storage.saveReport(report);
     await loadAndRenderReports();
-    const dur = report.duration;
-    const durStr = dur ? ` · ${(dur / 1000).toFixed(1)}s` : '';
-    Toast.success(`Extracted ${report.totalElements ?? 0} elements${durStr}`);
+    _renderExtractSummary({
+      status: 'success',
+      elementCount: report.totalElements ?? 0,
+      durationMs: report.duration,
+      url: report.url ?? url,
+      filterClause,
+      captureQuality: result.report?.captureQuality,
+      reportId: report.id
+    });
 
   } catch (err) {
-    setError('extract', err.message ?? 'Unexpected error');
+    hideProgress('extract');
+    const msg = err.message ?? 'Unexpected error';
+    setError('extract', msg);
+    _renderExtractSummary({ status: 'error', message: msg });
   } finally {
     offExtraction();
-    extractBtn.disabled    = false;
-    extractBtn.innerHTML   = originalHTML;
-    extractBtn.style.minWidth = '';
     hideProgress('extract');
+    _extractCancelAck.delete(operationId);
+    _activeExtractCancel = null;
+    _extractBusy = false;
+    dispatch('EXTRACT_UI_END', {});
+    extractBtn.className = originalClass;
+    extractBtn.innerHTML = originalHTML;
+    extractBtn.style.minWidth = '';
+    extractBtn.disabled = false;
   }
 }
 
@@ -681,7 +868,7 @@ async function initializeApp(statusBar) {
       },
       onDelete: (report) => handleDeleteReport(report),
       onBaseline: (report) => selectBaselineFromReport(report),
-      onCompare: (report) => selectCompareFromReport(report),
+      onCompare: (report) => selectCompareFromReport(report)
     });
   }
 
@@ -690,16 +877,16 @@ async function initializeApp(statusBar) {
     groupBy: savedView.groupBy,
     sortField: savedView.sortField,
     sortDirection: savedView.sortDirection,
-    density: savedView.density,
+    density: savedView.density
   });
   _persistListViewConfig();
 
   if (typeof api?.onContextAction === 'function') {
     api.onContextAction((payload) => {
-      if (!payload || typeof payload.reportId !== 'string') { return; }
+      if (!payload || typeof payload.reportId !== 'string') {return;}
       const reports = getState().reports ?? [];
-      const report = reports.find(r => r.id === payload.reportId);
-      if (!report) { return; }
+      const report = reports.find((r) => r.id === payload.reportId);
+      if (!report) {return;}
       switch (payload.action) {
         case 'setBaseline':
           selectBaselineFromReport(report);
@@ -721,7 +908,7 @@ async function initializeApp(statusBar) {
     });
   }
 
-  subscribe(state => {
+  subscribe((state) => {
     _reportList?.setBaseline(state.selectedBaseline ?? null);
     _reportList?.setCompare(state.selectedCompare ?? null);
   });
@@ -753,7 +940,7 @@ async function initializeApp(statusBar) {
   document.getElementById('density-cycle-btn')?.addEventListener('click', () => {
     const cur = _reportList?.getViewConfig()?.density ?? 'default';
     let i = DENSITY_CYCLE_ORDER.indexOf(cur);
-    if (i < 0) { i = DENSITY_CYCLE_ORDER.indexOf('default'); }
+    if (i < 0) {i = DENSITY_CYCLE_ORDER.indexOf('default');}
     const safeNext = DENSITY_CYCLE_ORDER[(i + 1) % DENSITY_CYCLE_ORDER.length];
     _reportList?.setViewConfig({ density: safeNext });
     _persistListViewConfig();
@@ -770,7 +957,7 @@ async function initializeApp(statusBar) {
   });
 
   let _searchDebounce;
-  document.getElementById('search-reports')?.addEventListener('input', e => {
+  document.getElementById('search-reports')?.addEventListener('input', (e) => {
     _syncSearchClearVisibility();
     clearTimeout(_searchDebounce);
     _searchDebounce = setTimeout(() => {
@@ -788,17 +975,13 @@ async function initializeApp(statusBar) {
 
   const baselineSelect = document.getElementById('baseline-report');
   const compareSelect = document.getElementById('compare-report');
-  if (baselineSelect) { wireReportSelect(baselineSelect); }
-  if (compareSelect) { wireReportSelect(compareSelect); }
+  if (baselineSelect) {wireReportSelect(baselineSelect);}
+  if (compareSelect) {wireReportSelect(compareSelect);}
 
   await loadAndRenderReports();
 }
 
 export {
-  hostFromUrl,
-  lastPathSegment,
-  sanitizeFilename,
-  envTag,
   insertReportListSkeletonOverlay,
   renderReportList,
   filteredReportCount,
@@ -806,6 +989,4 @@ export {
   populateReportSelectors,
   handleDeleteReport,
   handleDeleteAllReports,
-  handleExtraction,
-  initializeApp,
-};
+  initializeApp };

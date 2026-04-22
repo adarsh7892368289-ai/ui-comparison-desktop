@@ -9,39 +9,44 @@ errorTracker.init();
 
 import { getState, dispatch, subscribe } from './state.js';
 import { Toast, syncCompareButton } from './ui.js';
+import { dispatchEnqueue } from './application/notification-queue.js';
 import {
   initializeApp,
   insertReportListSkeletonOverlay,
   filteredReportCount,
   handleDeleteAllReports,
-  handleExtraction,
-} from './application/report-manager.js';
+  routeExtractBtnClick } from
+'./application/report-manager.js';
 import {
   BULK_EXTRACTED_REPORT_EXPORT_BADGE_LABELS,
   BULK_EXTRACTED_REPORT_EXPORT_FORMAT_LABELS,
   BULK_EXTRACTED_REPORT_EXPORT_FORMATS,
-  BULK_EXTRACTED_REPORT_EXPORT_MENU,
-} from '@core/export/extraction-exporters/extracted-report-export-catalog.js';
+  BULK_EXTRACTED_REPORT_EXPORT_MENU } from
+'@core/export/extraction-exporters/extracted-report-export-catalog.js';
 import { handleExportAllReports, getBulkExportFormat, setBulkExportFormat } from './application/export-workflow.js';
 import { handleImportReport } from './application/import-workflow.js';
-import { handleComparison, tryLoadCachedComparison } from './application/compare-workflow.js';
+import {
+  routeCompareBtnClick,
+  tryLoadCachedComparison,
+  renderCompareSummaryFromStrip } from
+'./application/compare-workflow.js';
 import { createResultPanel } from './components/result-panel.js';
-import { createAppShell }       from './components/app-shell.js';
-import { SystemBanner }         from './components/system-banner.js';
-import { createStatusBar }      from './components/status-bar.js';
-import { attachTooltip }        from './components/tooltip/tooltip.js';
+import { createAppShell } from './components/app-shell.js';
+import { SystemBanner } from './components/system-banner.js';
+import { createStatusBar } from './components/status-bar.js';
+import { attachTooltip } from './components/tooltip/tooltip.js';
 import {
   getLeftPanelRailWidthPx,
   syncLeftPanelRailState,
-  TOOLBAR_COMPACT_PX,
-} from './utils/left-panel-breakpoints.js';
+  TOOLBAR_COMPACT_PX } from
+'./utils/left-panel-breakpoints.js';
 import {
   iconAlertCircle,
   iconArrowUp,
   iconChevronDown,
   iconFileDown,
-  iconTrash2,
-} from './utils/icons.js';
+  iconTrash2 } from
+'./utils/icons.js';
 
 const api = window.electronAPI;
 if (!api) {
@@ -64,20 +69,35 @@ if (!api) {
 
 api.setWindowTitle?.('UI Comparison');
 
-/** @type {(() => void)[]} */
+if (typeof api.onAppNotification === 'function') {
+  api.onAppNotification((payload) => {
+    if (!payload || typeof payload !== 'object') return;
+    dispatchEnqueue({
+      id: payload.id,
+      tier: payload.tier,
+      title: payload.title ?? '',
+      body: payload.body ?? null,
+      durationMs: payload.durationMs,
+      dedupeKey: payload.dedupeKey,
+      source: 'main-ipc'
+    });
+  });
+}
+
+
 let _toolbarDiscoveryTooltipDisposers = [];
 
 function isKeyboardTypingContext(el) {
-  if (!el || el.nodeType !== Node.ELEMENT_NODE) { return false; }
+  if (!el || el.nodeType !== Node.ELEMENT_NODE) {return false;}
   const t = el.tagName;
-  if (t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT') { return true; }
+  if (t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT') {return true;}
   return Boolean(el.isContentEditable);
 }
 
 function initSidebarLayoutObservers() {
   const row = document.querySelector('[data-sidebar-toolbar]');
   const panel = document.getElementById('left-panel');
-  if (typeof ResizeObserver === 'undefined') { return; }
+  if (typeof ResizeObserver === 'undefined') {return;}
 
   const flush = () => {
     requestAnimationFrame(() => {
@@ -102,7 +122,7 @@ function initSidebarLayoutObservers() {
 
 function wireToolbarDiscoveryTooltips() {
   for (const d of _toolbarDiscoveryTooltipDisposers) {
-    try { d(); } catch { void 0; }
+    try {d();} catch {void 0;}
   }
   _toolbarDiscoveryTooltipDisposers = [];
 
@@ -227,9 +247,9 @@ function wireExportSplitControls() {
   applyBulkFormatUi(getBulkExportFormat());
 }
 
-let _resultPanel        = null;
-let _appShell           = null;
-let _statusBar          = null;
+let _resultPanel = null;
+let _appShell = null;
+let _statusBar = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
   if (api.platform === 'darwin') {
@@ -257,13 +277,43 @@ document.addEventListener('DOMContentLoaded', async () => {
   insertReportListSkeletonOverlay();
   _statusBar = createStatusBar();
   _statusBar.updatePhase(getState());
-  await initializeApp(_statusBar);
 
   const compareResultsEl = document.getElementById('compare-results');
   if (compareResultsEl) {
     _resultPanel = createResultPanel(compareResultsEl);
     _resultPanel.clear();
   }
+
+  subscribe((state) => {
+    _statusBar?.updatePhase(state);
+    const reports = state.reports ?? [];
+    const searchQ = document.getElementById('search-reports')?.value ?? '';
+    _statusBar?.updateReportCount(reports, filteredReportCount(reports, searchQ));
+
+    document.getElementById('main-content')?.classList.toggle(
+      'main-content--compare-results-visible',
+      Boolean(state.comparison && state.phase === 'done')
+    );
+
+    if (state.phase === 'comparing') {
+      _resultPanel?.showComparing?.();
+    } else if (state.phase === 'cancelling') {
+      _resultPanel?.clear?.();
+    } else if (state.phase === 'error') {
+      _resultPanel?.showError?.(state.error);
+    } else if (state.comparison && state.phase === 'done') {
+      renderCompareSummaryFromStrip(state.compareSummaryStrip ?? null);
+      _resultPanel?.render(
+        state.comparison,
+        state.cachedAt ?? null,
+        state.comparisonFromCache ?? false
+      );
+    } else if (state.phase === 'idle') {
+      _resultPanel?.clear();
+    }
+  });
+
+  await initializeApp(_statusBar);
 
   if (await storage.consumeV5UpgradeDataClearedNotice()) {
     Toast.show(
@@ -294,8 +344,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     attachTooltip(panelToggleBtn, () => panelToggleBtn.getAttribute('aria-label') || '');
   }
 
-  document.getElementById('panel-toggle-btn')
-    ?.addEventListener('click', () => _appShell.toggleLeftPanel());
+  document.getElementById('panel-toggle-btn')?.
+  addEventListener('click', () => _appShell.toggleLeftPanel());
 
   _appShell.activateSection('extract');
 
@@ -311,7 +361,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (errEl) errEl.textContent = '';
   });
 
-  document.addEventListener('keydown', e => {
+  document.addEventListener('keydown', (e) => {
     const active = document.activeElement;
     const typing = isKeyboardTypingContext(active);
     if (e.key === 'Escape' && !e.repeat) {
@@ -319,11 +369,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (!overlay || overlay.classList.contains('hidden')) {
         const panel = document.getElementById('left-panel');
         if (
-          _appShell
-          && panel
-          && panel.contains(document.activeElement)
-          && !panel.classList.contains('left-panel--collapsed')
-        ) {
+        _appShell &&
+        panel &&
+        panel.contains(document.activeElement) &&
+        !panel.classList.contains('left-panel--collapsed'))
+        {
           e.preventDefault();
           e.stopPropagation();
           _appShell.collapseLeftPanelIfExpanded();
@@ -341,12 +391,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       _appShell.toggleLeftPanel();
       return;
     }
-    if (typing) { return; }
-    if (e.key === 'e' || e.key === 'E') { _appShell.activateSection('extract'); }
+    if (typing) {return;}
+    if (e.key === 'e' || e.key === 'E') {_appShell.activateSection('extract');}
     if (e.key === 'c' || e.key === 'C') {
       const el = document.activeElement;
       const v = el?.closest?.('.vscroll-viewport');
-      if (el && v && el !== v) { return; }
+      if (el && v && el !== v) {return;}
       _appShell.activateSection('compare');
     }
     if (e.key === '/') {
@@ -363,7 +413,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  document.getElementById('extract-btn')?.addEventListener('click', handleExtraction);
+  document.getElementById('extract-btn')?.addEventListener('click', () => void routeExtractBtnClick());
 
   document.getElementById('delete-all-btn')?.addEventListener('click', async () => {
     await handleDeleteAllReports();
@@ -372,17 +422,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('import-report-btn')?.addEventListener('click', () => {
     document.getElementById('import-report-input')?.click();
   });
-  document.getElementById('import-report-input')?.addEventListener('change', e => {
+  document.getElementById('import-report-input')?.addEventListener('change', (e) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     handleImportReport(file, null);
   });
 
   const baselineSel = document.getElementById('baseline-report');
-  const compareSel  = document.getElementById('compare-report');
+  const compareSel = document.getElementById('compare-report');
 
   if (baselineSel) {
-    baselineSel.addEventListener('change', e => {
+    baselineSel.addEventListener('change', (e) => {
       dispatch('BASELINE_SELECTED', { id: e.target.value });
       syncCompareButton();
       tryLoadCachedComparison();
@@ -390,15 +440,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   if (compareSel) {
-    compareSel.addEventListener('change', e => {
+    compareSel.addEventListener('change', (e) => {
       dispatch('COMPARE_SELECTED', { id: e.target.value });
       syncCompareButton();
       tryLoadCachedComparison();
     });
   }
 
-  document.querySelectorAll('[name="compare-mode"]').forEach(r => {
-    r.addEventListener('change', e => {
+  document.querySelectorAll('[name="compare-mode"]').forEach((r) => {
+    r.addEventListener('change', (e) => {
       if (e.target.checked) {
         dispatch('MODE_CHANGED', { mode: e.target.value });
         tryLoadCachedComparison();
@@ -406,11 +456,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
-  document.getElementById('compare-btn')?.addEventListener('click', handleComparison);
+  document.getElementById('compare-btn')?.addEventListener('click', () => void routeCompareBtnClick());
 
   document.addEventListener('keydown', async (e) => {
     const mod = e.metaKey || e.ctrlKey;
-    if (!mod || !e.shiftKey || e.key.toLowerCase() !== 'd') { return; }
+    if (!mod || !e.shiftKey || e.key.toLowerCase() !== 'd') {return;}
     e.preventDefault();
     showDiagnosticsPanel();
   });
@@ -418,87 +468,69 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.electronAPI?.onMenuAction?.((action) => {
     if (action === 'toggle-sidebar') _appShell.toggleLeftPanel();
   });
-
-  subscribe((state) => {
-    _statusBar?.updatePhase(state);
-    const reports = state.reports ?? [];
-    const searchQ = document.getElementById('search-reports')?.value ?? '';
-    _statusBar?.updateReportCount(reports, filteredReportCount(reports, searchQ));
-
-    if (state.phase === 'comparing') {
-      _resultPanel?.showComparing?.();
-    } else if (state.phase === 'error') {
-      _resultPanel?.showError?.(state.error);
-    } else if (state.comparison && state.phase === 'done') {
-      _resultPanel?.render(state.comparison, state.cachedAt ?? null);
-    } else if (state.phase === 'idle') {
-      _resultPanel?.clear();
-    }
-
-  });
 });
 
 async function showDiagnosticsPanel() {
   const api = window.electronAPI;
   const result = await api.getPerfMetrics();
-    if (!result?.success) { Toast.show('Diagnostics unavailable', 'error'); return; }
+  if (!result?.success) {Toast.show('Diagnostics unavailable', 'error');return;}
 
-    const overlay = document.createElement('div');
-    Object.assign(overlay.style, {
-      position: 'fixed', inset: '0', background: 'var(--color-scrim)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: '9999',
-    });
+  const overlay = document.createElement('div');
+  Object.assign(overlay.style, {
+    position: 'fixed', inset: '0', background: 'var(--color-scrim)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: '9999'
+  });
 
-    const panel = document.createElement('div');
-    Object.assign(panel.style, {
-      background: 'var(--color-surface-base)', color: 'var(--color-text-primary)',
-      borderRadius: '8px', padding: '24px', maxWidth: '900px', width: '90vw',
-      maxHeight: '80vh', overflow: 'auto', boxShadow: 'var(--shadow-lg)',
-    });
+  const panel = document.createElement('div');
+  Object.assign(panel.style, {
+    background: 'var(--color-surface-base)', color: 'var(--color-text-primary)',
+    borderRadius: '8px', padding: '24px', maxWidth: '900px', width: '90vw',
+    maxHeight: '80vh', overflow: 'auto', boxShadow: 'var(--shadow-lg)'
+  });
 
-    const titleEl = document.createElement('p');
-    titleEl.className   = 'modal-title';
-    titleEl.textContent = 'Performance Diagnostics';
+  const titleEl = document.createElement('p');
+  titleEl.className = 'modal-title';
+  titleEl.textContent = 'Performance Diagnostics';
 
-    const table  = document.createElement('table');
-    table.className = 'diag-table';
-    const thead = table.createTHead();
-    const hrow  = thead.insertRow();
-    for (const h of ['Phase', 'Count', 'p50', 'p95', 'p99', 'Last (ms)']) {
-      const th = document.createElement('th');
-      th.textContent = h;
-      hrow.appendChild(th);
-    }
+  const table = document.createElement('table');
+  table.className = 'diag-table';
+  const thead = table.createTHead();
+  const hrow = thead.insertRow();
+  for (const h of ['Phase', 'Count', 'p50', 'p95', 'p99', 'Last (ms)']) {
+    const th = document.createElement('th');
+    th.textContent = h;
+    hrow.appendChild(th);
+  }
 
-    const tbody  = table.createTBody();
-    const entries = Object.entries(result.metrics ?? {});
-    if (entries.length === 0) {
+  const tbody = table.createTBody();
+  const entries = Object.entries(result.metrics ?? {});
+  if (entries.length === 0) {
+    const row = tbody.insertRow();
+    const td = row.insertCell();
+    td.setAttribute('colspan', '6');
+    td.textContent = 'No data yet';
+  } else {
+    for (const [phase, s] of entries) {
       const row = tbody.insertRow();
-      const td  = row.insertCell();
-      td.setAttribute('colspan', '6');
-      td.textContent = 'No data yet';
-    } else {
-      for (const [phase, s] of entries) {
-        const row = tbody.insertRow();
-        for (const val of [phase, s.count, s.p50 ?? '—', s.p95 ?? '—', s.p99 ?? '—', s.lastMs ?? '—']) {
-          const td = row.insertCell();
-          td.textContent = String(val);
-        }
+      for (const val of [phase, s.count, s.p50 ?? '—', s.p95 ?? '—', s.p99 ?? '—', s.lastMs ?? '—']) {
+        const td = row.insertCell();
+        td.textContent = String(val);
       }
     }
+  }
 
-    const closeBtn = document.createElement('button');
-    closeBtn.className   = 'btn-primary btn-sm';
-    closeBtn.textContent = 'Close';
-    Object.assign(closeBtn.style, { marginTop: '16px' });
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'btn-primary btn-sm';
+  closeBtn.textContent = 'Close';
+  Object.assign(closeBtn.style, { marginTop: '16px' });
 
-    panel.append(titleEl, table, closeBtn);
-    overlay.appendChild(panel);
-    document.body.appendChild(overlay);
+  panel.append(titleEl, table, closeBtn);
+  overlay.appendChild(panel);
+  document.body.appendChild(overlay);
 
-    const dismiss = () => overlay.remove();
-    closeBtn.addEventListener('click', dismiss);
-    overlay.addEventListener('click', (ev) => { if (ev.target === overlay) { dismiss(); } });
-    const escHandler = (ev) => { if (ev.key === 'Escape') { dismiss(); document.removeEventListener('keydown', escHandler); } };
-    document.addEventListener('keydown', escHandler);
+  const dismiss = () => overlay.remove();
+  closeBtn.addEventListener('click', dismiss);
+  overlay.addEventListener('click', (ev) => {if (ev.target === overlay) {dismiss();}});
+  const escHandler = (ev) => {if (ev.key === 'Escape') {dismiss();document.removeEventListener('keydown', escHandler);}};
+  document.addEventListener('keydown', escHandler);
 }

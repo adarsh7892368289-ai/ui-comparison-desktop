@@ -122,7 +122,7 @@
   min-width: 0;
 }
 
-/* Group: intrinsic width first; sort row (--grow) keeps long “Date — …” strings readable. */
+
 .filter-rail__menu-anchor--shrink-label {
   flex: 0 1 auto;
   min-width: 0;
@@ -299,7 +299,7 @@
   pointer-events: none;
 }
 
-/* Rail icon-only: sort/group labels hide; icons + density stay (implementation-plan per-control). */
+
 #left-panel:not(.left-panel--collapsed)[data-rail-state="icon-only"] .filter-rail__toolbar-btn-label {
   flex: 0 0 0;
   min-width: 0;
@@ -431,8 +431,7 @@
   transition: background var(--dur-instant) var(--ease-standard);
 }
 
-/* Menu is position:absolute below the actions bar; the next virtualized row is painted
-   after this one and would otherwise capture clicks meant for the menu. */
+
 .report-card:has(.export-dropdown[open]) {
   z-index: var(--z-dropdown);
 }
@@ -668,7 +667,7 @@
   display: block;
 }
 
-/* Actions float above content — never in flex flow, never compress the body */
+
 .report-card-actions {
   position: absolute;
   z-index: 3;
@@ -730,7 +729,7 @@
   pointer-events: auto;
 }
 
-/* Keyboard focus: ring only — distinct from baseline (green) and compare (blue) */
+
 .report-card:focus-visible {
   outline: 2px solid var(--color-brand);
   outline-offset: -2px;

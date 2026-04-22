@@ -17,7 +17,7 @@
 </head>
 <body>
 
-  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+  <div id="toast-container" class="toast-container"></div>
 
   <div id="modal-overlay" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <div class="modal-box" id="modal-box"></div>
@@ -31,28 +31,30 @@
       <div class="left-panel__top">
         <button type="button" class="panel-toggle-btn" id="panel-toggle-btn" aria-controls="left-panel" aria-label="Collapse sidebar" aria-expanded="true"></button>
 
-        <div class="card card--toolbar">
-          <h2 class="section-title">Reports</h2>
-          <div class="section-row-actions" data-sidebar-toolbar>
-            <div class="split-btn" id="export-split-btn" role="group" aria-label="Export all reports">
-              <button type="button" class="split-btn__primary" id="export-all-btn"
-                      title="Export all as Excel" aria-label="Export all reports as Excel">
-                <span class="btn-label split-btn__label">Excel</span>
-                <span class="format-badge" aria-hidden="true">XLSX</span>
+        <div class="left-panel__top-main">
+          <div class="card card--toolbar">
+            <h2 class="section-title">Reports</h2>
+            <div class="section-row-actions" data-sidebar-toolbar>
+              <div class="split-btn" id="export-split-btn" role="group" aria-label="Export all reports">
+                <button type="button" class="split-btn__primary" id="export-all-btn"
+                        title="Export all as Excel" aria-label="Export all reports as Excel">
+                  <span class="btn-label split-btn__label">Excel</span>
+                  <span class="format-badge" aria-hidden="true">XLSX</span>
+                </button>
+                <button type="button" class="split-btn__arrow" id="export-format-trigger"
+                        aria-label="Choose export format" aria-haspopup="menu" aria-expanded="false"></button>
+                <div class="split-btn__menu" role="menu" id="export-format-menu" hidden></div>
+              </div>
+              <button type="button" class="btn-icon-ghost sidebar-import-btn" id="import-report-btn"
+                      title="Import report from file" aria-label="Import report from file">
+                <span class="btn-label" id="import-label">Import</span>
               </button>
-              <button type="button" class="split-btn__arrow" id="export-format-trigger"
-                      aria-label="Choose export format" aria-haspopup="menu" aria-expanded="false"></button>
-              <div class="split-btn__menu" role="menu" id="export-format-menu" hidden></div>
+              <input type="file" id="import-report-input" accept=".json,.csv,.xlsx,.xls" hidden>
+              <button type="button" class="btn-icon-ghost sidebar-import-btn sidebar-delete-all-btn" id="delete-all-btn"
+                      title="Delete all reports" aria-label="Delete all reports">
+                <span class="btn-label delete-all-btn__label">Delete All</span>
+              </button>
             </div>
-            <button type="button" class="btn-icon-ghost sidebar-import-btn" id="import-report-btn"
-                    title="Import report from file" aria-label="Import report from file">
-              <span class="btn-label" id="import-label">Import</span>
-            </button>
-            <input type="file" id="import-report-input" accept=".json,.csv,.xlsx,.xls" hidden>
-            <button type="button" class="btn-icon-ghost sidebar-import-btn sidebar-delete-all-btn" id="delete-all-btn"
-                    title="Delete all reports" aria-label="Delete all reports">
-              <span class="btn-label delete-all-btn__label">Delete All</span>
-            </button>
           </div>
         </div>
       </div>
@@ -103,7 +105,7 @@
            role="separator"
            aria-orientation="vertical"
            aria-label="Resize sidebar"
-           aria-valuenow="300"
+           aria-valuenow="400"
            aria-valuemin="200"
            aria-valuemax="900"
            tabindex="0"></div>
@@ -168,9 +170,13 @@
             <div class="progress-container">
               <div id="extract-progress" class="progress-wrap" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="0% — Ready" aria-label="Extraction progress">
                 <div class="progress-track"><div class="progress-fill" id="extract-progress-bar"></div></div>
-                <span class="progress-label" id="extract-progress-label">Scanning…</span>
+                <div class="progress-label-row">
+                  <span class="progress-label" id="extract-progress-label">Scanning…</span>
+                </div>
               </div>
             </div>
+
+            <div id="extract-summary" class="operation-summary-slot" aria-live="polite" hidden></div>
 
             <div id="extract-error" class="error-msg"></div>
 
@@ -277,9 +283,13 @@
             <div class="progress-container">
               <div id="compare-progress" class="progress-wrap" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="0% — Ready" aria-label="Comparison progress">
                 <div class="progress-track"><div class="progress-fill" id="compare-progress-bar"></div></div>
-                <span class="progress-label" id="compare-progress-label">Matching elements…</span>
+                <div class="progress-label-row">
+                  <span class="progress-label" id="compare-progress-label">Matching elements…</span>
+                </div>
               </div>
             </div>
+
+            <div id="compare-summary" aria-live="polite" hidden></div>
 
             <div id="compare-error" class="error-msg"></div>
 

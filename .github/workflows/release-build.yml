@@ -1,0 +1,55 @@
+# Builds Windows (NSIS) and macOS (DMG) installers. macOS targets cannot be built on Windows hosts;
+# run this workflow from GitHub (Actions → Release build → Run workflow) and download artifacts.
+name: Release build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-win:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install Playwright browsers into project path
+        run: |
+          $b = Join-Path $env:GITHUB_WORKSPACE ".playwright-browsers"
+          echo "PLAYWRIGHT_BROWSERS_PATH=$b" >> $env:GITHUB_ENV
+          npx playwright install chromium
+      - run: npm ci
+      - name: Package Windows
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npm run dist:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: |
+            release/*.exe
+            release/*.blockmap
+            release/latest.yml
+
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install Playwright browsers into project path
+        run: |
+          echo "PLAYWRIGHT_BROWSERS_PATH=$GITHUB_WORKSPACE/.playwright-browsers" >> $GITHUB_ENV
+          npx playwright install chromium
+      - run: npm ci
+      - name: Package macOS
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npm run dist:mac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-installer
+          path: release/*.dmg

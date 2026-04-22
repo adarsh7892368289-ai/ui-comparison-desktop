@@ -32,6 +32,12 @@ export class StatusBar {
 
     const frag = document.createDocumentFragment();
 
+    if (phase === 'cancelling') {
+      frag.appendChild(document.createTextNode('Cancelling…'));
+      this._right.appendChild(frag);
+      return;
+    }
+
     if (phase === 'comparing') {
       frag.appendChild(document.createTextNode('Comparing…'));
       this._right.appendChild(frag);
@@ -102,6 +108,10 @@ export class StatusBar {
         if (progress?.label) {
           this._center.textContent = progress.label;
         }
+        break;
+      case 'cancelling':
+        this._setStatusClass('status--active');
+        this._center.textContent = progress?.label ?? 'Cancelling…';
         break;
       case 'comparing':
         this._setStatusClass('status--active');

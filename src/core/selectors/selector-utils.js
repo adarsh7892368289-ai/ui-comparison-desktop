@@ -4,16 +4,16 @@ let _compiledIdPatterns = null;
 let _compiledClassPatterns = null;
 function getIdPatterns() {
   if (!_compiledIdPatterns) {
-    _compiledIdPatterns = get('attributes.dynamicIdPatterns').map(p =>
-      typeof p === 'string' ? new RegExp(p) : p
+    _compiledIdPatterns = get('attributes.dynamicIdPatterns').map((p) =>
+    typeof p === 'string' ? new RegExp(p) : p
     );
   }
   return _compiledIdPatterns;
 }
 function getClassPatterns() {
   if (!_compiledClassPatterns) {
-    _compiledClassPatterns = get('attributes.dynamicClassPatterns').map(p =>
-      typeof p === 'string' ? new RegExp(p) : p
+    _compiledClassPatterns = get('attributes.dynamicClassPatterns').map((p) =>
+    typeof p === 'string' ? new RegExp(p) : p
     );
   }
   return _compiledClassPatterns;
@@ -55,18 +55,18 @@ export function getUniversalTag(element) {
 }
 export function isStableId(id) {
   if (!id || id.length < 2 || id.length > 200) {return false;}
-  return !getIdPatterns().some(pattern => pattern.test(id));
+  return !getIdPatterns().some((pattern) => pattern.test(id));
 }
 export function isStableValue(value) {
   const UNSTABLE_VALUE_PATTERNS = [
-    /^[0-9]{8,}$/, /^[a-f0-9]{8}-[a-f0-9]{4}/i, /data-aura-rendered/i,
-    /^ember\d+$/i, /^react\d+$/i, /^\d{13}$/, /^tt-for-\d+$/i,
-    /^[0-9]+:[0-9]+;[a-z]$/i, /-\d+-\d+$/
-  ];
+  /^[0-9]{8,}$/, /^[a-f0-9]{8}-[a-f0-9]{4}/i, /data-aura-rendered/i,
+  /^ember\d+$/i, /^react\d+$/i, /^\d{13}$/, /^tt-for-\d+$/i,
+  /^[0-9]+:[0-9]+;[a-z]$/i, /-\d+-\d+$/];
+
 
   if (!value || typeof value !== 'string') {return false;}
   if (value.length < 1 || value.length > 200) {return false;}
-  return !UNSTABLE_VALUE_PATTERNS.some(pattern => pattern.test(value));
+  return !UNSTABLE_VALUE_PATTERNS.some((pattern) => pattern.test(value));
 }
 export function isStableClass(className) {
   if (!className || typeof className !== 'string' || className.trim().length === 0) {
@@ -75,19 +75,19 @@ export function isStableClass(className) {
 
   const trimmed = className.trim();
 
-  return !getClassPatterns().some(pattern => pattern.test(trimmed));
+  return !getClassPatterns().some((pattern) => pattern.test(trimmed));
 }
 export function isStaticText(text) {
   if (!text || typeof text !== 'string') {return false;}
   if (text.length < 2 || text.length > 200) {return false;}
 
   const dynamicPatterns = [
-    /^\d+$/, /^[0-9]{8,}$/, /^[a-f0-9]{8}-[a-f0-9]{4}/i,
-    /^\d{1,2}:\d{2}/, /^\d{1,2}\/\d{1,2}\/\d{2,4}$/,
-    /^loading/i, /^processing/i, /^\$\d+\.\d{2}$/
-  ];
+  /^\d+$/, /^[0-9]{8,}$/, /^[a-f0-9]{8}-[a-f0-9]{4}/i,
+  /^\d{1,2}:\d{2}/, /^\d{1,2}\/\d{1,2}\/\d{2,4}$/,
+  /^loading/i, /^processing/i, /^\$\d+\.\d{2}$/];
 
-  return !dynamicPatterns.some(pattern => pattern.test(text));
+
+  return !dynamicPatterns.some((pattern) => pattern.test(text));
 }
 export function collectStableAttributes(element) {
   const attrs = [];
@@ -104,14 +104,14 @@ export function collectStableAttributes(element) {
     const supplementary = [...get('attributes.supplementary'), 'class'];
     for (const attr of supplementary) {
       const value = element.getAttribute(attr);
-      if (value && isStableValue(value) && !attrs.find(a => a.name === attr)) {
+      if (value && isStableValue(value) && !attrs.find((a) => a.name === attr)) {
         attrs.push({ name: attr, value });
       }
     }
 
     const dataAttrs = getDataAttributes(element);
     for (const [name, value] of Object.entries(dataAttrs)) {
-      if (isStableValue(value) && !attrs.find(a => a.name === name)) {
+      if (isStableValue(value) && !attrs.find((a) => a.name === name)) {
         attrs.push({ name, value });
       }
     }
@@ -146,9 +146,9 @@ export function getStableAncestorChain(element, maxDepth) {
 }
 export function findBestSemanticAncestor(element) {
   const SEMANTIC_TAGS = [
-    'form', 'nav', 'header', 'footer', 'main', 'section', 'article',
-    'aside', 'dialog', 'table', 'fieldset', 'figure'
-  ];
+  'form', 'nav', 'header', 'footer', 'main', 'section', 'article',
+  'aside', 'dialog', 'table', 'fieldset', 'figure'];
+
 
   let current = element.parentElement;
   let depth = 0;

@@ -14,11 +14,11 @@ async function generateXPath(element) {
   const strategies = getAllStrategies();
 
   const tierGroups = [
-    strategies.filter(s => s.tier <= 5),
-    strategies.filter(s => s.tier >= 6  && s.tier <= 10),
-    strategies.filter(s => s.tier >= 11 && s.tier <= 15),
-    strategies.filter(s => s.tier >= 16 && s.tier <= 21)
-  ];
+  strategies.filter((s) => s.tier <= 5),
+  strategies.filter((s) => s.tier >= 6 && s.tier <= 10),
+  strategies.filter((s) => s.tier >= 11 && s.tier <= 15),
+  strategies.filter((s) => s.tier >= 16 && s.tier <= 21)];
+
 
   for (const group of tierGroups) {
     const result = await _tryGroup(element, tag, group, perStrategyTimeout);
@@ -30,9 +30,9 @@ async function generateXPath(element) {
         confidence: TIER_ROBUSTNESS[result.tier] || 50
       });
       return {
-        xpath:      result.xpath,
+        xpath: result.xpath,
         confidence: TIER_ROBUSTNESS[result.tier] || 50,
-        strategy:   result.strategy
+        strategy: result.strategy
       };
     }
   }
@@ -46,13 +46,13 @@ async function generateXPath(element) {
 async function _tryGroup(element, tag, strategies, perStrategyTimeout) {
   const settled = await Promise.allSettled(
     strategies.map(({ tier, fn, name }) =>
-      _runStrategy(element, tag, tier, fn, name, perStrategyTimeout)
+    _runStrategy(element, tag, tier, fn, name, perStrategyTimeout)
     )
   );
 
-  const successes = settled
-    .filter(s => s.status === 'fulfilled' && s.value !== null)
-    .map(s => s.value);
+  const successes = settled.
+  filter((s) => s.status === 'fulfilled' && s.value !== null).
+  map((s) => s.value);
 
   if (successes.length === 0) {return null;}
   successes.sort((a, b) => a.tier - b.tier);
@@ -161,9 +161,9 @@ function _extractPredicate(xpath) {
 
 function _buildFallback(element) {
   return {
-    xpath:      _buildPositionPath(element),
+    xpath: _buildPositionPath(element),
     confidence: 30,
-    strategy:   'fallback-position'
+    strategy: 'fallback-position'
   };
 }
 
@@ -187,7 +187,7 @@ function _buildPositionPath(element) {
       break;
     }
 
-    const sameTag = Array.from(parent.children).filter(c => c.tagName === current.tagName);
+    const sameTag = Array.from(parent.children).filter((c) => c.tagName === current.tagName);
     if (sameTag.length === 1) {
       path.unshift(currTag);
     } else {

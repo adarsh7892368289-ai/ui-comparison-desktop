@@ -1,0 +1,49 @@
+appId: com.ui-comparison-desktop.app
+productName: UI Comparison
+copyright: Copyright © 2026 UI Comparison Desktop
+directories:
+  buildResources: build
+  output: release
+files:
+  - dist/**/*
+  - "!dist/**/*.map"
+  - package.json
+  - node_modules/**/*
+asar: true
+asarUnpack:
+  - dist/extractor-bundle.js
+  - "**/node_modules/playwright/**"
+  - "**/*.node"
+extraResources:
+  - from: .playwright-browsers
+    to: browsers
+    filter:
+      - "**/*"
+npmRebuild: true
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch:
+        - universal
+win:
+  signAndEditExecutable: false
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+linux:
+  category: Development
+  maintainer: UI Comparison Desktop <noreply@localhost>
+  synopsis: Cross-browser visual regression desktop app — port of UI Comparison Chrome Extension
+  target:
+    - AppImage
+    - deb
+  desktop:
+    entry:
+      Name: UI Comparison
+      Comment: Cross-browser visual regression desktop app.
+      Categories: Development;

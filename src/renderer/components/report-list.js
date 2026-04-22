@@ -1,4 +1,5 @@
 import { sanitize } from '../utils/sanitize.js';
+import { STAGE_RE, hostFromUrl, lastPathSegment, envTag } from '../utils/report-metadata.js';
 import { relativeTime, absoluteCalendarDate } from '../utils/time.js';
 import { iconArrowUp, iconArrowUpDown, iconFileDown, iconTarget, iconTrash2 } from '../utils/icons.js';
 import { SINGLE_EXTRACTED_REPORT_EXPORT_MENU } from '@core/export/extraction-exporters/extracted-report-export-catalog.js';
@@ -8,7 +9,6 @@ import { Modal } from './modal.js';
 const HEADER_HEIGHT = 28;
 const DENSITY_HEIGHTS = { compact: 52, default: 64, comfortable: 80 };
 const OVERSCAN = 3;
-const STAGE_RE = /\b(stage|staging|dev|test|qa|uat|preview|sandbox|canary)\b/i;
 
 const DATE_GROUP_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -24,22 +24,6 @@ function _el(tag, cls, text) {
   if (cls) node.className = cls;
   if (text !== undefined) node.textContent = text;
   return node;
-}
-
-function _hostFromUrl(url) {
-  try { return new URL(url).hostname; } catch { return url || ''; }
-}
-
-function _lastPathSegment(url) {
-  try {
-    const seg = new URL(url).pathname.replace(/\/$/, '').split('/').filter(Boolean).pop();
-    return seg ? `/${seg}` : '/';
-  } catch { return ''; }
-}
-
-function _envTag(url) {
-  if (!url) return null;
-  return STAGE_RE.test(_hostFromUrl(url).toLowerCase()) ? 'STAGE' : 'PROD';
 }
 
 function _filterChipPairs(filters) {
@@ -195,9 +179,9 @@ export class ReportList {
       ? this._reports.filter(r => {
         const qLower = q;
         return (
-          (_hostFromUrl(r.url) || '').toLowerCase().includes(qLower) ||
+          (hostFromUrl(r.url) || '').toLowerCase().includes(qLower) ||
           (r.url || '').toLowerCase().includes(qLower) ||
-          (_lastPathSegment(r.url) || '').toLowerCase().includes(qLower) ||
+          (lastPathSegment(r.url) || '').toLowerCase().includes(qLower) ||
           (r.environment || '').toLowerCase().includes(qLower) ||
           (r.name || '').toLowerCase().includes(qLower)
         );
@@ -211,8 +195,8 @@ export class ReportList {
         return (va < vb ? -1 : va > vb ? 1 : 0) * dir;
       }
       if (sortField === 'name') {
-        va = (a.name ?? _hostFromUrl(a.url)).toLowerCase();
-        vb = (b.name ?? _hostFromUrl(b.url)).toLowerCase();
+        va = (a.name ?? hostFromUrl(a.url)).toLowerCase();
+        vb = (b.name ?? hostFromUrl(b.url)).toLowerCase();
         return va < vb ? -dir : va > vb ? dir : 0;
       }
       va = a.timestamp ?? ''; vb = b.timestamp ?? '';
@@ -246,7 +230,7 @@ export class ReportList {
 
   _groupKey(report, groupBy) {
     if (groupBy === 'host') {
-      return _hostFromUrl(report.url) || 'Unknown';
+      return hostFromUrl(report.url) || 'Unknown';
     }
     if (groupBy === 'date') {
       if (!report.timestamp) return 'Unknown date';
@@ -268,7 +252,7 @@ export class ReportList {
       return d.getFullYear() === thisYear ? dateStr : `${dateStr}, ${d.getFullYear()}`;
     }
     if (groupBy === 'environment') {
-      return report.environment ?? _envTag(report.url) ?? 'Unknown';
+      return report.environment ?? envTag(report.url) ?? 'Unknown';
     }
     return 'Unknown';
   }
@@ -323,7 +307,7 @@ export class ReportList {
     this._window.style.top = this._offsets[startIdx] + 'px';
 
     const showEnvBadge = this._reports.some(r =>
-      STAGE_RE.test(_hostFromUrl(r.url).toLowerCase()));
+      STAGE_RE.test(hostFromUrl(r.url).toLowerCase()));
 
     const focusedRow = this._focusedLogicalIndex;
     const focusedIsReport = focusedRow >= 0 && this._rowItems[focusedRow]?.type === 'report';
@@ -374,9 +358,9 @@ export class ReportList {
   }
 
   _renderCard(report, displayIndex, showEnvBadge, rowIndex, isRovingFocused) {
-    const host = _hostFromUrl(report.url);
-    const path = _lastPathSegment(report.url);
-    const env = _envTag(report.url);
+    const host = hostFromUrl(report.url);
+    const path = lastPathSegment(report.url);
+    const env = envTag(report.url);
     const isBaseline = report.id === this._baselineId;
     const isCompare = report.id === this._compareId;
     const density = this._config.density;

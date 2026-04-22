@@ -1,18 +1,26 @@
 const SHORTHAND_PROPERTIES = {
-  'margin':        ['margin-top', 'margin-right', 'margin-bottom', 'margin-left'],
-  'padding':       ['padding-top', 'padding-right', 'padding-bottom', 'padding-left'],
-  'border-width':  ['border-top-width', 'border-right-width', 'border-bottom-width', 'border-left-width'],
-  'border-style':  ['border-top-style', 'border-right-style', 'border-bottom-style', 'border-left-style'],
-  'border-color':  ['border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color'],
+  'margin': ['margin-top', 'margin-right', 'margin-bottom', 'margin-left'],
+  'padding': ['padding-top', 'padding-right', 'padding-bottom', 'padding-left'],
+  'border-width': ['border-top-width', 'border-right-width', 'border-bottom-width', 'border-left-width'],
+  'border-style': ['border-top-style', 'border-right-style', 'border-bottom-style', 'border-left-style'],
+  'border-color': ['border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color'],
   'border-radius': ['border-top-left-radius', 'border-top-right-radius', 'border-bottom-right-radius', 'border-bottom-left-radius']
 };
 
+
+
+
+
+
+
+
+
+
+
 const SHORTHAND_KEYS_TO_DROP = new Set([
-  'margin', 'padding',
-  'border-width', 'border-style', 'border-color', 'border-radius',
-  'border', 'border-top', 'border-right', 'border-bottom', 'border-left',
-  'background', 'font'
-]);
+'border', 'border-top', 'border-right', 'border-bottom', 'border-left',
+'background', 'font']
+);
 
 function expandShorthands(styles) {
   const expanded = { ...styles };
@@ -70,7 +78,7 @@ function expandBorderShorthand(styles) {
   for (const part of parts) {
     if (/^\d/.test(part) || part === 'thin' || part === 'medium' || part === 'thick') {
       width = part;
-    } else if (['none','hidden','dotted','dashed','solid','double','groove','ridge','inset','outset'].includes(part)) {
+    } else if (['none', 'hidden', 'dotted', 'dashed', 'solid', 'double', 'groove', 'ridge', 'inset', 'outset'].includes(part)) {
       style = part;
     } else {
       color = part;
@@ -79,24 +87,24 @@ function expandBorderShorthand(styles) {
 
   if (width && !styles['border-top-width']) {
     const widths = expandShorthandValue(width, 4);
-    styles['border-top-width']    = widths[0];
-    styles['border-right-width']  = widths[1];
+    styles['border-top-width'] = widths[0];
+    styles['border-right-width'] = widths[1];
     styles['border-bottom-width'] = widths[2];
-    styles['border-left-width']   = widths[3];
+    styles['border-left-width'] = widths[3];
   }
 
   if (style && !styles['border-top-style']) {
-    styles['border-top-style']    = style;
-    styles['border-right-style']  = style;
+    styles['border-top-style'] = style;
+    styles['border-right-style'] = style;
     styles['border-bottom-style'] = style;
-    styles['border-left-style']   = style;
+    styles['border-left-style'] = style;
   }
 
   if (color && !styles['border-top-color']) {
-    styles['border-top-color']    = color;
-    styles['border-right-color']  = color;
+    styles['border-top-color'] = color;
+    styles['border-right-color'] = color;
     styles['border-bottom-color'] = color;
-    styles['border-left-color']   = color;
+    styles['border-left-color'] = color;
   }
 }
 

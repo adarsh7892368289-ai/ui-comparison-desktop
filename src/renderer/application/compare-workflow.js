@@ -2,16 +2,190 @@ import { dispatch, getState } from '../state.js';
 import storage from '../../infrastructure/idb-repository.js';
 import { buildPairKey } from '../../infrastructure/idb-repository.js';
 import { assessUrlCompatibility } from '@core/comparison/url-compatibility.js';
-import { iconSpinner } from '../utils/icons.js';
+import { relativeTime } from '../utils/time.js';
 import {
   Toast,
   setError,
   showProgress,
   hideProgress,
   updateProgress,
+  syncCompareButton,
 } from '../ui.js';
 
 const api = window.electronAPI;
+
+const _compareCancelAck = new Set();
+
+let _activeCompareCancel = null;
+let _compareBusy = false;
+
+export function routeCompareBtnClick() {
+  if (_activeCompareCancel) {
+    void _activeCompareCancel();
+    return;
+  }
+  void handleComparison();
+}
+
+function _clearCompareCancelLine() {
+  const el = document.getElementById('compare-summary');
+  if (!el) return;
+  el.replaceChildren();
+  el.hidden = true;
+}
+
+function _buildCompareSummaryStrip(result, fromCache, cachedAtIso) {
+  const m = result?.matching ?? {};
+  const summary = result?.comparison?.summary ?? {};
+  const added = result?.unmatchedElements?.compare ?? [];
+  const removed = result?.unmatchedElements?.baseline ?? [];
+  const addedCnt = m.addedCount ?? added.length ?? 0;
+  const removedCnt = m.removedCount ?? removed.length ?? 0;
+  const modified = m.modifiedCount ?? summary.modifiedElements ?? 0;
+  const unmatched = addedCnt + removedCnt;
+  const changeCount = modified + unmatched;
+  const totalElements = _totalElementsFromMatching(m);
+  const matchPct = m.matchRate ?? 0;
+  const durationMs = result?.duration ?? 0;
+  return {
+    changeCount,
+    matchPct,
+    totalElements,
+    durationMs,
+    fromCache: Boolean(fromCache),
+    cachedAtIso: cachedAtIso ?? null,
+  };
+}
+
+function _matchPctValueClass(pct) {
+  if (pct >= 90) return 'compare-result-stats__value compare-result-stats__value--match-hi';
+  if (pct >= 70) return 'compare-result-stats__value compare-result-stats__value--match-mid';
+  return 'compare-result-stats__value compare-result-stats__value--match-lo';
+}
+
+export function renderCompareSummaryFromStrip(strip) {
+  const slot = document.getElementById('compare-summary');
+  if (!slot) return;
+  if (!strip || typeof strip !== 'object') {
+    slot.replaceChildren();
+    slot.hidden = true;
+    return;
+  }
+  slot.replaceChildren();
+  slot.hidden = false;
+  const pack = document.createElement('div');
+  pack.className = 'compare-result-stats-pack';
+  const stateLbl = document.createElement('div');
+  stateLbl.className = 'compare-result-stats__state-label';
+  stateLbl.textContent = strip.fromCache && strip.cachedAtIso
+    ? `LOADED FROM CACHE · ${relativeTime(strip.cachedAtIso)}`
+    : 'COMPARISON COMPLETE';
+  pack.appendChild(stateLbl);
+
+  const row = document.createElement('div');
+  row.className = 'compare-result-stats';
+
+  const chipEl = document.createElement('div');
+  chipEl.className = 'compare-result-stats__chip';
+  const vEl = document.createElement('span');
+  vEl.className = 'compare-result-stats__value';
+  vEl.textContent = String(strip.totalElements ?? 0);
+  const lEl = document.createElement('span');
+  lEl.className = 'compare-result-stats__label';
+  lEl.textContent = 'elements';
+  chipEl.append(vEl, lEl);
+
+  const sep1 = document.createElement('span');
+  sep1.className = 'compare-result-stats__sep';
+  sep1.setAttribute('aria-hidden', 'true');
+
+  const chipMatch = document.createElement('div');
+  chipMatch.className = 'compare-result-stats__chip';
+  const vMt = document.createElement('span');
+  vMt.className = _matchPctValueClass(Number(strip.matchPct) || 0);
+  vMt.textContent = `${strip.matchPct ?? 0}%`;
+  const lMt = document.createElement('span');
+  lMt.className = 'compare-result-stats__label';
+  lMt.textContent = 'matched';
+  chipMatch.append(vMt, lMt);
+
+  const sep2 = document.createElement('span');
+  sep2.className = 'compare-result-stats__sep';
+  sep2.setAttribute('aria-hidden', 'true');
+
+  const chipChanges = document.createElement('div');
+  chipChanges.className = 'compare-result-stats__chip';
+  const vCh = document.createElement('span');
+  vCh.className = 'compare-result-stats__value';
+  vCh.textContent = String(strip.changeCount ?? 0);
+  const lCh = document.createElement('span');
+  lCh.className = 'compare-result-stats__label';
+  lCh.textContent = 'changes';
+  chipChanges.append(vCh, lCh);
+
+  const trail = document.createElement('span');
+  trail.className = 'compare-result-stats__trail';
+  const meta = document.createElement('span');
+  meta.className = 'compare-result-stats__meta';
+  meta.textContent = `${Math.round(Number(strip.durationMs) || 0)}ms`;
+  trail.appendChild(meta);
+
+  row.append(chipEl, sep1, chipMatch, sep2, chipChanges, trail);
+
+  pack.appendChild(row);
+  slot.appendChild(pack);
+}
+
+function _totalElementsFromMatching(m) {
+  if (!m || typeof m !== 'object') return 0;
+  if (m.totalElements != null) return m.totalElements;
+  return (m.totalMatched ?? 0) + (m.unmatchedBaseline ?? 0) + (m.unmatchedCompare ?? 0);
+}
+
+function _enqueueOptionalLoadCachedAfterCancel(baselineId, compareId, mode) {
+  void (async () => {
+    let cached = null;
+    try {
+      cached = await storage.loadComparisonByPair(baselineId, compareId, mode);
+    } catch { return; }
+    if (!cached) return;
+    const slot = document.getElementById('compare-summary');
+    if (!slot || slot.hidden) return;
+    const label = slot.querySelector('.compare-cancel-status__text');
+    if (!label || label.textContent !== 'Comparison cancelled') return;
+    const domb = document.getElementById('baseline-report')?.value?.trim() ?? '';
+    const domc = document.getElementById('compare-report')?.value?.trim() ?? '';
+    const modeEl = document.querySelector('[name="compare-mode"]:checked')?.value ?? 'dynamic';
+    if (domb !== baselineId || domc !== compareId || modeEl !== mode) return;
+    if (slot.querySelector('button.btn-ghost.btn-sm')) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn-ghost btn-sm';
+    btn.textContent = 'Load previous result';
+    const onClick = () => void tryLoadCachedComparison();
+    btn.addEventListener('click', onClick);
+    slot.appendChild(btn);
+  })();
+}
+
+function _renderCompareCancelledLine(baselineId, compareId, mode) {
+  const slot = document.getElementById('compare-summary');
+  if (!slot) return;
+  slot.replaceChildren();
+  const line = document.createElement('div');
+  line.className = 'compare-summary-cancel-line';
+  const dot = document.createElement('span');
+  dot.className = 'compare-cancel-status__dot';
+  dot.setAttribute('aria-hidden', 'true');
+  const text = document.createElement('span');
+  text.className = 'compare-cancel-status__text';
+  text.textContent = 'Comparison cancelled';
+  line.appendChild(dot);
+  line.appendChild(text);
+  slot.appendChild(line);
+  slot.hidden = false;
+  _enqueueOptionalLoadCachedAfterCancel(baselineId, compareId, mode);
+}
 
 function scrollCompareResultsIntoView() {
   const el = document.getElementById('compare-results');
@@ -50,20 +224,35 @@ function normalizeComparisonResult(result) {
 }
 
 async function tryLoadCachedComparison() {
-  const state = getState();
-  if (!state.selectedBaseline || !state.selectedCompare) { return; }
+  const domb = document.getElementById('baseline-report')?.value?.trim() ?? '';
+  const domc = document.getElementById('compare-report')?.value?.trim() ?? '';
+  let state = getState();
+  if (!state.selectedBaseline && domb) {
+    dispatch('BASELINE_SELECTED', { id: domb });
+  }
+  if (!state.selectedCompare && domc) {
+    dispatch('COMPARE_SELECTED', { id: domc });
+  }
+  state = getState();
+  const baselineId = state.selectedBaseline ?? domb ?? null;
+  const compareId = state.selectedCompare ?? domc ?? null;
+  const mode = state.compareMode ?? document.querySelector('[name="compare-mode"]:checked')?.value ?? 'dynamic';
+  if (!baselineId || !compareId || baselineId === compareId) {
+    return;
+  }
 
   try {
     const cached = await storage.loadComparisonByPair(
-      state.selectedBaseline,
-      state.selectedCompare,
-      state.compareMode ?? 'dynamic'
+      baselineId,
+      compareId,
+      mode
     );
     if (cached) {
       let diffs = [];
       try { diffs = await storage.loadComparisonDiffs(cached.id); } catch (_) { void 0; }
-      const baselineRep = state.reports.find(r => r.id === cached.baselineId);
-      const compareRep  = state.reports.find(r => r.id === cached.compareId);
+      const stLatest = getState();
+      const baselineRep = stLatest.reports?.find(r => r.id === cached.baselineId);
+      const compareRep  = stLatest.reports?.find(r => r.id === cached.compareId);
       const normalized = normalizeComparisonResult({
         baselineId:        cached.baselineId,
         compareId:         cached.compareId,
@@ -76,9 +265,16 @@ async function tryLoadCachedComparison() {
         baselineUrl:       baselineRep?.url ?? '',
         compareUrl:        compareRep?.url ?? '',
       });
-      dispatch('COMPARISON_COMPLETE', { result: { ...normalized, id: cached.id }, cachedAt: cached.timestamp });
+      const compareSummaryStrip = _buildCompareSummaryStrip(normalized, true, cached.timestamp);
+      dispatch('COMPARISON_COMPLETE', {
+        result: { ...normalized, id: cached.id },
+        cachedAt: cached.timestamp,
+        fromCache: true,
+        compareSummaryStrip,
+      });
       scrollCompareResultsIntoView();
     } else {
+      _clearCompareCancelLine();
       dispatch('RESET_COMPARISON', {});
     }
   } catch (_) {
@@ -87,6 +283,9 @@ async function tryLoadCachedComparison() {
 }
 
 async function handleComparison() {
+  if (_compareBusy) {
+    return;
+  }
   const state   = getState();
   const reports = state.reports ?? [];
 
@@ -103,11 +302,7 @@ async function handleComparison() {
   }
 
   setError('compare', '');
-  const compareBtn = document.getElementById('compare-btn');
-  const originalHTML = compareBtn.innerHTML;
-  compareBtn.style.minWidth = compareBtn.offsetWidth + 'px';
-  compareBtn.disabled  = true;
-  compareBtn.innerHTML = `${iconSpinner(14)} <span>Comparing…</span>`;
+  _clearCompareCancelLine();
 
   try {
     const compat = assessUrlCompatibility(baselineReport.url, compareReport.url);
@@ -118,9 +313,6 @@ async function handleComparison() {
         : 'Incompatible URLs — check that both reports are from the same page path';
       Toast.error(msg);
       dispatch('RESET_COMPARISON', {});
-      compareBtn.disabled    = false;
-      compareBtn.innerHTML   = originalHTML;
-      compareBtn.style.minWidth = '';
       return;
     }
     if (compat.classification === 'CAUTION') {
@@ -135,15 +327,41 @@ async function handleComparison() {
     Toast.warning('URL compatibility check failed — proceeding');
   }
 
-  showProgress('compare', 'Starting…');
+  _compareBusy = true;
+  const compareBtn = document.getElementById('compare-btn');
+  const originalHTML = compareBtn.innerHTML;
+  const originalClass = compareBtn.className;
+  compareBtn.style.minWidth = `${compareBtn.offsetWidth}px`;
+  compareBtn.className = 'btn-primary btn-primary--operation-cancel';
+  compareBtn.textContent = 'Cancel';
+  compareBtn.disabled = false;
+
+  const operationId = crypto.randomUUID();
+  const activeOpId = operationId;
+
+  _activeCompareCancel = async () => {
+    const ack = await api.cancelOperation({ operationId: activeOpId, kind: 'compare' });
+    if (ack?.acknowledged) {
+      _compareCancelAck.add(activeOpId);
+      dispatch('OPERATION_CANCELLING', {});
+      const lbl = document.getElementById('compare-progress-label');
+      if (lbl) { lbl.textContent = 'Cancelling…'; }
+      compareBtn.disabled = true;
+    }
+  };
+
   dispatch('COMPARISON_STARTED', {});
 
   const mode               = document.querySelector('[name="compare-mode"]:checked')?.value ?? 'dynamic';
   const includeScreenshots = document.getElementById('visual-diff-toggle')?.checked ?? true;
 
   const off = api.onComparisonProgress((data) => {
+    if (data?.operationId && data.operationId !== activeOpId) return;
     updateProgress('compare', data.pct, data.label);
+    dispatch('COMPARISON_PROGRESS', { label: data.label, pct: data.pct });
   });
+
+  showProgress('compare', 'Starting…');
 
   try {
     const [baselineElements, compareElements] = await Promise.all([
@@ -167,14 +385,34 @@ async function handleComparison() {
       baselineElements,
       compareElements,
       includeScreenshots,
+      operationId,
     });
 
-    if (!result.success) {
-      dispatch('COMPARISON_ERROR', { error: result.error ?? 'Comparison failed' });
-      setError('compare', result.error ?? 'Comparison failed');
-      Toast.error(result.error ?? 'Comparison failed');
+    if (_compareCancelAck.has(operationId) || result.cancelled) {
+      hideProgress('compare');
+      dispatch('RESET_COMPARISON', {});
+      _renderCompareCancelledLine(baselineReport.id, compareReport.id, mode);
       return;
     }
+
+    if (!result.success) {
+      hideProgress('compare');
+      _clearCompareCancelLine();
+      const err = result.error ?? 'Comparison failed';
+      dispatch('COMPARISON_ERROR', { error: err });
+      setError('compare', err);
+      Toast.error(err);
+      return;
+    }
+
+    if (_compareCancelAck.has(operationId)) {
+      hideProgress('compare');
+      dispatch('RESET_COMPARISON', {});
+      _renderCompareCancelledLine(baselineReport.id, compareReport.id, mode);
+      return;
+    }
+
+    hideProgress('compare');
 
     const sr         = result.result;
     const normalized = normalizeComparisonResult({
@@ -223,30 +461,40 @@ async function handleComparison() {
       Toast.warning('Some visual screenshots could not be saved — full report images may be missing.');
     }
 
-    dispatch('COMPARISON_COMPLETE', { result: { ...normalized, id: meta.id } });
+    const compareSummaryStrip = _buildCompareSummaryStrip(
+      { ...normalized, duration: sr.duration },
+      false,
+      null,
+    );
+    dispatch('COMPARISON_COMPLETE', {
+      result: { ...normalized, id: meta.id },
+      fromCache: false,
+      compareSummaryStrip,
+    });
     scrollCompareResultsIntoView();
 
     if (sr.visualDiffStatus?.status !== 'completed') {
       Toast.info(`Visual diff did not complete (status: ${sr.visualDiffStatus?.status}) — screenshot comparison may be unavailable`);
     }
 
-    const diffs = sr.comparison?.summary?.propertyDiffCount
-               ?? sr.comparison?.summary?.totalDifferences
-               ?? 0;
-    const matchedPct = sr.matching?.matchRate ?? 0;
-    const durSec = sr?.duration ? ` · ${(sr.duration / 1000).toFixed(1)}s` : '';
-    Toast.success(`Done · ${matchedPct}% match · ${diffs} change${diffs !== 1 ? 's' : ''} found${durSec}`);
-
   } catch (err) {
-    dispatch('COMPARISON_ERROR', { error: err.message });
-    setError('compare', err.message ?? 'Unexpected error');
-    Toast.error(err.message ?? 'Comparison failed');
+    hideProgress('compare');
+    _clearCompareCancelLine();
+    const msg = err.message ?? 'Unexpected error';
+    dispatch('COMPARISON_ERROR', { error: msg });
+    setError('compare', msg);
+    Toast.error(msg);
   } finally {
     off();
-    compareBtn.disabled    = false;
-    compareBtn.innerHTML   = originalHTML;
-    compareBtn.style.minWidth = '';
     hideProgress('compare');
+    _compareCancelAck.delete(operationId);
+    _activeCompareCancel = null;
+    _compareBusy = false;
+    dispatch('COMPARE_UI_END', {});
+    compareBtn.className = originalClass;
+    compareBtn.innerHTML = originalHTML;
+    compareBtn.style.minWidth = '';
+    syncCompareButton();
   }
 }
 

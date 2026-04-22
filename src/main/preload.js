@@ -25,6 +25,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   onExtractionProgress: makePushBridge(CH.EXTRACTION_PROGRESS),
 
+  cancelOperation: (payload) =>
+    ipcRenderer.invoke(CH.CANCEL_OPERATION, payload),
+
+  onOperationCancelled: makePushBridge(CH.OPERATION_CANCELLED),
+
   exportHTML: (params) =>
     ipcRenderer.invoke(CH.EXPORT_HTML, params),
 
@@ -58,4 +63,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onContextAction: makePushBridge(CH.CONTEXT_ACTION),
 
   onMenuAction: makePushBridge(CH.MENU_ACTION),
+
+  onAppNotification: makePushBridge(CH.APP_NOTIFICATION),
 });

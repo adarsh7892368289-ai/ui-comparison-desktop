@@ -1,13 +1,13 @@
 @property --sidebar-width {
   syntax: "<length>";
   inherits: true;
-  initial-value: 300px;
+  initial-value: 400px;
 }
 
 #app-root {
   display: grid;
   grid-template-rows: auto 1fr var(--status-bar-height);
-  grid-template-columns: var(--sidebar-width, 300px) 1fr;
+  grid-template-columns: var(--sidebar-width, 400px) 1fr;
   grid-template-areas:
     "banner     banner"
     "left-panel main-content"
@@ -69,6 +69,14 @@ html.platform-darwin #app-root {
   flex-direction: column;
 }
 
+#left-panel .left-panel__top > .left-panel__top-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+}
+
 #left-panel .left-panel__top .card--toolbar {
   flex: 1 1 auto;
   min-width: 0;
@@ -91,11 +99,11 @@ html.platform-darwin #app-root {
   pointer-events: none;
 }
 
-/* Collapsed rail: hide list + filters; keep toolbar icons (title row collapses to icons only). */
 #left-panel.left-panel--collapsed .filter-rail,
 #left-panel.left-panel--collapsed #report-list-announcer,
 #left-panel.left-panel--collapsed #reports-list,
-#left-panel.left-panel--collapsed #reports-empty {
+#left-panel.left-panel--collapsed #reports-empty,
+#left-panel.left-panel--collapsed .left-panel__top > .left-panel__top-main {
   display: none;
 }
 
@@ -122,7 +130,7 @@ html.platform-darwin #app-root {
   grid-column: 1;
   justify-self: start;
   min-width: 0;
-  /* Let column `1fr` bound the title; a % max-width left empty space and forced “REPO…”. */
+  
   max-width: 100%;
   margin: 0;
   line-height: 1.2;
@@ -131,7 +139,7 @@ html.platform-darwin #app-root {
   text-overflow: ellipsis;
 }
 
-/* Match filter rail: hide “Reports” only in icon-only, same band as sort/group labels. */
+
 #left-panel:not(.left-panel--collapsed)[data-rail-state="icon-only"] .card--toolbar .section-title {
   display: none;
 }
@@ -155,7 +163,7 @@ html.platform-darwin #app-root {
   contain: layout style;
 }
 
-/* Toolbar actions must not shrink — reserve space for export split + import + delete. */
+
 #left-panel .card--toolbar [data-sidebar-toolbar] {
   flex-shrink: 0;
   min-width: min-content;
@@ -172,7 +180,7 @@ html.platform-darwin #app-root {
   flex-shrink: 0;
 }
 
-/* Toolbar actions: icons only — names live in `aria-label`, `title`, and tooltips. */
+
 #left-panel .card--toolbar [data-sidebar-toolbar] .btn-label,
 #left-panel .card--toolbar [data-sidebar-toolbar] .split-btn__label,
 #left-panel .card--toolbar [data-sidebar-toolbar] .format-badge {
@@ -217,52 +225,6 @@ html.platform-darwin #app-root {
   justify-content: center;
   min-width: 28px;
   padding-inline: var(--space-1);
-}
-
-/* Collapsed: hide “Reports” heading; stack export / import / delete in the narrow rail. */
-#left-panel.left-panel--collapsed .card--toolbar .section-title {
-  display: none;
-}
-
-#left-panel.left-panel--collapsed .card--toolbar {
-  display: flex;
-  flex: 0 0 auto;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-start;
-  padding: 0 0 var(--space-2);
-  gap: var(--space-2);
-  min-height: 0;
-}
-
-#left-panel.left-panel--collapsed .card--toolbar .section-row-actions {
-  display: flex;
-  grid-column: auto;
-  justify-self: auto;
-  flex: 0 0 auto;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-start;
-  width: 100%;
-  gap: var(--space-2);
-}
-
-#left-panel.left-panel--collapsed .card--toolbar [data-sidebar-toolbar] .split-btn {
-  flex-direction: column;
-  flex-shrink: 0;
-  width: 28px;
-  min-width: 28px;
-  max-width: 28px;
-}
-
-#left-panel.left-panel--collapsed #export-all-btn.split-btn__primary {
-  border-right: none;
-  border-bottom: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-}
-
-#left-panel.left-panel--collapsed #export-format-trigger.split-btn__arrow {
-  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
 }
 
 #left-panel .search-bar-wrap {
@@ -353,7 +315,8 @@ html.platform-darwin #app-root {
   display: none;
 }
 
-#main-content[data-active-section="extract"] #compare-results {
+#main-content[data-active-section="extract"]:not(.main-content--compare-results-visible)
+  #compare-results {
   display: none;
 }
 

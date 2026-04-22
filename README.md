@@ -12,6 +12,7 @@
 - [Data flow: end to end](#data-flow-end-to-end)
 - [Core subsystems - deep dives](#core-subsystems-deep-dives)
 - [Getting started](#getting-started)
+- [Distribution](#distribution)
 - [Development workflows](#development-workflows)
 - [Debugging guide](#debugging-guide)
 - [Key engineering decisions](#key-engineering-decisions)
@@ -115,7 +116,7 @@ All IPC communication uses named channels defined in `src/main/ipc-channels.js`.
 
 ## Repository Map
 
-The tree below matches the **current** `src/` layout (every file under `src/` is listed; **85** files). Build scripts and webpack configs live at the **repository root**, not inside `src/`.
+The tree below matches the **current** `src/` layout (every file under `src/` is listed; **86** files). Build scripts and webpack configs live at the **repository root**, not inside `src/`.
 
 For a plain sorted list of every path under `src/`, see [Complete file index under `src/`](#complete-file-index-under-src).
 
@@ -241,6 +242,8 @@ src/
     │   └── result-panel.css     # Result panel: severity bars, coverage meters, element rows.
     └── utils/
         ├── icons.js             # Inline SVG icon helpers for toolbar, lists, and commands.
+        ├── left-panel-breakpoints.js # Panel width thresholds for `#left-panel` `data-rail-state` (full / compact / icon-only) and toolbar compaction; not the toolbar strip alone.
+        ├── report-metadata.js   # URL helpers: hostname, last path segment, STAGE vs PROD env tag from host patterns (list grouping, badges, exports).
         ├── sanitize.js          # XSS-safe HTML escaping via textContent → innerHTML.
         └── time.js              # Relative time formatting (just now, 5m ago, 2h ago, 3d ago).
 ```
@@ -255,7 +258,7 @@ These paths are **not** under `src/` but define how the app is built, linted, pa
 | `webpack.main.config.js` | Main + preload → `dist/index.js`, `dist/preload.js` (`target: electron-main`; Playwright left external). Emits source maps in development. |
 | `webpack.renderer.config.js` | Renderer → `dist/renderer/app.js` (`target: web`). After emit, copies `src/renderer/index.html` and the full `src/renderer/styles/` tree into `dist/renderer/`. |
 | `webpack.extractor.config.js` | In-page bundle → `dist/extractor-bundle.js` (UMD global `window.__uiCompare`). |
-| `electron-builder.config.js` | Packaging: `asar: true` with `asarUnpack` for `dist/extractor-bundle.js`, `**/node_modules/playwright/**`, and `**/*.node` (native addons). Copies browser binaries from `${env.PLAYWRIGHT_BROWSERS_PATH}` into `extraResources` as `browsers/`. Output directory: `dist-installer/`. Windows NSIS + macOS DMG targets; `build/` holds `icon.ico`, `icon.icns`, and macOS entitlements plist (that folder is gitignored except placeholders — create it locally for branded builds). |
+| `electron-builder.yml` | Packaging: `asar: true` with `asarUnpack` for `dist/extractor-bundle.js`, `**/node_modules/playwright/**`, and `**/*.node` (native addons). Copies browser binaries from project-root `.playwright-browsers/` into `extraResources` as `browsers/`. Output directory: `release/`. Targets: Windows NSIS, macOS DMG (universal), Linux AppImage + deb; `build/` is `directories.buildResources` for icons (gitignored except placeholders — add locally for branded builds). |
 | `package.json` / `package-lock.json` | Scripts, dependencies, and lockfile. |
 | `.eslintrc.json` | ESLint: `eslint:recommended`, `ecmaVersion: latest`, `sourceType: module`, ignores `dist/`, `node_modules/`, `out/`. |
 | `README.md` | This document (the only Markdown file intentionally tracked when using the repo’s `*.md` gitignore rule — adjust if you need other `.md` files versioned). |
@@ -263,7 +266,7 @@ These paths are **not** under `src/` but define how the app is built, linted, pa
 
 **Build artifacts (`dist/`, not committed):** after `npm run build`, expect `dist/index.js`, `dist/preload.js`, `dist/extractor-bundle.js`, `dist/renderer/app.js`, `dist/renderer/index.html`, `dist/renderer/styles/*.css`, plus `.map` files when webpack devtool is enabled.
 
-**Installers (`dist-installer/`, not committed):** produced by `npm run dist` / `dist:win` / `dist:mac`.
+**Installers (`release/`, not committed):** produced by `npm run dist` / `dist:win` / `dist:mac` / `dist:linux` / `dist:all`.
 
 ### Package scripts
 
@@ -282,7 +285,10 @@ These paths are **not** under `src/` but define how the app is built, linted, pa
 | `lint` | `eslint .` | Static analysis for the whole repo (respecting ignore patterns). |
 | `format` | `prettier --write .` | Formats tracked files. |
 | `dist` | `npm run build && electron-builder` | Build + package for the current host OS. |
-| `dist:win` / `dist:mac` | build + `electron-builder --win/--mac` | Targeted installers. |
+| `dist:win` | build + `cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win` | Windows NSIS installer. |
+| `dist:mac` | build + `electron-builder --mac` | macOS DMG (run on macOS). |
+| `dist:linux` | build + `electron-builder --linux` | Linux AppImage + deb. |
+| `dist:all` | build + `electron-builder -mwl` | All targets in one invocation — use CI matrix instead (see [Distribution](#distribution)). |
 | `install:browsers` | `playwright install chromium firefox webkit` | Installs all three browser families into `PLAYWRIGHT_BROWSERS_PATH`. |
 | `postinstall` | `electron-builder install-app-deps` | Prepares native deps after `npm install`. |
 
@@ -294,11 +300,11 @@ These paths are **not** under `src/` but define how the app is built, linted, pa
 | `playwright` | Headless (or headed) browser automation for extraction, comparison screenshots, and CDP-driven capture where applicable. |
 | `electron-log` | Structured logging in the main process (`src/main/index.js` and related modules). |
 | `better-sqlite3` | Declared dependency; **no SQLite usage in current `src/`** — storage is IndexedDB in the renderer. May be reserved for future main-process persistence. |
-| `electron-updater` | Declared dependency; **not imported in current `src/`** — `electron-builder.config.js` includes a generic `publish` URL placeholder for future auto-update wiring. |
+| `electron-updater` | Declared dependency; **not imported in current `src/`** — wire `publish` in `electron-builder.yml` when enabling auto-update. |
 | `xlsx` (SheetJS) | Excel import (`import-workflow.js`) and Excel export paths in comparison and extraction exporters. |
 | `webpack`, `webpack-cli`, `@babel/core`, `@babel/preset-env`, `babel-loader` | Compile all bundles. |
 | `concurrently` | Dev `npm start` orchestration. |
-| `cross-env` | Available for cross-platform env vars in scripts (see `package.json` if adopted). |
+| `cross-env` | Sets `CSC_IDENTITY_AUTO_DISCOVERY=false` for `dist:win` (avoids signing-toolchain issues on some Windows hosts). |
 | `electron-builder` | Installers and packaging. |
 | `eslint`, `prettier` | Lint and format. |
 | `fake-indexeddb` | DevDependency for **potential** unit tests against IndexedDB APIs; **not referenced in application `src/`** today. |
@@ -311,11 +317,11 @@ To verify the map against disk (PowerShell):
 (Get-ChildItem -Path src -Recurse -File).Count
 ```
 
-Expect **85** (extensions under `src/`: `.js`, `.html`, `.css` only). If you add or remove modules, update the tree above, the [complete index](#complete-file-index-under-src), and this number.
+Expect **86** (extensions under `src/`: `.js`, `.html`, `.css` only). If you add or remove modules, update the tree above, the [complete index](#complete-file-index-under-src), and this number.
 
 ### Complete file index under `src/`
 
-Alphabetical list of every file under `src/` (85 paths):
+Alphabetical list of every file under `src/` (86 paths):
 
 ```
 src/config/defaults.js
@@ -400,6 +406,8 @@ src/renderer/styles/shell.css
 src/renderer/styles/tokens.css
 src/renderer/ui.js
 src/renderer/utils/icons.js
+src/renderer/utils/left-panel-breakpoints.js
+src/renderer/utils/report-metadata.js
 src/renderer/utils/sanitize.js
 src/renderer/utils/time.js
 ```
@@ -639,9 +647,9 @@ Renderer subscriptions: `report-manager.js` registers `onContextAction` during `
 
 **State (`src/renderer/state.js`):** Single store with `dispatch` / `subscribe` / `getState`. Notable actions include `REPORTS_LOADED`, `REPORT_DELETED`, `EXTRACTION_PROGRESS`, `COMPARISON_STARTED` / `COMPARISON_PROGRESS` / `COMPARISON_COMPLETE` / `COMPARISON_ERROR`, `BASELINE_SELECTED`, `COMPARE_SELECTED`, `MODE_CHANGED`, `RESET_COMPARISON`, `DISMISS_ERROR` (resets phase while preserving reports and selections), `FILTERS_UPDATED`, and `EXPORT_STARTED` / `EXPORT_COMPLETE` / `EXPORT_ERROR`. The window title stays **UI Comparison**; `electronAPI.setWindowTitle` is called once at renderer startup in `app.js` (comparison context appears in the status bar center, not the title bar).
 
-**Toolbar and shell:** `app-shell.js` drives the Extract / Compare accordion and the left reports column (`#left-panel`) width and collapse via `#panel-toggle-btn`, `--sidebar-width`, and `localStorage` keys `sidebar-width` / `sidebar-collapsed`. `status-bar.js` shows phase and report count.
+**Toolbar and shell:** `app-shell.js` drives the Extract / Compare accordion and the left reports column (`#left-panel`) width and collapse via `#panel-toggle-btn`, `--sidebar-width`, and `localStorage` keys `sidebar-width` / `sidebar-collapsed`. `left-panel-breakpoints.js` sets `#left-panel` **`data-rail-state`** (`full` \| `compact` \| `icon-only`) from the panel column width (with `ResizeObserver` / `requestAnimationFrame` hooks from `app-shell.js`), so filter rows and rails stay usable while the sidebar is resized; `app.js` runs `syncLeftPanelRailState()` on startup. `status-bar.js` shows phase and report count.
 
-**Sidebar list:** `report-list.js` virtual-scrolls saved reports with **group by** (none / host / date / environment), **sort by** (date / elements / name), **density** toggle (compact 44px, default 64px, comfortable 80px), and **search** (`#search-reports`, debounced). Right-click (when available) calls `electronAPI.showContextMenu({ reportId })`; the native menu sends actions back through `electronAPI.onContextAction`, handled in `initializeApp()` to set baseline/compare, export (JSON / Excel / CSV / HTML), or delete.
+**Sidebar list:** `report-list.js` virtual-scrolls saved reports with **group by** (none / host / date / environment), **sort by** (date / elements / name), **density** toggle (compact 44px, default 64px, comfortable 80px), and **search** (`#search-reports`, debounced). Grouping and env badges use **`report-metadata.js`** (`hostFromUrl`, `lastPathSegment`, `envTag` / `STAGE_RE`) shared with `report-manager.js` and `export-workflow.js`. Right-click (when available) calls `electronAPI.showContextMenu({ reportId })`; the native menu sends actions back through `electronAPI.onContextAction`, handled in `initializeApp()` to set baseline/compare, export (JSON / Excel / CSV / HTML), or delete.
 
 **Bulk actions:** Export all reports (`#export-all-btn` + `#export-all-format`) and delete all (`#delete-all-btn` in overflow menu) live in the sidebar card. Bulk extraction export format (`xlsx` \| `json` \| `csv`) is constrained by `BULK_EXTRACTED_REPORT_EXPORT_FORMATS` in `extracted-report-export-catalog.js` and persisted in `localStorage` under the key `sidebar-export-format` (see `export-workflow.js`). Per-report extraction exports use `SINGLE_EXTRACTED_REPORT_EXPORT_FORMATS` (`excel` \| `json` \| `csv` labels vs disk formats are normalized inside the workflow).
 
@@ -729,13 +737,29 @@ The `prebuild` script runs `scripts/check-env.js`: `PLAYWRIGHT_BROWSERS_PATH` mu
 ### Package for Distribution
 
 ```bash
-# Requires PLAYWRIGHT_BROWSERS_PATH to be set (browsers are bundled into the installer)
-npm run dist       # electron-builder for the current host OS
-npm run dist:win   # Windows NSIS installer
-npm run dist:mac   # macOS DMG
+# Requires PLAYWRIGHT_BROWSERS_PATH for prebuild; keep project-root `.playwright-browsers/` populated for packaging (see electron-builder.yml extraResources)
+npm run dist         # electron-builder for the current host OS
+npm run dist:win     # Windows NSIS installer
+npm run dist:mac     # macOS DMG (build on macOS)
+npm run dist:linux   # Linux AppImage + deb
+npm run dist:all     # All platforms in one command — see [Distribution](#distribution)
 ```
 
-Installers and artifacts are written under `dist-installer/` (see `electron-builder.config.js`).
+Installers and artifacts are written under `release/` (see `electron-builder.yml`).
+
+### Distribution
+
+Share **only** the installer(s) end users need for their OS (from `release/` after a successful build). The `1.0.0` segment matches the `version` field in `package.json`.
+
+| OS | Exact artifact filenames (under `release/`) |
+|----|---------------------------------------------|
+| **Windows** | `UI Comparison Setup 1.0.0.exe`, `UI Comparison Setup 1.0.0.exe.blockmap`, `latest.yml` |
+| **macOS** | `UI Comparison-1.0.0.dmg`, `UI Comparison-1.0.0.dmg.blockmap` |
+| **Linux** | `UI Comparison-1.0.0.AppImage`, `ui-comparison-desktop_1.0.0_amd64.deb` |
+
+For smoke-testing an unpacked Windows build without running the installer, use **`release/win-unpacked/`** (contains `UI Comparison.exe` and `resources/`).
+
+**CI:** Run **`dist:win`**, **`dist:mac`**, and **`dist:linux`** on **separate runners** for each host OS (or an equivalent matrix). Do **not** rely on **`npm run dist:all`** / `electron-builder -mwl` from a single non-macOS machine to produce correct macOS or Linux artifacts — cross-compilation often yields broken or unusable binaries. The same warning is noted at the top of `electron-builder.yml`.
 
 ### Smoke Test
 
@@ -933,6 +957,6 @@ Without cascade suppression, changing a parent's `color` property creates diff e
 
 ## Critical Risk Assessment
 
-**The subsystem with the highest gap between implementation complexity and documentation coverage is `src/core/export/export-utils/report-transformer.js`.** This module (on the order of **~620** lines of implementation) contains the BFS cascade suppression algorithm, content intelligence (Levenshtein-based text divergence scoring, geometric proportionality error analysis for width/height changes), impact score computation, severity rebucketing, and deduplication logic. It transforms raw comparison results into the grouped report structure consumed by the HTML exporter. The Levenshtein distance, proportionality error analysis, corroboration scores, and narrative badge classification remain under-documented here — read the source when changing export behavior.
+**The subsystem with the highest gap between implementation complexity and documentation coverage is `src/core/export/export-utils/report-transformer.js`.** This module (on the order of **~590** lines of implementation) contains the BFS cascade suppression algorithm, content intelligence (Levenshtein-based text divergence scoring, geometric proportionality error analysis for width/height changes), impact score computation, severity rebucketing, and deduplication logic. It transforms raw comparison results into the grouped report structure consumed by the HTML exporter. The Levenshtein distance, proportionality error analysis, corroboration scores, and narrative badge classification remain under-documented here — read the source when changing export behavior.
 
 **The single most dangerous thing a new engineer could do:** Modify the `runBFSSuppression()` function's ancestor-walk logic (specifically the `walkUpToNearestDiffAncestor` function or the `INHERITABLE_PROPS` / `LAYOUT_PROPAGATION_PROPS` sets) without understanding that it uses *absolute* HPIDs for ancestry detection but the rest of the system uses *relative* HPIDs for display. If someone swapped to relative HPIDs in the suppression walk (because they "look simpler" or because they're used everywhere else), suppression would silently break for filtered extractions — where relative HPIDs start at `1` for every filter root, making unrelated elements appear to be ancestors of each other. The result: legitimate diffs would be suppressed, the impact score would improve, and the HTML report would show fewer issues than actually exist. This corruption would not produce any error, warning, or test failure — it would simply make reports look "clean" when they're not.

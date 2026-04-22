@@ -6,6 +6,7 @@ const fs     = require('fs');
 const crypto = require('crypto');
 const log    = require('electron-log');
 
+const { mainDistributionDir } = require('./resource-paths');
 const { groupIntoKeyframes }     = require('../core/comparison/keyframe-grouper.js');
 const { Comparator }             = require('../core/comparison/comparator.js');
 const { assessUrlCompatibility } = require('../core/comparison/url-compatibility.js');
@@ -61,8 +62,10 @@ function getExtractorBundleSource() {
     return _extractorBundleSource;
   }
 
+  const distDir = mainDistributionDir();
   const candidates = [
     path.join(process.resourcesPath ?? '', 'extractor-bundle.js'),
+    path.join(distDir, 'extractor-bundle.js'),
     path.join(__dirname, 'extractor-bundle.js'),
     path.join(process.cwd(), 'dist', 'extractor-bundle.js'),
   ];
@@ -1008,7 +1011,11 @@ function buildSelectorFromFilters(filters) {
   return parts.length > 0 ? parts.join(',') : null;
 }
 
-async function runExtraction({ url, browserType, filters, onProgress }) {
+function _cancelErr() {
+  return Object.assign(new Error('cancelled'), { code: 'CANCELLED', name: 'CancelledError' });
+}
+
+async function runExtraction({ url, browserType, filters, onProgress, isCancelled }) {
   const totalStart    = Date.now();
   const navigateStart = Date.now();
   const browser = await getBrowser(browserType ?? 'chromium');
@@ -1019,6 +1026,7 @@ async function runExtraction({ url, browserType, filters, onProgress }) {
     onProgress?.('Opening page…', 10);
 
     await page.goto(url, { waitUntil: 'load', timeout: 60_000 });
+    if (isCancelled?.()) { throw _cancelErr(); }
     onProgress?.('Waiting for content readiness…', 25);
 
     const compoundSelector = buildSelectorFromFilters(filters);
@@ -1085,6 +1093,7 @@ async function runExtraction({ url, browserType, filters, onProgress }) {
       log.info('[SELECTOR-DIAG] compound:', compoundCount, 'effective selector:', effectiveSelector);
     }
 
+    if (isCancelled?.()) { throw _cancelErr(); }
     onProgress?.('Extracting elements…', 50);
 
     const diagData = await page.evaluate((sel) => {
@@ -1104,6 +1113,7 @@ async function runExtraction({ url, browserType, filters, onProgress }) {
     const injectStart = Date.now();
     onProgress?.('Injecting extraction engine…', 52);
     await page.addScriptTag({ content: getExtractorBundleSource() });
+    if (isCancelled?.()) { throw _cancelErr(); }
     _recordPhase('pm.extract.inject', injectStart);
 
     const configOverrides = {
@@ -1118,6 +1128,7 @@ async function runExtraction({ url, browserType, filters, onProgress }) {
 
     const evaluateStart = Date.now();
     onProgress?.('Extracting elements…', 55);
+    if (isCancelled?.()) { throw _cancelErr(); }
     const report = await page.evaluate(
       ({ filters: f, cfg }) => window.__uiCompare.extractWithConfig(f, cfg),
       { filters: compoundSelector ? filters : null, cfg: configOverrides }
@@ -1158,6 +1169,7 @@ async function runComparison({
   includeScreenshots,
   onProgress,
   blobCache,
+  isCancelled,
 }) {
   const totalStart = Date.now();
   log.info('[PM] runComparison start', { baselineId, compareId, mode, baselineCount: baselineElements?.length, compareCount: compareElements?.length });
@@ -1191,6 +1203,7 @@ async function runComparison({
   const matchStart = Date.now();
   let comparisonResult = null;
   for await (const frame of generator) {
+    if (isCancelled?.()) { throw _cancelErr(); }
     if (frame.type === 'progress') {
       send(`Matching: ${frame.label}…`, 20 + Math.round((frame.pct / 100) * 55));
     }
@@ -1206,8 +1219,11 @@ async function runComparison({
 
   send('Comparison complete', 80);
 
+  if (isCancelled?.()) { throw _cancelErr(); }
+
   let visualData = null;
   if (includeScreenshots !== false) {
+    if (isCancelled?.()) { throw _cancelErr(); }
     const visualStart = Date.now();
     send('Loading pages for screenshots…', 82);
     const browser  = await getBrowser('chromium');
@@ -1223,12 +1239,14 @@ async function runComparison({
         baselinePage.goto(baselineUrl, { waitUntil: 'load', timeout: 60_000 }),
         comparePage.goto(compareUrl,   { waitUntil: 'load', timeout: 60_000 }),
       ]);
+      if (isCancelled?.()) { throw _cancelErr(); }
       await Promise.all([
         baselinePage.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {}),
         comparePage.waitForLoadState('networkidle',  { timeout: 15_000 }).catch(() => {}),
       ]);
 
       send('Capturing screenshots…', 87);
+      if (isCancelled?.()) { throw _cancelErr(); }
       const visualResult = await captureVisualDiffs(
         comparisonResult,
         { baselinePage, comparePage },

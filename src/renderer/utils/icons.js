@@ -1,7 +1,7 @@
 'use strict';
 
 const BASE =
-  'xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"';
+'xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"';
 
 function svg(inner, size = 16) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" ${BASE} aria-hidden="true">${inner}</svg>`;

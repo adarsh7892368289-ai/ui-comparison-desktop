@@ -2,6 +2,7 @@
   "name": "ui-comparison-desktop",
   "version": "1.0.0",
   "description": "Cross-browser visual regression desktop app — port of UI Comparison Chrome Extension",
+  "author": "UI Comparison Desktop",
   "main": "dist/index.js",
   "private": true,
   "scripts": {
@@ -18,8 +19,10 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "dist": "npm run build && electron-builder",
-    "dist:win": "npm run build && electron-builder --win",
+    "dist:win": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win",
     "dist:mac": "npm run build && electron-builder --mac",
+    "dist:linux": "npm run build && electron-builder --linux",
+    "dist:all": "npm run build && electron-builder -mwl",
     "install:browsers": "playwright install chromium firefox webkit",
     "postinstall": "electron-builder install-app-deps"
   },
@@ -40,6 +43,7 @@
     "electron-builder": "^26.8.1",
     "eslint": "^8.57.0",
     "fake-indexeddb": "^6.2.5",
+    "madge": "^8.0.0",
     "prettier": "^3.2.5",
     "webpack": "^5.96.0",
     "webpack-cli": "^5.1.4"

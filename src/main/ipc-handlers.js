@@ -15,13 +15,40 @@ let _blobCache   = null;
 let _blobCacheSet    = null;
 let _blobCacheDelete = null;
 
+const _cancelRegistry = new Map();
+
+function _registerOp(operationId, kind) {
+  if (typeof operationId === 'string' && operationId) {
+    _cancelRegistry.set(operationId, { cancelled: false, kind });
+  }
+}
+
+function _unregisterOp(operationId) {
+  if (typeof operationId === 'string' && operationId) {
+    _cancelRegistry.delete(operationId);
+  }
+}
+
+function _isCancelled(operationId) {
+  return () => !!(operationId && _cancelRegistry.get(operationId)?.cancelled);
+}
+
 function registerIpcHandlers(mainWindow) {
   _mainWindow = mainWindow;
+  _registerCancelHandlers();
   _registerComparisonHandlers();
   _registerExtractionHandlers();
   _registerFileHandlers();
   _registerBlobHandlers();
   _registerMetaHandlers();
+}
+
+function _registerCancelHandlers() {
+  ipcMain.handle(CH.CANCEL_OPERATION, (event, { operationId } = {}) => {
+    const ent = _cancelRegistry.get(operationId);
+    if (ent) { ent.cancelled = true; }
+    return { acknowledged: true };
+  });
 }
 
 function setBlobCache(cache, cacheSet, cacheDelete) {
@@ -38,10 +65,12 @@ function _pushToWindow(channel, payload) {
 
 function _registerComparisonHandlers() {
   ipcMain.handle(CH.START_COMPARISON, async (event, params) => {
-    const { baselineId, compareId, mode, baselineUrl, compareUrl, baselineElements, compareElements, includeScreenshots } = params;
+    const { baselineId, compareId, mode, baselineUrl, compareUrl, baselineElements, compareElements, includeScreenshots, operationId } = params;
     log.info('START_COMPARISON', { baselineId, compareId, mode, baselineCount: baselineElements?.length, compareCount: compareElements?.length });
 
-    const sendProgress = (label, pct) => _pushToWindow(CH.COMPARISON_PROGRESS, { label, pct });
+    _registerOp(operationId, 'compare');
+    const sendProgress = (label, pct) =>
+      _pushToWindow(CH.COMPARISON_PROGRESS, { label, pct, operationId });
 
     try {
       const result = await playwrightManager.runComparison({
@@ -55,26 +84,34 @@ function _registerComparisonHandlers() {
         includeScreenshots: includeScreenshots ?? true,
         onProgress: sendProgress,
         blobCache: _blobCache,
+        isCancelled: _isCancelled(operationId),
       });
 
       return { success: true, result };
 
     } catch (error) {
+      if (error?.code === 'CANCELLED') {
+        return { success: false, cancelled: true };
+      }
       const msg = error?.message || String(error);
       log.error('START_COMPARISON failed', { error: msg });
       return { success: false, error: msg };
+    } finally {
+      _unregisterOp(operationId);
     }
   });
 }
 
 function _registerExtractionHandlers() {
   ipcMain.handle(CH.EXTRACT_ELEMENTS, async (event, params) => {
-    const { url, options } = params;
+    const { url, options, operationId } = params;
     const filters     = options?.filters;
     const browserType = options?.browserType;
     log.info('EXTRACT_ELEMENTS', { url, filters });
 
-    const sendProgress = (label, pct) => _pushToWindow(CH.EXTRACTION_PROGRESS, { label, pct });
+    _registerOp(operationId, 'extract');
+    const sendProgress = (label, pct) =>
+      _pushToWindow(CH.EXTRACTION_PROGRESS, { label, pct, operationId });
 
     try {
       const report = await playwrightManager.runExtraction({
@@ -82,12 +119,18 @@ function _registerExtractionHandlers() {
         browserType: browserType ?? 'chromium',
         filters,
         onProgress: sendProgress,
+        isCancelled: _isCancelled(operationId),
       });
       return { success: true, report };
     } catch (error) {
+      if (error?.code === 'CANCELLED') {
+        return { success: false, cancelled: true };
+      }
       const msg = error?.message || String(error);
       log.error('EXTRACT_ELEMENTS failed', { error: msg });
       return { success: false, error: msg };
+    } finally {
+      _unregisterOp(operationId);
     }
   });
 }
