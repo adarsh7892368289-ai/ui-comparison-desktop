@@ -11,6 +11,7 @@ module.exports = Object.freeze({
   OPEN_REPORT:                    'OPEN_REPORT',
   GET_VERSION:                    'GET_VERSION',
   GET_PERF_METRICS:               'GET_PERF_METRICS',
+  GET_AVAILABLE_BROWSERS:         'GET_AVAILABLE_BROWSERS',
   COMPARISON_PROGRESS:            'COMPARISON_PROGRESS',
   EXTRACTION_PROGRESS:            'EXTRACTION_PROGRESS',
   CANCEL_OPERATION:               'CANCEL_OPERATION',

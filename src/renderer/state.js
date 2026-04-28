@@ -1,19 +1,23 @@
 'use strict';
 
 const initialState = {
-  phase:               'idle',
-  reports:             [],
-  comparison:          null,
-  progress:            { label: '', pct: 0 },
-  error:               null,
-  exportState:         null,
-  selectedBaseline:    null,
-  selectedCompare:     null,
-  compareMode:         'dynamic',
-  filters:             { class: '', id: '', tag: '' },
-  cachedAt:            null,
-  comparisonFromCache: false,
-  compareSummaryStrip: null,
+  phase:                  'idle',
+  reports:                [],
+  comparison:             null,
+  progress:               { label: '', pct: 0 },
+  error:                  null,
+  exportState:            null,
+  selectedBaseline:       null,
+  selectedCompare:        null,
+  compareMode:            'dynamic',
+  filters:                { class: '', id: '', tag: '' },
+  cachedAt:               null,
+  comparisonFromCache:    false,
+  compareSummaryStrip:    null,
+  selectedBrowser:        null,
+  availableBrowsers:      [],
+  browserDetectionState:  'idle',
+  browserDetectionError:  null,
 };
 
 let _state       = { ...initialState };
@@ -160,6 +164,41 @@ function reduce(state, type, payload) {
         filters:               state.filters,
         comparisonFromCache: false,
         compareSummaryStrip:   null,
+        selectedBrowser:       state.selectedBrowser,
+        availableBrowsers:     state.availableBrowsers,
+        browserDetectionState: state.browserDetectionState,
+        browserDetectionError: state.browserDetectionError,
+      };
+
+    case 'BROWSER_DETECTION_STARTED':
+      return {
+        ...state,
+        browserDetectionState: 'loading',
+        browserDetectionError: null,
+      };
+
+    case 'BROWSERS_DETECTED':
+      return {
+        ...state,
+        availableBrowsers:     payload.browsers ?? [],
+        selectedBrowser:       state.selectedBrowser
+          ?? (payload.browsers ?? []).find((b) => b.isLaunchable && b.isDefault)
+          ?? null,
+        browserDetectionState: 'ready',
+        browserDetectionError: null,
+      };
+
+    case 'BROWSER_DETECTION_FAILED':
+      return {
+        ...state,
+        browserDetectionState: 'error',
+        browserDetectionError: payload.error ?? 'Browser detection failed',
+      };
+
+    case 'BROWSER_SELECTED':
+      return {
+        ...state,
+        selectedBrowser: payload.browser ?? null,
       };
 
     case 'FILTERS_UPDATED':

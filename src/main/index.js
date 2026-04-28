@@ -114,10 +114,10 @@ app.on('ready', () => {
   if (isSmokeTest) {
     const distDir = mainDistributionDir();
     const candidates = [
-    path.join(process.resourcesPath ?? '', 'extractor-bundle.js'),
     path.join(distDir, 'extractor-bundle.js'),
     path.join(__dirname, 'extractor-bundle.js'),
     path.join(process.cwd(), 'dist', 'extractor-bundle.js')];
+
 
 
     const bundleFound = candidates.some((c) => {try {return fs.existsSync(c);} catch {return false;}});

@@ -54,6 +54,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPerfMetrics: () =>
     ipcRenderer.invoke(CH.GET_PERF_METRICS),
 
+  getAvailableBrowsers: (opts) =>
+    ipcRenderer.invoke(CH.GET_AVAILABLE_BROWSERS, opts ?? {}),
+
   setWindowTitle: (title) =>
     ipcRenderer.send(CH.SET_WINDOW_TITLE, title),
 

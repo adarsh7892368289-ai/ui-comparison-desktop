@@ -59,4 +59,34 @@ function normalizeFont(fontFamily) {
   return normalized.join(', ');
 }
 
-export { normalizeFont };
+const FONT_WEIGHT_KEYWORDS = {
+  'normal':  '400',
+  'bold':    '700',
+  'lighter': '300',
+  'bolder':  '700'
+};
+
+function normalizeFontWeight(value) {
+  if (value === null || value === undefined) {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return String(value);
+  }
+  if (typeof value !== 'string') {
+    return value;
+  }
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) {
+    return value;
+  }
+  if (FONT_WEIGHT_KEYWORDS[trimmed]) {
+    return FONT_WEIGHT_KEYWORDS[trimmed];
+  }
+  if (/^\d+$/.test(trimmed)) {
+    return trimmed;
+  }
+  return value;
+}
+
+export { normalizeFont, normalizeFontWeight };

@@ -282,6 +282,20 @@ async function tryLoadCachedComparison() {
   }
 }
 
+function _validateBrowserSelectionForCompare(snapshot) {
+  const { browserDetectionState, selectedBrowser } = snapshot;
+  if (browserDetectionState !== 'ready') {
+    return { ok: false, message: 'Browser detection still running — wait for the selector to populate.' };
+  }
+  if (!selectedBrowser) {
+    return { ok: false, message: 'No browser available — install Playwright browsers (npm run install:browsers).' };
+  }
+  if (!selectedBrowser.isLaunchable) {
+    return { ok: false, message: `${selectedBrowser.displayName} cannot be driven by Playwright on this OS.` };
+  }
+  return { ok: true };
+}
+
 async function handleComparison() {
   if (_compareBusy) {
     return;
@@ -300,6 +314,21 @@ async function handleComparison() {
     setError('compare', 'Select two different reports');
     return;
   }
+
+  const browserCheck = _validateBrowserSelectionForCompare(state);
+  if (!browserCheck.ok) {
+    setError('compare', browserCheck.message);
+    Toast.error(browserCheck.message);
+    return;
+  }
+  const selectedBrowser = state.selectedBrowser;
+  const browserPayload = selectedBrowser
+    ? {
+        browserType:    selectedBrowser.browserType,
+        channel:        selectedBrowser.channel,
+        executablePath: selectedBrowser.executablePath,
+      }
+    : { browserType: 'chromium', channel: null, executablePath: null };
 
   setError('compare', '');
   _clearCompareCancelLine();
@@ -385,6 +414,7 @@ async function handleComparison() {
       baselineElements,
       compareElements,
       includeScreenshots,
+      browser:          browserPayload,
       operationId,
     });
 

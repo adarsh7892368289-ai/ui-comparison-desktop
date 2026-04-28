@@ -2,7 +2,9 @@ import { get } from '../../config/defaults.js';
 import { NormalizationCache } from './cache.js';
 import { normalizeColor } from './color-normalizer.js';
 import { normalizeUnit, isContextDependent } from './unit-normalizer.js';
-import { normalizeFont } from './font-normalizer.js';
+import { normalizeFont, normalizeFontWeight } from './font-normalizer.js';
+import { normalizeShadow } from './shadow-normalizer.js';
+import { ENGINE_QUIRKS } from './engine-quirks.js';
 import { expandShorthands } from './shorthand-expander.js';
 
 const COLOR_PROPERTIES = new Set([
@@ -68,10 +70,32 @@ class NormalizerEngine {
       if (property === 'font-family') {
         return this.#cached(property, value, false, null, () => normalizeFont(value));
       }
+      if (property === 'font-weight') {
+        const quirks = this.#quirksFor(contextSnapshot);
+        if (!quirks || quirks.requiresFontWeightCanonicalize) {
+          return this.#cached(property, value, false, null, () => normalizeFontWeight(value));
+        }
+        return value;
+      }
+      if (property === 'box-shadow') {
+        const quirks = this.#quirksFor(contextSnapshot);
+        if (!quirks || quirks.requiresBoxShadowReorder) {
+          return this.#cached(property, value, false, null, () => normalizeShadow(value));
+        }
+        return value;
+      }
       return value;
     } catch {
       return value;
     }
+  }
+
+  #quirksFor(contextSnapshot) {
+    const hint = contextSnapshot?.engineHint;
+    if (!hint) {
+      return null;
+    }
+    return ENGINE_QUIRKS[hint] ?? null;
   }
 
   #cached(property, value, ctxDependent, context, fn) {

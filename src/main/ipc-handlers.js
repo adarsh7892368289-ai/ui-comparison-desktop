@@ -1,18 +1,18 @@
 'use strict';
 
 const { ipcMain, dialog, app, BrowserWindow } = require('electron');
-const path   = require('path');
-const fs     = require('fs');
-const os     = require('os');
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
 const crypto = require('crypto');
-const log    = require('electron-log');
+const log = require('electron-log');
 
 const CH = require('./ipc-channels');
 const playwrightManager = require('./playwright-manager');
 
-let _mainWindow  = null;
-let _blobCache   = null;
-let _blobCacheSet    = null;
+let _mainWindow = null;
+let _blobCache = null;
+let _blobCacheSet = null;
 let _blobCacheDelete = null;
 
 const _cancelRegistry = new Map();
@@ -41,19 +41,20 @@ function registerIpcHandlers(mainWindow) {
   _registerFileHandlers();
   _registerBlobHandlers();
   _registerMetaHandlers();
+  _registerBrowserHandlers();
 }
 
 function _registerCancelHandlers() {
   ipcMain.handle(CH.CANCEL_OPERATION, (event, { operationId } = {}) => {
     const ent = _cancelRegistry.get(operationId);
-    if (ent) { ent.cancelled = true; }
+    if (ent) {ent.cancelled = true;}
     return { acknowledged: true };
   });
 }
 
 function setBlobCache(cache, cacheSet, cacheDelete) {
-  _blobCache       = cache;
-  _blobCacheSet    = cacheSet;
+  _blobCache = cache;
+  _blobCacheSet = cacheSet;
   _blobCacheDelete = cacheDelete;
 }
 
@@ -65,12 +66,12 @@ function _pushToWindow(channel, payload) {
 
 function _registerComparisonHandlers() {
   ipcMain.handle(CH.START_COMPARISON, async (event, params) => {
-    const { baselineId, compareId, mode, baselineUrl, compareUrl, baselineElements, compareElements, includeScreenshots, operationId } = params;
-    log.info('START_COMPARISON', { baselineId, compareId, mode, baselineCount: baselineElements?.length, compareCount: compareElements?.length });
+    const { baselineId, compareId, mode, baselineUrl, compareUrl, baselineElements, compareElements, includeScreenshots, browser, operationId } = params;
+    log.info('START_COMPARISON', { baselineId, compareId, mode, baselineCount: baselineElements?.length, compareCount: compareElements?.length, browserType: browser?.browserType });
 
     _registerOp(operationId, 'compare');
     const sendProgress = (label, pct) =>
-      _pushToWindow(CH.COMPARISON_PROGRESS, { label, pct, operationId });
+    _pushToWindow(CH.COMPARISON_PROGRESS, { label, pct, operationId });
 
     try {
       const result = await playwrightManager.runComparison({
@@ -82,9 +83,10 @@ function _registerComparisonHandlers() {
         baselineElements,
         compareElements,
         includeScreenshots: includeScreenshots ?? true,
+        browser,
         onProgress: sendProgress,
         blobCache: _blobCache,
-        isCancelled: _isCancelled(operationId),
+        isCancelled: _isCancelled(operationId)
       });
 
       return { success: true, result };
@@ -105,21 +107,21 @@ function _registerComparisonHandlers() {
 function _registerExtractionHandlers() {
   ipcMain.handle(CH.EXTRACT_ELEMENTS, async (event, params) => {
     const { url, options, operationId } = params;
-    const filters     = options?.filters;
-    const browserType = options?.browserType;
-    log.info('EXTRACT_ELEMENTS', { url, filters });
+    const filters = options?.filters;
+    const browser = options?.browser;
+    log.info('EXTRACT_ELEMENTS', { url, filters, browserType: browser?.browserType });
 
     _registerOp(operationId, 'extract');
     const sendProgress = (label, pct) =>
-      _pushToWindow(CH.EXTRACTION_PROGRESS, { label, pct, operationId });
+    _pushToWindow(CH.EXTRACTION_PROGRESS, { label, pct, operationId });
 
     try {
       const report = await playwrightManager.runExtraction({
         url,
-        browserType: browserType ?? 'chromium',
+        browser,
         filters,
         onProgress: sendProgress,
-        isCancelled: _isCancelled(operationId),
+        isCancelled: _isCancelled(operationId)
       });
       return { success: true, report };
     } catch (error) {
@@ -138,9 +140,9 @@ function _registerExtractionHandlers() {
 function _registerFileHandlers() {
   ipcMain.handle(CH.EXPORT_HTML, async (event, { htmlContent, filename }) => {
     const { canceled, filePath } = await dialog.showSaveDialog(_mainWindow, {
-      title:       'Export Comparison Report',
+      title: 'Export Comparison Report',
       defaultPath: path.join(app.getPath('downloads'), filename ?? 'comparison-report.html'),
-      filters:     [{ name: 'HTML Report', extensions: ['html'] }],
+      filters: [{ name: 'HTML Report', extensions: ['html'] }]
     });
 
     if (canceled || !filePath) {
@@ -153,22 +155,22 @@ function _registerFileHandlers() {
       return { success: true, filePath };
     } catch (err) {
       log.error('EXPORT_HTML write failed', { error: err.message, code: err.code });
-      const reason = err.code === 'EACCES' ? 'Permission denied — choose a different location'
-                   : err.code === 'EBUSY'  ? 'File is in use by another process'
-                   : err.message;
+      const reason = err.code === 'EACCES' ? 'Permission denied — choose a different location' :
+      err.code === 'EBUSY' ? 'File is in use by another process' :
+      err.message;
       return { success: false, error: reason };
     }
   });
 
   ipcMain.handle(CH.EXPORT_FILE, async (event, { data, filename, format }) => {
     const extensionMap = { xlsx: 'xlsx', csv: 'csv', json: 'json' };
-    const ext  = extensionMap[format] ?? format;
+    const ext = extensionMap[format] ?? format;
     const name = filename ?? `export.${ext}`;
 
     const { canceled, filePath } = await dialog.showSaveDialog(_mainWindow, {
-      title:       `Export as ${ext.toUpperCase()}`,
+      title: `Export as ${ext.toUpperCase()}`,
       defaultPath: path.join(app.getPath('downloads'), name),
-      filters:     [{ name: ext.toUpperCase(), extensions: [ext] }],
+      filters: [{ name: ext.toUpperCase(), extensions: [ext] }]
     });
 
     if (canceled || !filePath) {
@@ -191,9 +193,9 @@ function _registerFileHandlers() {
       return { success: true, filePath };
     } catch (err) {
       log.error('EXPORT_FILE write failed', { error: err.message, code: err.code });
-      const reason = err.code === 'EACCES' ? 'Permission denied — choose a different location'
-                   : err.code === 'EBUSY'  ? 'File is in use by another process'
-                   : err.message;
+      const reason = err.code === 'EACCES' ? 'Permission denied — choose a different location' :
+      err.code === 'EBUSY' ? 'File is in use by another process' :
+      err.message;
       return { success: false, error: reason };
     }
   });
@@ -203,9 +205,9 @@ function _registerFileHandlers() {
     try {
       await fs.promises.writeFile(tempPath, htmlContent, 'utf8');
       const win = new BrowserWindow({
-        width:          1400,
-        height:         900,
-        webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+        width: 1400,
+        height: 900,
+        webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true }
       });
       win.on('closed', () => fs.unlink(tempPath, () => {}));
       await win.loadFile(tempPath);
@@ -220,14 +222,14 @@ function _registerFileHandlers() {
 
   ipcMain.handle(CH.IMPORT_FILE, async () => {
     const { canceled, filePaths } = await dialog.showOpenDialog(_mainWindow, {
-      title:      'Import Report File',
+      title: 'Import Report File',
       properties: ['openFile'],
-      filters:    [
-        { name: 'All Supported', extensions: ['json', 'csv', 'xlsx'] },
-        { name: 'JSON',  extensions: ['json'] },
-        { name: 'CSV',   extensions: ['csv']  },
-        { name: 'Excel', extensions: ['xlsx'] },
-      ],
+      filters: [
+      { name: 'All Supported', extensions: ['json', 'csv', 'xlsx'] },
+      { name: 'JSON', extensions: ['json'] },
+      { name: 'CSV', extensions: ['csv'] },
+      { name: 'Excel', extensions: ['xlsx'] }]
+
     });
 
     if (canceled || filePaths.length === 0) {
@@ -236,15 +238,15 @@ function _registerFileHandlers() {
 
     const filePath = filePaths[0];
     try {
-      const ext     = path.extname(filePath).slice(1).toLowerCase();
-      const data    = await fs.promises.readFile(filePath);
-      const content = (ext === 'xlsx') ? data.toString('base64') : data.toString('utf8');
+      const ext = path.extname(filePath).slice(1).toLowerCase();
+      const data = await fs.promises.readFile(filePath);
+      const content = ext === 'xlsx' ? data.toString('base64') : data.toString('utf8');
       return { success: true, content, ext, filename: path.basename(filePath) };
     } catch (err) {
       log.error('IMPORT_FILE read failed', { error: err.message, code: err.code });
-      const reason = err.code === 'ENOENT' ? 'File not found — it may have been moved or deleted'
-                   : err.code === 'EACCES' ? 'Permission denied reading file'
-                   : err.message;
+      const reason = err.code === 'ENOENT' ? 'File not found — it may have been moved or deleted' :
+      err.code === 'EACCES' ? 'Permission denied reading file' :
+      err.message;
       return { success: false, error: reason };
     }
   });
@@ -261,15 +263,15 @@ function _registerBlobHandlers() {
       return { success: false, error: 'blobId must be comparisonId:keyframeId' };
     }
     _blobCacheSet(blobId, {
-      buffer:   Buffer.from(base64, 'base64'),
-      mimeType: mimeType ?? 'image/webp',
+      buffer: Buffer.from(base64, 'base64'),
+      mimeType: mimeType ?? 'image/webp'
     });
     log.debug('Blob registered in protocol cache', { blobId });
     return { success: true };
   });
 
   ipcMain.handle(CH.UNREGISTER_BLOBS_BY_COMPARISON, (event, comparisonId) => {
-    if (!_blobCache || !_blobCacheDelete) { return { success: false }; }
+    if (!_blobCache || !_blobCacheDelete) {return { success: false };}
     let removed = 0;
     for (const key of Array.from(_blobCache.keys())) {
       if (key.startsWith(`${comparisonId}:`)) {
@@ -285,8 +287,33 @@ function _registerBlobHandlers() {
 function _registerMetaHandlers() {
   ipcMain.handle(CH.GET_VERSION, () => app.getVersion());
   ipcMain.handle(CH.GET_PERF_METRICS, () => ({
-    success: true, metrics: playwrightManager.getPerformanceSnapshot(), timestamp: Date.now(),
+    success: true, metrics: playwrightManager.getPerformanceSnapshot(), timestamp: Date.now()
   }));
+}
+
+function _registerBrowserHandlers() {
+  ipcMain.handle(CH.GET_AVAILABLE_BROWSERS, async (event, opts = {}) => {
+
+
+
+    let browserDetector;
+    try {
+      browserDetector = require('./browser-detector');
+    } catch (err) {
+      log.error('GET_AVAILABLE_BROWSERS: failed to load browser-detector', { error: err.message });
+      return { success: false, error: err.message };
+    }
+    const refresh = Boolean(opts && opts.refresh);
+    try {
+      const { browsers, detectedAt } = await browserDetector.detectBrowsers({ refresh });
+      return { success: true, browsers, detectedAt };
+    } catch (err) {
+
+
+      log.error('GET_AVAILABLE_BROWSERS failed', { error: err?.message ?? String(err) });
+      return { success: false, error: err?.message ?? String(err) };
+    }
+  });
 }
 
 module.exports = { registerIpcHandlers, setBlobCache };

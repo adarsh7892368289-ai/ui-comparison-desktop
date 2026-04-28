@@ -30,6 +30,24 @@ function parseNumAndUnit(trimmed) {
 
 const CSS_KEYWORDS = new Set(['auto', 'none', 'initial', 'inherit', 'unset', 'normal']);
 
+const NORMAL_KEYWORD_RESOLVES_TO_PX = new Set(['line-height', 'letter-spacing', 'word-spacing']);
+
+function _resolveNormalKeyword(property, contextSnapshot) {
+  if (!contextSnapshot) {
+    return null;
+  }
+  const ownFontSize = parseFloat(
+    contextSnapshot.fontSize ?? contextSnapshot.parentFontSize ?? ''
+  );
+  if (isNaN(ownFontSize)) {
+    return null;
+  }
+  if (property === 'line-height') {
+    return px(ownFontSize * 1.2);
+  }
+  return px(0);
+}
+
 const DIMENSION_RESOLVERS = [
   {
     matches: (p) => p.includes('width') || p.includes('left') || p.includes('right') || p.includes('column'),
@@ -121,6 +139,15 @@ function normalizeUnit(value, property, contextSnapshot) {
   }
 
   const trimmed = value.trim().toLowerCase();
+
+  if (trimmed === 'normal' && NORMAL_KEYWORD_RESOLVES_TO_PX.has(property)) {
+    const resolved = _resolveNormalKeyword(property, contextSnapshot);
+    if (resolved !== null) {
+      return resolved;
+    }
+    return 'normal';
+  }
+
   const staticResult = resolveStaticValue(trimmed);
   if (staticResult !== null) {
     return staticResult;

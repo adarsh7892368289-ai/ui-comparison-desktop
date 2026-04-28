@@ -104,14 +104,14 @@ class PropertyDiffer {
     const compareProperties = options.compareProperties ?? null;
     const tolerances        = options.tolerances ?? get('comparison.modes.static.tolerances');
 
-    const baseNorm    = this.#normalizer.normalize(
-      baselineElement.styles || {},
-      baselineElement.contextSnapshot ?? null
-    );
-    const compareNorm = this.#normalizer.normalize(
-      compareElement.styles || {},
-      compareElement.contextSnapshot ?? null
-    );
+    const baseEngineHint    = baselineElement.engine ?? options.baselineEngine ?? options.engineHint ?? null;
+    const compareEngineHint = compareElement.engine ?? options.compareEngine ?? options.engineHint ?? null;
+
+    const baseCtx    = this.#withEngineHint(baselineElement.contextSnapshot, baseEngineHint);
+    const compareCtx = this.#withEngineHint(compareElement.contextSnapshot, compareEngineHint);
+
+    const baseNorm    = this.#normalizer.normalize(baselineElement.styles || {}, baseCtx);
+    const compareNorm = this.#normalizer.normalize(compareElement.styles || {}, compareCtx);
 
     const allProperties = compareProperties !== null
       ? compareProperties
@@ -143,6 +143,13 @@ class PropertyDiffer {
       totalDifferences: differences.length,
       differences
     };
+  }
+
+  #withEngineHint(contextSnapshot, engineHint) {
+    if (!engineHint) {
+      return contextSnapshot ?? null;
+    }
+    return { ...(contextSnapshot ?? {}), engineHint };
   }
 
   #dedupeCurrentColor(differences) {

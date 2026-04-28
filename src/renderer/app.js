@@ -8,15 +8,24 @@ logger.init();
 errorTracker.init();
 
 import { getState, dispatch, subscribe } from './state.js';
+
+
+
+
+
+if (process.env.NODE_ENV === 'development') {
+  window.__debugState = () => getState();
+}
+
 import { Toast, syncCompareButton } from './ui.js';
 import { dispatchEnqueue } from './application/notification-queue.js';
 import {
   initializeApp,
   insertReportListSkeletonOverlay,
   filteredReportCount,
-  handleDeleteAllReports,
-  routeExtractBtnClick } from
+  handleDeleteAllReports } from
 './application/report-manager.js';
+import { routeExtractBtnClick } from './application/extract-workflow.js';
 import {
   BULK_EXTRACTED_REPORT_EXPORT_BADGE_LABELS,
   BULK_EXTRACTED_REPORT_EXPORT_FORMAT_LABELS,
@@ -31,6 +40,7 @@ import {
   renderCompareSummaryFromStrip } from
 './application/compare-workflow.js';
 import { createResultPanel } from './components/result-panel.js';
+import { createBrowserSelector } from './components/browser-selector.js';
 import { createAppShell } from './components/app-shell.js';
 import { SystemBanner } from './components/system-banner.js';
 import { createStatusBar } from './components/status-bar.js';
@@ -284,6 +294,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     _resultPanel.clear();
   }
 
+  const browserSelectorSlot = document.getElementById('browser-selector-slot');
+  if (browserSelectorSlot) {
+
+
+    createBrowserSelector(browserSelectorSlot, api);
+  }
+
   subscribe((state) => {
     _statusBar?.updatePhase(state);
     const reports = state.reports ?? [];
@@ -314,6 +331,32 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   await initializeApp(_statusBar);
+
+
+
+
+
+
+
+  if (typeof api.getAvailableBrowsers === 'function') {
+    dispatch('BROWSER_DETECTION_STARTED');
+    api.getAvailableBrowsers().then((res) => {
+      if (res && res.success) {
+        dispatch('BROWSERS_DETECTED', {
+          browsers: res.browsers,
+          detectedAt: res.detectedAt
+        });
+      } else {
+        dispatch('BROWSER_DETECTION_FAILED', {
+          error: res?.error ?? 'Browser detection failed'
+        });
+      }
+    }).catch((err) => {
+      dispatch('BROWSER_DETECTION_FAILED', {
+        error: err?.message ?? String(err)
+      });
+    });
+  }
 
   if (await storage.consumeV5UpgradeDataClearedNotice()) {
     Toast.show(
