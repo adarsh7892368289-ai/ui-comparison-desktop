@@ -12,13 +12,13 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-      - name: Install Playwright browsers into project path
+      - name: Set PLAYWRIGHT_BROWSERS_PATH
         run: |
           $b = Join-Path $env:GITHUB_WORKSPACE ".playwright-browsers"
-          $env:PLAYWRIGHT_BROWSERS_PATH = $b
           echo "PLAYWRIGHT_BROWSERS_PATH=$b" >> $env:GITHUB_ENV
-          npx playwright install chromium
       - run: npm ci
+      - name: Install pinned Playwright Chromium into project path
+        run: npx --no-install playwright install chromium
       - name: Package Windows
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
@@ -39,12 +39,11 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-      - name: Install Playwright browsers into project path
-        run: |
-          export PLAYWRIGHT_BROWSERS_PATH="$GITHUB_WORKSPACE/.playwright-browsers"
-          echo "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH" >> "$GITHUB_ENV"
-          npx playwright install chromium
+      - name: Set PLAYWRIGHT_BROWSERS_PATH
+        run: echo "PLAYWRIGHT_BROWSERS_PATH=$GITHUB_WORKSPACE/.playwright-browsers" >> "$GITHUB_ENV"
       - run: npm ci
+      - name: Install pinned Playwright Chromium into project path
+        run: npx --no-install playwright install chromium
       - name: Package macOS
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
