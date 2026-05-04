@@ -25,7 +25,8 @@ mac:
   target:
     - target: dmg
       arch:
-        - universal
+        - x64
+        - arm64
 win:
   signAndEditExecutable: false
   target:
