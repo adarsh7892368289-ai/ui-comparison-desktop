@@ -1,8 +1,9 @@
 # UI Comparison Desktop
 
 > Onboarding guide for engineers joining this project. For exhaustive subsystem
-> reference (IPC registry, IDB schema, matching pipeline internals, failure modes,
-> etc.) see [`SYSTEM_REFERENCE.md`](./SYSTEM_REFERENCE.md).
+> reference (IPC registry, IDB schema, matching pipeline internals, bulk runner
+> internals, failure modes, etc.) see
+> [`SYSTEM_REFERENCE.md`](./SYSTEM_REFERENCE.md).
 
 ## What this application does
 
@@ -13,9 +14,28 @@ four-phase element-matching pipeline (test-attribute anchoring → sequence alig
 → HPID-suffix realignment → legacy strategy pool) and a tolerance-aware
 PropertyDiffer over normalized styles to produce a per-element, per-property
 severity-ranked diff report. Results (including optional CDP-driven keyframe
-screenshots) are persisted in IndexedDB inside the renderer process behind a
-Write-Ahead Log and a 3-strike circuit breaker, and rendered through a
-token-based, virtual-scrolled UI.
+screenshots — with a JS-shim fallback path for non-Chromium engines) are persisted
+in IndexedDB inside the renderer process behind a Write-Ahead Log and a 3-strike
+circuit breaker, and rendered through a token-based, virtual-scrolled UI.
+
+The app supports three workflows:
+
+- **Extract** — capture a single URL into a saved report.
+- **Compare** — diff two saved reports (baseline vs. compare) in `dynamic` or
+  `static` mode, optionally with side-by-side keyframe screenshots.
+- **Bulk** — upload an Excel plan (`baseline_url`, `compare_url`, plus optional
+  `mode`, `screenshots`, `label`, `browser`, `filter_class/id/tag` columns; up
+  to 500 rows) and run an entire spreadsheet of comparisons in parallel with a
+  bounded concurrency, per-host cooldown, automatic deduplication of recent
+  same-day extractions, an interrupted-job resume banner, and an exportable
+  per-row Excel summary.
+
+The app supports **multiple browser engines** (Playwright-managed Chromium /
+Firefox / WebKit, plus system-installed Chrome, Edge, Brave, Firefox, Chromium and
+Safari where available). At boot the main process detects all installable engines
+on the host, surfaces them in a renderer-side dropdown, and routes every
+extraction/comparison through the engine the user picked. WebKit screenshot
+captures automatically fall back to Chromium if `Page.snapshotRect` fails.
 
 ## Prerequisites
 
@@ -25,6 +45,8 @@ token-based, virtual-scrolled UI.
 | npm | Whatever ships with the Node version above |
 | Electron | `^41.1.1` (pinned in `package.json` — do not upgrade casually; preload + sandbox model is tied to this major) |
 | Playwright | `^1.48.0` |
+| `p-limit` | `^4.0.0` (concurrency gate inside the main-process bulk runner; loaded via dynamic `import()` because it is ESM-only) |
+| `xlsx` | `^0.18.5` (bulk plan parser + summary/template workbook builder) |
 | electron-builder | `^26.8.1` |
 | webpack | `^5.96.0` |
 | Babel | `^7.24.0` |
@@ -32,7 +54,9 @@ token-based, virtual-scrolled UI.
 | `PLAYWRIGHT_BROWSERS_PATH` | **Required** environment variable. Must point to a directory that contains a Playwright `chromium` install. Validated by `scripts/check-env.js` on every `prebuild`. |
 
 Native dependencies (`better-sqlite3`) are rebuilt against Electron via
-`electron-builder install-app-deps` in the `postinstall` hook.
+`electron-builder install-app-deps` in the `postinstall` hook. `better-sqlite3`
+itself is currently **declared but unused** by `src/`; all persistence is
+IndexedDB.
 
 ## Installation and first run
 
@@ -71,7 +95,7 @@ Internally `concurrently` runs three jobs:
    `dist/preload.js` (Electron main process and the preload context bridge).
 2. `webpack --watch` against `webpack.renderer.config.js` → `dist/renderer/app.js`
    plus a copy of `src/renderer/index.html` and the entire `src/renderer/styles/`
-   tree to `dist/renderer/`.
+   tree to `dist/renderer/` (now including `bulk.css`).
 3. `electron .` — boots the app against the package `main` field
    (`dist/index.js`).
 
@@ -82,6 +106,8 @@ or missing. Fix the error and rerun `npm start` (or run `electron .` after a
 clean `npm run build`).
 
 DevTools shortcut: `Ctrl+Shift+I` (Windows/Linux), `Cmd+Option+I` (macOS).
+Diagnostics overlay: `Ctrl+Shift+D` / `Cmd+Shift+D` (renders `getPerfMetrics()`
+in a modal).
 
 ## Build pipeline (correct order)
 
@@ -130,19 +156,20 @@ application source currently imports it.
 
 | Path | Purpose |
 |---|---|
-| `src/config/` | Deep-frozen runtime configuration and its boot-time validator. |
+| `src/config/` | Deep-frozen runtime configuration (`defaults.js`, including the new `bulk` block — `defaultConcurrency`, `maxConcurrency`, `maxRows`, `maxRetainedJobs`, `hostCooldownMs`) and its boot-time validator. Also hosts `browser-capability-profile.js` (per-engine CDP availability, screenshot method, freeze strategy, scrollbar gutter, normalization quirks). |
+| `src/core/bulk/` | Pure-Node bulk-plan support: `plan-parser.js` (xlsx → row records, validates headers and row cap), `plan-validator.js` (row-by-row validation against URL compatibility + browser catalogue), `extraction-key.js` (SHA-256 deduplication key over `url|browserType|channel-or-path|YYYY-MM-DD`). |
 | `src/core/comparison/` | Pure-Node matching, diffing, severity, cascade suppression, keyframe grouping. |
 | `src/core/extraction/` | The in-page extraction pipeline (bundled into `extractor-bundle.js`). |
 | `src/core/normalization/` | CSS color/unit/font normalizers and a dual LRU cache, used before diffing. |
 | `src/core/selectors/` | CSS + XPath selector generators with timeouts and a bounded concurrency queue. |
-| `src/core/export/` | HTML / CSV / JSON / Excel exporters for both comparisons and saved extractions. |
-| `src/infrastructure/` | Renderer-side cross-cutting services: IndexedDB repository (with WAL + circuit breaker), structured logger, error tracker, performance monitor. |
-| `src/main/` | Electron main process: app lifecycle, IPC handlers, preload, Playwright manager, custom protocol, resource path resolution. |
-| `src/renderer/` | Renderer entry, state machine, application workflows, presentational components, design tokens, stylesheets. |
-| `src/renderer/application/` | Workflow orchestration (extract / compare / import / export / report management / notification queue). |
-| `src/renderer/components/` | UI: app shell, modal, progress bar, report list (virtual scroll), report combobox, result panel, status bar, system banner, toast, tooltip. |
-| `src/renderer/styles/` | `tokens.css` design tokens, plus `base`, `shell`, `components`, `navigation`, `report-list`, `result-panel` stylesheets. |
-| `src/renderer/utils/` | Renderer helpers: icons, panel-rail breakpoints, report metadata, sanitize, time. |
+| `src/core/export/` | HTML / CSV / JSON / Excel exporters for both comparisons and saved extractions, plus `bulk-summary-exporter.js` (xlsx workbook with `Bulk Summary` sheet + downloadable `Plan` template) and `bulk-pair-state-labels.js` (state→label map and friendly error hints). |
+| `src/infrastructure/` | Renderer-side cross-cutting services: IndexedDB repository (with WAL + circuit breaker, now versioned at `9` with `bulk_jobs` / `bulk_pairs` stores and `by_bulkJobId` / `by_extractionKey` indexes on reports), structured logger, error tracker, performance monitor. |
+| `src/main/` | Electron main process: app lifecycle, IPC handlers, preload, Playwright manager, custom protocol, resource path resolution, `browser-detector.js` (per-OS system-browser discovery + Playwright-managed binary probing), and `bulk-runner.js` (per-job concurrency gate via `p-limit`, per-host cooldown, dedup-aware extraction, screenshot fallback, cancellation propagation). |
+| `src/renderer/` | Renderer entry, state machine (now including the `bulkJob` / `bulkParsedRows` slices), application workflows, presentational components, design tokens, stylesheets. |
+| `src/renderer/application/` | Workflow orchestration (extract / compare / bulk / import / export / report management / notification queue). `bulk-workflow.js` is the renderer-side coordinator: dedup planning, host-memory–aware concurrency clamp, IPC bridging, persist-after-completion, resume detection. |
+| `src/renderer/components/` | UI: app shell, browser selector, modal, progress bar, report list (virtual scroll), report combobox, result panel, status bar, system banner, toast, tooltip, plus the new `bulk-panel.js` (drop-zone / parse-summary / pair list with virtual scroll, action toolbar, resume banner). |
+| `src/renderer/styles/` | `tokens.css` design tokens, plus `base`, `shell`, `components`, `navigation`, `report-list`, `result-panel`, and the new `bulk` stylesheet. |
+| `src/renderer/utils/` | Renderer helpers: icons, panel-rail breakpoints, report metadata, `sanitize.js` (`sanitize`, `sanitizeErrorMessage` — strips Playwright "Browser logs:" / "Call log:" tails, `sanitizeFilename`), time. |
 | `scripts/` | Build-time guards. `check-env.js` enforces `PLAYWRIGHT_BROWSERS_PATH`; `strip-comments.js` is a developer utility. |
 | `docs/` | Optional design notes and migration specs. Not loaded at runtime. |
 | `dist/` | Webpack output. Not committed. |
@@ -175,6 +202,10 @@ import Electron, the renderer DOM, or anything under `src/renderer/` or
 `presentation/`, or `src/main/`. Components must not import from `src/main/` or
 call `ipcRenderer` directly — they use `window.electronAPI`.
 
+`src/main/` is its own runtime context (Node + Electron-main); it freely
+imports from `src/core/**` (e.g. `bulk-runner.js` requires `playwright-manager`
+and the comparator) but never from `src/renderer/` or `src/infrastructure/`.
+
 Enforcement is currently editorial (not runtime-checked), backed by ESLint and
 the webpack alias map (`@core`, `@config`, `@infra`). `madge` is installed as a
 devDependency for ad-hoc cycle detection.
@@ -187,15 +218,16 @@ paths and what breaks if the rule is violated.
 ### Main (Node.js)
 
 - `src/main/index.js` — lifecycle, application menu, frozen-session recovery
-- `src/main/ipc-handlers.js` — `ipcMain.handle` registry
+- `src/main/ipc-handlers.js` — `ipcMain.handle` registry (now also the bulk channels and `GET_HOST_MEMORY`)
 - `src/main/playwright-manager.js` — browser launch, extraction, comparison orchestration, CDP screenshots
+- `src/main/bulk-runner.js` — per-job orchestrator: `p-limit` concurrency gate, per-host cooldown, dedup-aware extraction, parallel baseline/compare, error-classification, progress events
 - `src/main/protocol-handler.js` — `app://` scheme + 512 MB blob LRU
 - `src/main/resource-paths.js` — locates extractor bundle / browsers across dev vs packaged
-- `src/core/**` — loaded via Node `require` for the comparator
+- `src/core/**` — loaded via Node `require` for the comparator, the bulk plan validator, and the extraction-key hasher
 
 ### Preload (isolated Node bridge)
 
-- `src/main/preload.js` — `contextBridge.exposeInMainWorld('electronAPI', …)`
+- `src/main/preload.js` — `contextBridge.exposeInMainWorld('electronAPI', …)` (now exposes `startBulkJob`, `cancelBulkJob`, `bulkProvideElements`, `getHostMemory`, `onBulkProgress`, `onBulkPairCompleted`, `onBulkJobComplete` in addition to the original surface)
 - `src/main/ipc-channels.js`
 
 ### Renderer (Chromium, sandboxed)
@@ -211,10 +243,132 @@ paths and what breaks if the rule is violated.
 
 What crosses via IPC: extraction requests, comparison requests, file
 import/export, blob registration for the `app://` protocol, version + perf
-metrics, cancellation, progress and notification pushes, native context-menu
-and application-menu actions, window-title updates. See
-`SYSTEM_REFERENCE.md` → *IPC Registry* for every channel name, direction,
-payload type, and handler.
+metrics, **available-browsers detection (`GET_AVAILABLE_BROWSERS`)**, **host
+memory probe (`GET_HOST_MEMORY`)**, **bulk job start/cancel/element-provide
+(`BULK_START_JOB`, `CANCEL_BULK_JOB`, `BULK_PROVIDE_ELEMENTS`)**, cancellation,
+progress and notification pushes (single-op and bulk), native context-menu
+(report-id and bulk-job-id variants) and application-menu actions,
+window-title updates. See `SYSTEM_REFERENCE.md` → *IPC Registry* for every
+channel name, direction, payload type, and handler.
+
+## Bulk pipeline (high-level)
+
+1. **Plan upload.** The user drops an `.xlsx` into the Bulk panel. `xlsx` parses
+   it; `src/core/bulk/plan-parser.js` reads the first sheet, validates headers,
+   enforces `bulk.maxRows` (default `500`), and returns row records. Required
+   columns: `baseline_url`, `compare_url`. Optional: `mode` (`dynamic`/`static`,
+   default `dynamic`), `screenshots` (truthy/falsy tokens), `label`, `browser`
+   (canonical `chromium`/`firefox`/`webkit` or any selector `displayName`),
+   `filter_class`, `filter_id`, `filter_tag`.
+2. **Validation.** `plan-validator.js` walks each row against the live browser
+   catalogue and `assessUrlCompatibility` from the comparison core. Each row
+   ends up `valid` / `warning` (URL CAUTION) / `invalid`. Invalid rows still
+   appear in the downloaded summary with `status: invalid`.
+3. **Dedup planning.** Renderer-side `computeDeduplicationPlan` (in
+   `bulk-workflow.js`) hashes `url|browserType|channel-or-path|YYYY-MM-DD`
+   (`buildExtractionKey` in `core/bulk/extraction-key.js`) and looks each side
+   up via `storage.loadReportByExtractionKey`. Hits become
+   `dedupedSides.{baseline|compare}` and the row will reuse those elements
+   instead of re-extracting. The "Force refresh" toggle skips this.
+4. **Concurrency clamp.** `_clampConcurrency` reads
+   `electronAPI.getHostMemory()` once; if total RAM `< 12 GiB`, max concurrency
+   is capped at `min(2, bulk.maxConcurrency=4)`. If the plan is heterogeneous
+   (mixed `browserType` across rows) and the host is RAM-constrained,
+   concurrency drops to **1**.
+5. **Persist + dispatch.** The renderer writes a `bulk_jobs` row (status
+   `running`) and one `bulk_pairs` row per pair, then invokes
+   `BULK_START_JOB`. The main-process `bulk-runner.js` accepts the spec, sets
+   up a `p-limit(safeConcurrency)` instance, and processes pairs via
+   `Promise.allSettled([baseline, compare])` per row, with an optional
+   per-host cooldown gate (`bulk.hostCooldownMs`, default `500`).
+6. **Reused-side bridge.** When dedup finds an existing report, the renderer
+   pushes its elements over `BULK_PROVIDE_ELEMENTS`; the main side resolves a
+   pending `awaitProvidedElements(pairIndex, side)` promise and the runner
+   skips the corresponding extraction. A 10-second timeout marks the pair as
+   `STORAGE_DEGRADED` if the renderer never delivers.
+7. **Per-pair lifecycle.** Each pair emits `BULK_PROGRESS` events
+   (`extracting-baseline`, `extracting-compare`, `matching`, `screenshots`,
+   `persisting`) and finally a `BULK_PAIR_COMPLETED` push with status `done` /
+   `failed` / `cancelled`. The renderer animates the `persisting` phase, then
+   persists results (report, comparison, blobs, keyframes, rects) tagged with
+   `bulkJobId`.
+8. **Eviction policy.** Bulk-tagged reports / comparisons are **excluded from
+   `MAX_COMPARISONS=20` and `storage.maxReports=50` eviction**: the relevant
+   counters subtract `by_bulkJobId.count()` so a 500-row bulk job does not
+   evict the user's hand-curated single reports. `bulk_jobs` is itself capped
+   at `BULK_MAX_RETAINED_JOBS=10` — older jobs get a cascade-delete.
+9. **Resume detection.** On boot, `detectAndOfferResume` finds any
+   `bulk_jobs` row still flagged `running` (i.e. the app was killed mid-run),
+   marks any in-flight pair `failed` with `errorCode: 'INTERRUPTED'`, and
+   shows a banner with **Resume from pair N**, **View partial results**, or
+   **Discard** (cascade-deletes the job and all its derived rows).
+10. **Export.** `routeBulkExportClick` pulls every persisted comparison for the
+    job (in batches of 5 to stay friendly with IDB), feeds them through
+    `buildBulkSummaryWorkbook` (24-column sheet with severity counts, dedup
+    flag, status, failure reason, etc.), and saves via `EXPORT_FILE`. A
+    matching `buildBulkTemplateWorkbook` exposes the empty plan template +
+    instructions sheet under "Download template".
+
+## Cross-browser support
+
+The main process exposes `GET_AVAILABLE_BROWSERS` (`src/main/browser-detector.js`)
+which returns a list of descriptors:
+
+```
+{ id, displayName, browserType, source, channel, executablePath,
+  version, isAvailable, isLaunchable, isDefault, unavailableReason }
+```
+
+- **`source`** is `'playwright-managed'` (binaries from `PLAYWRIGHT_BROWSERS_PATH`)
+  or `'system'` (Chrome/Edge/Brave/Firefox/Chromium/Safari discovered on disk).
+- **System Firefox / Safari (WebKit)** are listed as read-only — Playwright
+  requires its own patched build. Their `isLaunchable` is `false` with
+  `unavailableReason: 'playwright-requires-patched-build'`.
+- **System Chrome on Windows** is additionally probed against
+  `HKLM/HKCU\SOFTWARE\Policies\Google\Chrome\RemoteDebuggingAllowed`. If the
+  policy is `0`, the descriptor is marked `unavailableReason:
+  'devtools-blocked-by-policy'` and the launch is pre-emptively blocked. If
+  Playwright still raises a "DevTools remote debugging is disallowed" error at
+  launch time, `getBrowser` rethrows with `code: 'BROWSER_POLICY_BLOCKED'`.
+- **Per-OS strategies:** macOS reads `Info.plist` via `/usr/libexec/PlistBuddy`
+  (falls back to `mdls`); Windows queries `reg.exe` against `App Paths`
+  registry keys, then falls back to canonical `Program Files` /
+  `LOCALAPPDATA\Programs` paths, and reads `wmic`/`powershell` for file
+  versions; Linux probes canonical absolute paths first, then walks `$PATH`,
+  and reads `--version`.
+
+The renderer subscribes via `state.js` (`availableBrowsers`,
+`selectedBrowser`, `browserDetectionState ∈ {idle,loading,ready,error}`,
+`browserDetectionError`). The `BrowserSelector` component
+(`src/renderer/components/browser-selector.js`) mounts into
+`#browser-selector-slot` (in the Extract panel) and dispatches
+`BROWSER_SELECTED`. Both the extract and compare workflows pre-flight this
+state and refuse to launch if `browserDetectionState !== 'ready'` or the
+selected browser is not launchable. The bulk workflow uses the same selection
+as the **job-level** descriptor; per-row `browser` cells override it after
+resolving against the catalogue.
+
+Per-engine quirks live in `src/config/browser-capability-profile.js`:
+
+| Engine | CDP available | Screenshot | Freeze method | Viewport override | Scrollbar gutter | Layout warmup |
+|---|---|---|---|---|---|---|
+| chromium | yes | `cdp-webp` (image/webp) | `cdp-script-disable` | `cdp-emulation` (DPR override on) | 15 px | no |
+| firefox  | no  | `playwright-png`        | `js-shim`            | `playwright-set-viewport` (no DPR override) | 17 px | no |
+| webkit   | no  | `playwright-png`        | `js-shim`            | `playwright-set-viewport` (no DPR override) | 0 px  | yes (`requiresLayoutWarmup`) |
+
+On the shim path, `freezePage` patches `requestAnimationFrame`,
+`setInterval` and `setTimeout` (only `0`/null delays survive) and injects a
+`vdiff-freeze-styles` `<style>` block that sets
+`animation-play-state: paused`, `transition-duration: 0s`,
+`scroll-behavior: auto`. WebKit screenshot failures matching
+`/Page\.snapshotRect|snapshot/i` automatically fall back to Chromium for the
+visual phase; the renderer is informed via the
+`visualData.devToolsWarnings` array (kind `'screenshot-engine-fallback'`).
+
+Reasons surfaced to the renderer (`UNAVAILABLE_REASON_LABELS` in
+`browser-selector.js`): `binary-not-found`, `version-mismatch`,
+`playwright-requires-patched-build`, `unsupported-os`,
+`devtools-blocked-by-policy`.
 
 ## How to add a new IPC channel
 
@@ -262,17 +416,38 @@ The contract that must hold:
   `BrowserWindow.webPreferences.preload` resolves to `dist/preload.js`.
 - **IndexedDB lives only in the renderer.** The main process does not open
   the database. Comparisons run in main but persistence happens after the
-  result returns to the renderer via IPC.
-- **Renderer is sandboxed.** `app.enableSandbox()` is called in `src/main/index.js`.
-  All Node capabilities the renderer needs must come through the preload bridge.
+  result returns to the renderer via IPC. The renderer is the source of
+  truth for bulk-job persistence too — `bulk-runner.js` only emits events.
+- **Renderer is sandboxed.** `app.enableSandbox()` is called in
+  `src/main/index.js`. All Node capabilities the renderer needs must come
+  through the preload bridge.
+- **IDB version is `9`.** A fresh install creates every store at v9
+  atomically; an upgrade from v8 adds `bulk_jobs`, `bulk_pairs`, plus
+  `by_bulkJobId` / `by_extractionKey` indexes on `reports` and `by_bulkJobId`
+  on `comparisons`. Earlier upgrades (v5 in particular) still run their
+  data-clearing path; see `SYSTEM_REFERENCE.md` → *IndexedDB Schema*.
 - **Storage degradation events are dispatched on `window`.** Listen for
   `storage-degraded` with `detail.reason` `CIRCUIT_OPEN` (red banner) or
   `WAL_REPLAY_EXHAUSTED` (warning banner). Three consecutive write failures open
-  the circuit until the renderer is reloaded.
+  the circuit until the renderer is reloaded. **A storage-degraded event also
+  cancels any running bulk job** (renderer-side handler in `app.js`).
 - **WAL replay attempts are bounded.** Each pending entry tracks `replayCount`;
   after three failed attempts it is marked `FAILED` and the user is banner-warned.
   `SAVE_VISUAL_BLOB` WAL entries are *never* replayed (binary payload may be lost
-  in flight) — they are immediately failed on startup.
+  in flight) — they are immediately failed on startup. `SAVE_BULK_JOB` /
+  `SAVE_BULK_PAIR` WAL entries are not in the known-replayable set and will
+  also be force-failed at boot if they are ever pending.
+- **Bulk eviction skips bulk-tagged rows.** `_evictAndWrite` and
+  `_writeReportWithEviction` count `by_bulkJobId` separately and refuse to
+  delete bulk rows when computing the "non-bulk" excess against
+  `MAX_COMPARISONS=20` / `storage.maxReports=50`. Bulk-job retention is
+  bounded separately by `BULK_MAX_RETAINED_JOBS=10`; `saveBulkJob` cascade-
+  deletes the oldest jobs when the count would exceed the cap.
+- **Bulk concurrency is clamped by host RAM.** Renderer-side
+  `_clampConcurrency(requested, totalMemMB, heterogeneous)` halves the cap
+  on machines with `< 12 GiB` total RAM, and forces a heterogeneous plan
+  (mixed `browserType`s) down to **1** on those machines. Main-process
+  `_registerBulkHandlers` independently clamps to `bulk.maxConcurrency` (4).
 - **HPID dual scheme.** Every element carries a relative HPID (rooted at the
   extraction scope) and an `absoluteHpid` (rooted at `document.body`). The
   matcher's sequence alignment uses the relative HPID; the cascade suppression
@@ -298,7 +473,9 @@ The contract that must hold:
 - **`recoverFrozenSessions()` runs at boot but is a no-op.** It iterates the
   in-process `_browsers` Map (`src/main/playwright-manager.js`), which is
   empty at boot before any extraction has launched a browser. The function is
-  defensive but currently never finds anything to recover.
+  defensive but currently never finds anything to recover. Bulk-job recovery
+  is a *separate* mechanism (`detectAndOfferResume`) that walks the
+  `bulk_jobs` IDB store at renderer startup.
 - **Notification queue caps are in `notification-queue.js`, not
   `notification-timing.js`.** `MAX_VISIBLE = 3` and the spam threshold
   (`≥ 3` enqueues within `NOTIFICATION_SPAM_WINDOW_MS = 800`) live in
@@ -309,3 +486,27 @@ The contract that must hold:
   causes window-control overlap.
 - **The application menu Help links** point to placeholder
   `your-org/ui-comparison` GitHub URLs — replace before shipping a fork.
+- **Browser detection result is module-cached.** `src/main/browser-detector.js`
+  memoises the first successful detection in a module-level `_cache`. The
+  renderer's "Retry" button on the browser selector calls
+  `getAvailableBrowsers({ refresh: true })` which forces re-detection. The
+  cache is also reachable from tests via the (intentionally underscored)
+  `_resetCache` export.
+- **System Firefox / Safari are visible but not launchable.** Even when the
+  browser-detector finds them, Playwright cannot drive a stock-OS install of
+  these engines — only the Playwright-shipped patched builds. The selector
+  greys them out with a tooltip explaining why.
+- **WebKit visual capture fails over to Chromium silently.** If the WebKit
+  screenshot path raises a `Page.snapshotRect`-shaped error, the comparison
+  is retried against Chromium for the screenshot phase only. The matching
+  pipeline result is unchanged; a `screenshot-engine-fallback` entry is
+  appended to `result.visualDiffs.devToolsWarnings`.
+- **`PLAYWRIGHT_BROWSERS_PATH` only covers the *bundled* engines.** System
+  browsers are detected and launched independently via `channel:` (for
+  canonical install paths) or `executablePath:`. Removing the env var breaks
+  Playwright-managed launches but does *not* affect system Chrome/Edge/Brave.
+- **Bulk context-menu is a separate code path.** The native context menu in
+  `src/main/index.js` branches on `payload.bulkJobId` (a single "Delete this
+  bulk run" item, action `'deleteBulkJob'`) vs. `payload.reportId` (the
+  full report menu). Adding new bulk actions means extending that branch
+  *and* the renderer-side `onContextAction` consumer.

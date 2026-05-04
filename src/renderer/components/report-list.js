@@ -49,6 +49,7 @@ export class ReportList {
     this._totalHeight = 0;
     this._focusedLogicalIndex = -1;
     this._lastKnownHeight = 0;
+    this._jobMeta = new Map();
 
     this._viewport = _el('div', 'vscroll-viewport');
     this._spacer = _el('div', 'vscroll-spacer');
@@ -78,6 +79,14 @@ export class ReportList {
     const firstReportIdx = this._rowItems.findIndex(x => x.type === 'report');
     this._focusedLogicalIndex = firstReportIdx >= 0 ? firstReportIdx : -1;
     this._render();
+  }
+
+  setJobMeta(jobMetaMap) {
+    this._jobMeta = jobMetaMap instanceof Map ? jobMetaMap : new Map();
+    if (this._config.groupBy === 'job') {
+      this._buildRowItems();
+      this._render();
+    }
   }
 
   getViewConfig() {
@@ -215,12 +224,48 @@ export class ReportList {
         if (!groups.has(key)) groups.set(key, []);
         groups.get(key).push(r);
       }
-      this._rowItems = [];
-      let idx = filtered.length;
-      for (const [label, items] of groups) {
-        this._rowItems.push({ type: 'header', label });
-        for (const r of items) {
-          this._rowItems.push({ type: 'report', report: r, displayIndex: idx-- });
+
+      if (groupBy === 'job') {
+        const jobKeys = [];
+        const singleKey = '__single__';
+        for (const key of groups.keys()) {
+          if (key !== singleKey) jobKeys.push(key);
+        }
+        jobKeys.sort((a, b) => {
+          const aId = a.replace('__job__', '');
+          const bId = b.replace('__job__', '');
+          const at = this._jobMeta.get(aId)?.createdAt ?? 0;
+          const bt = this._jobMeta.get(bId)?.createdAt ?? 0;
+          return bt - at;
+        });
+        if (groups.has(singleKey)) jobKeys.push(singleKey);
+
+        this._rowItems = [];
+        let idx = filtered.length;
+        for (const key of jobKeys) {
+          const items = groups.get(key) ?? [];
+          const label = this._jobGroupLabel(key);
+          const jobId = key === singleKey ? null : key.replace('__job__', '');
+          const meta  = jobId ? this._jobMeta.get(jobId) : null;
+          this._rowItems.push({
+            type:   'header',
+            label,
+            jobId,
+            status: meta?.status ?? null,
+          });
+          const sorted = [...items].sort((a, b) => (a.pairIndex ?? 0) - (b.pairIndex ?? 0));
+          for (const r of sorted) {
+            this._rowItems.push({ type: 'report', report: r, displayIndex: idx-- });
+          }
+        }
+      } else {
+        this._rowItems = [];
+        let idx = filtered.length;
+        for (const [label, items] of groups) {
+          this._rowItems.push({ type: 'header', label });
+          for (const r of items) {
+            this._rowItems.push({ type: 'report', report: r, displayIndex: idx-- });
+          }
         }
       }
     }
@@ -254,7 +299,21 @@ export class ReportList {
     if (groupBy === 'environment') {
       return report.environment ?? envTag(report.url) ?? 'Unknown';
     }
+    if (groupBy === 'job') {
+      return report.bulkJobId ? `__job__${report.bulkJobId}` : '__single__';
+    }
     return 'Unknown';
+  }
+
+  _jobGroupLabel(key) {
+    if (key === '__single__') return 'Single runs';
+    const jobId = key.replace('__job__', '');
+    const meta = this._jobMeta.get(jobId);
+    if (!meta) return `Bulk job · ${jobId.slice(0, 8)}…`;
+    const parts = [`Bulk: ${meta.filename ?? jobId.slice(0, 8)}`];
+    if (meta.totalPairs != null) parts.push(`${meta.totalPairs} pairs`);
+    if (meta.createdAt) parts.push(relativeTime(meta.createdAt));
+    return parts.join(' · ');
   }
 
   _buildLayout() {
@@ -318,7 +377,7 @@ export class ReportList {
     for (let i = startIdx; i < endIdx; i++) {
       const item = this._rowItems[i];
       frag.appendChild(item.type === 'header'
-        ? this._renderHeader(item.label)
+        ? this._renderHeader(item)
         : this._renderCard(item.report, item.displayIndex, showEnvBadge, i, focusedInWindow && i === focusedRow));
     }
 
@@ -327,9 +386,40 @@ export class ReportList {
     this._refreshStates();
   }
 
-  _renderHeader(label) {
-    const header = _el('div', 'report-group-header', label);
+  _renderHeader(item) {
+    const label  = typeof item === 'string' ? item : (item?.label ?? '');
+    const jobId  = typeof item === 'object' && item ? item.jobId  : null;
+    const status = typeof item === 'object' && item ? item.status : null;
+
+    const header = _el('div', 'report-group-header');
     header.setAttribute('role', 'presentation');
+
+    const labelSpan = _el('span', 'report-group-header__label', label);
+    header.appendChild(labelSpan);
+
+    if (jobId && status) {
+      const chip = document.createElement('span');
+      chip.className = `report-group-header__chip report-group-header__chip--${status}`;
+      const chipLabels = {
+        completed: 'Done',
+        done:      'Done',
+        partial:   'Partial',
+        failed:    'Failed',
+        cancelled: 'Cancelled',
+      };
+      chip.textContent = chipLabels[status] ?? status;
+      header.appendChild(chip);
+    }
+
+    if (jobId) {
+      header.dataset.bulkJobId = jobId;
+      header.addEventListener('contextmenu', (e) => {
+        if (!window.electronAPI?.showContextMenu) { return; }
+        e.preventDefault();
+        window.electronAPI.showContextMenu({ bulkJobId: jobId });
+      });
+    }
+
     return header;
   }
 

@@ -9,6 +9,8 @@ const log = require('electron-log');
 
 const CH = require('./ipc-channels');
 const playwrightManager = require('./playwright-manager');
+const bulkRunner = require('./bulk-runner');
+const { config: defaultsConfig } = require('../config/defaults.js');
 
 let _mainWindow = null;
 let _blobCache = null;
@@ -16,6 +18,14 @@ let _blobCacheSet = null;
 let _blobCacheDelete = null;
 
 const _cancelRegistry = new Map();
+
+const _bulkJobs = new Map();
+
+// Defense-in-depth: EXPORT_FILE_TO_DIRECTORY only writes into directories
+// the user has explicitly chosen this session via PICK_DIRECTORY. The
+// renderer cannot synthesise a path that bypasses this set because the
+// dialog that populates it runs in main.
+const _approvedDirs = new Set();
 
 function _registerOp(operationId, kind) {
   if (typeof operationId === 'string' && operationId) {
@@ -42,6 +52,7 @@ function registerIpcHandlers(mainWindow) {
   _registerBlobHandlers();
   _registerMetaHandlers();
   _registerBrowserHandlers();
+  _registerBulkHandlers();
 }
 
 function _registerCancelHandlers() {
@@ -66,7 +77,7 @@ function _pushToWindow(channel, payload) {
 
 function _registerComparisonHandlers() {
   ipcMain.handle(CH.START_COMPARISON, async (event, params) => {
-    const { baselineId, compareId, mode, baselineUrl, compareUrl, baselineElements, compareElements, includeScreenshots, browser, operationId } = params;
+    const { baselineId, compareId, mode, baselineUrl, compareUrl, baselineElements, compareElements, includeScreenshots, browser, operationId, comparisonId } = params;
     log.info('START_COMPARISON', { baselineId, compareId, mode, baselineCount: baselineElements?.length, compareCount: compareElements?.length, browserType: browser?.browserType });
 
     _registerOp(operationId, 'compare');
@@ -84,6 +95,7 @@ function _registerComparisonHandlers() {
         compareElements,
         includeScreenshots: includeScreenshots ?? true,
         browser,
+        comparisonId: comparisonId ?? operationId,
         onProgress: sendProgress,
         blobCache: _blobCache,
         isCancelled: _isCancelled(operationId)
@@ -196,6 +208,59 @@ function _registerFileHandlers() {
       const reason = err.code === 'EACCES' ? 'Permission denied — choose a different location' :
       err.code === 'EBUSY' ? 'File is in use by another process' :
       err.message;
+      return { success: false, error: reason };
+    }
+  });
+
+  ipcMain.handle(CH.PICK_DIRECTORY, async (event, { title } = {}) => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(_mainWindow, {
+      title: title ?? 'Choose folder for bulk export',
+      defaultPath: app.getPath('downloads'),
+      properties: ['openDirectory', 'createDirectory']
+    });
+    if (canceled || !filePaths?.length) {
+      return { success: false, reason: 'cancelled' };
+    }
+    const dirPath = filePaths[0];
+    _approvedDirs.add(dirPath);
+    return { success: true, dirPath };
+  });
+
+  ipcMain.handle(CH.EXPORT_FILE_TO_DIRECTORY, async (event, payload = {}) => {
+    const { dirPath, filename, content, encoding } = payload;
+    if (typeof dirPath !== 'string' || !path.isAbsolute(dirPath)) {
+      return { success: false, error: 'Invalid dirPath' };
+    }
+    if (!_approvedDirs.has(dirPath)) {
+      log.warn('EXPORT_FILE_TO_DIRECTORY rejected: dirPath not approved this session', { dirPath });
+      return { success: false, error: 'Directory not approved — pick a folder first' };
+    }
+    if (typeof filename !== 'string' || !filename || filename.includes('/') || filename.includes('\\') || filename.includes('..')) {
+      return { success: false, error: 'Invalid filename' };
+    }
+    const filePath = path.join(dirPath, filename);
+    try {
+      let body;
+      if (content instanceof Uint8Array) {
+        body = Buffer.from(content.buffer, content.byteOffset, content.byteLength);
+      } else if (content instanceof ArrayBuffer) {
+        body = Buffer.from(content);
+      } else if (Array.isArray(content)) {
+        body = Buffer.from(content);
+      } else if (typeof content === 'string') {
+        body = content;
+      } else {
+        return { success: false, error: 'Unsupported content type' };
+      }
+      const writeEncoding = typeof body === 'string' ? (encoding ?? 'utf8') : undefined;
+      await fs.promises.writeFile(filePath, body, writeEncoding);
+      return { success: true, filePath };
+    } catch (err) {
+      log.error('EXPORT_FILE_TO_DIRECTORY write failed', { error: err.message, code: err.code, filePath });
+      const reason = err.code === 'EACCES' ? 'Permission denied — choose a different folder' :
+        err.code === 'EBUSY'  ? 'File is in use by another process' :
+        err.code === 'ENOENT' ? 'Folder no longer exists' :
+        err.message;
       return { success: false, error: reason };
     }
   });
@@ -313,6 +378,187 @@ function _registerBrowserHandlers() {
       log.error('GET_AVAILABLE_BROWSERS failed', { error: err?.message ?? String(err) });
       return { success: false, error: err?.message ?? String(err) };
     }
+  });
+}
+
+function _registerBulkHandlers() {
+  ipcMain.handle(CH.BULK_START_JOB, (event, payload = {}) => {
+    try {
+      const {
+        jobId,
+        filename,
+        pairs,
+        concurrency,
+        hostCooldownMs,
+        comparisonIdsByPairIndex
+      } = payload;
+
+      if (!jobId || !Array.isArray(pairs) || pairs.length === 0) {
+        return { success: false, error: 'Invalid bulk job payload' };
+      }
+
+      const maxConcurrency = defaultsConfig?.bulk?.maxConcurrency ?? 4;
+      const safeConcurrency = Math.max(1, Math.min(Number(concurrency) || 1, maxConcurrency));
+      const cooldown = Math.max(0, Number(hostCooldownMs) || 0);
+
+      const opIds = new Set();
+      const entry = {
+        opIds,
+        startedAt: Date.now(),
+        pLimitInstance: null,
+        filename: filename ?? null
+      };
+      _bulkJobs.set(jobId, entry);
+
+      const isMasterCancelled = () => !_bulkJobs.has(jobId);
+      const pushEvent = (channel, evtPayload) => _pushToWindow(channel, evtPayload);
+
+      entry.providedElements = new Map();
+      entry.providedWaiters  = new Map();
+
+      const ctx = {
+        cancelRegistry: _cancelRegistry,
+        blobCache: _blobCache,
+        registerOp: (opId, kind) => _registerOp(opId, kind),
+        unregisterOp: (opId) => {
+          opIds.delete(opId);
+          _unregisterOp(opId);
+        },
+        addJobOpId: (jId, opId) => {
+          const e = _bulkJobs.get(jId);
+          if (e) {e.opIds.add(opId);}
+        },
+        setLimitInstance: (instance) => {
+          const e = _bulkJobs.get(jobId);
+          if (e) {e.pLimitInstance = instance;}
+        },
+        setPairSettlers: (settlers) => {
+          const e = _bulkJobs.get(jobId);
+          if (e) {e.pairSettlers = settlers;}
+        },
+        cleanupJob: (jId) => {
+          const e = _bulkJobs.get(jId);
+          if (e?.providedWaiters) {
+            for (const w of e.providedWaiters.values()) {
+              try { w.reject(new Error('Bulk job cleaned up')); } catch { void 0; }
+            }
+            e.providedWaiters.clear();
+          }
+          _bulkJobs.delete(jId);
+        },
+        awaitProvidedElements: (pairIndex, side, timeoutMs = 10_000) => {
+          const e = _bulkJobs.get(jobId);
+          if (!e) { return Promise.reject(new Error('Bulk job not registered')); }
+          const key = `${pairIndex}:${side}`;
+          if (e.providedElements.has(key)) {
+            return Promise.resolve(e.providedElements.get(key));
+          }
+          return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+              e.providedWaiters.delete(key);
+              reject(Object.assign(new Error('Timed out waiting for provided elements'), {
+                code: 'STORAGE_DEGRADED',
+              }));
+            }, timeoutMs);
+            e.providedWaiters.set(key, {
+              resolve: (val) => { clearTimeout(timer); resolve(val); },
+              reject:  (err) => { clearTimeout(timer); reject(err);  },
+            });
+          });
+        },
+      };
+
+      const jobSpec = {
+        jobId,
+        filename: filename ?? null,
+        pairs,
+        concurrency: safeConcurrency,
+        hostCooldownMs: cooldown,
+        comparisonIdsByPairIndex: comparisonIdsByPairIndex ?? {}
+      };
+
+      bulkRunner.runBulkJob(jobSpec, pushEvent, isMasterCancelled, ctx).catch((err) => {
+        log.error('[BulkHandler] runBulkJob fatal', { jobId, err: err?.message });
+        _pushToWindow(CH.BULK_JOB_COMPLETE, {
+          jobId,
+          summary: { total: pairs.length, succeeded: 0, failed: pairs.length, cancelled: 0, deduped: 0 },
+          durationMs: Date.now() - entry.startedAt,
+          error: err?.message || String(err)
+        });
+        _bulkJobs.delete(jobId);
+      });
+
+      log.info('[BulkHandler] BULK_START_JOB dispatched', { jobId, pairCount: pairs.length, concurrency: safeConcurrency });
+      return { success: true, jobId };
+    } catch (err) {
+      log.error('[BulkHandler] BULK_START_JOB failed', { error: err?.message });
+      return { success: false, error: err?.message || String(err) };
+    }
+  });
+
+  ipcMain.handle(CH.CANCEL_BULK_JOB, (event, { jobId } = {}) => {
+    const entry = _bulkJobs.get(jobId);
+    if (!entry) {return { acknowledged: true };}
+
+    try {
+      if (entry.pLimitInstance && typeof entry.pLimitInstance.clearQueue === 'function') {
+        entry.pLimitInstance.clearQueue();
+      }
+    } catch (err) {
+      log.warn('[BulkHandler] clearQueue failed', { jobId, err: err?.message });
+    }
+
+    for (const opId of entry.opIds) {
+      const ent = _cancelRegistry.get(opId);
+      if (ent) {ent.cancelled = true;}
+    }
+
+    let synthesised = 0;
+    if (entry.pairSettlers && typeof entry.pairSettlers.entries === 'function') {
+      for (const [pairIndex, settler] of entry.pairSettlers) {
+        if (!settler.started && !settler.settled) {
+          _pushToWindow(CH.BULK_PAIR_COMPLETED, { jobId, pairIndex, status: 'cancelled' });
+          try { settler.settle({ pairIndex, status: 'cancelled' }); } catch { void 0; }
+          synthesised++;
+        }
+      }
+    }
+
+    if (entry.providedWaiters) {
+      for (const w of entry.providedWaiters.values()) {
+        try { w.reject(Object.assign(new Error('Bulk job cancelled'), { code: 'CANCELLED' })); } catch { void 0; }
+      }
+      entry.providedWaiters.clear();
+    }
+
+    _bulkJobs.delete(jobId);
+    log.info('[BulkHandler] CANCEL_BULK_JOB processed', { jobId, droppedPending: synthesised });
+    return { acknowledged: true };
+  });
+
+  ipcMain.handle(CH.GET_HOST_MEMORY, () => ({
+    totalMemMB: Math.round(os.totalmem() / 1024 / 1024),
+    freeMemMB: Math.round(os.freemem() / 1024 / 1024)
+  }));
+
+  ipcMain.handle(CH.BULK_PROVIDE_ELEMENTS, (event, payload = {}) => {
+    const { jobId, pairIndex, side, elements } = payload;
+    if (!jobId || typeof pairIndex !== 'number' || (side !== 'baseline' && side !== 'compare')) {
+      return { accepted: false, error: 'Invalid BULK_PROVIDE_ELEMENTS payload' };
+    }
+    const entry = _bulkJobs.get(jobId);
+    if (!entry) {
+      return { accepted: false, error: `Bulk job not found: ${jobId}` };
+    }
+    const key  = `${pairIndex}:${side}`;
+    const list = Array.isArray(elements) ? elements : [];
+    entry.providedElements.set(key, list);
+    const waiter = entry.providedWaiters.get(key);
+    if (waiter) {
+      entry.providedWaiters.delete(key);
+      try { waiter.resolve(list); } catch { void 0; }
+    }
+    return { accepted: true };
   });
 }
 

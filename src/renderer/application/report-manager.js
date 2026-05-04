@@ -51,7 +51,8 @@ const GROUP_OPTIONS = [
 { key: null, label: 'No grouping' },
 { key: 'host', label: 'By Host' },
 { key: 'date', label: 'By Date' },
-{ key: 'environment', label: 'By Environment' }];
+{ key: 'environment', label: 'By Environment' },
+{ key: 'job', label: 'By Bulk Run' }];
 
 
 const VIEW_CONFIG_KEY = 'sidebar-view-config';
@@ -397,6 +398,44 @@ function handleEmptyClearSearchClick() {
   input.focus();
 }
 
+async function _syncJobMeta(state) {
+  if (!_reportList) return;
+  const cfg = _reportList.getViewConfig();
+  if (cfg.groupBy !== 'job') return;
+
+  const map = new Map();
+  let storedJobs = [];
+  try {
+    if (typeof storage.loadAllBulkJobs === 'function') {
+      storedJobs = await storage.loadAllBulkJobs();
+    }
+  } catch { void 0; }
+
+  for (const j of (storedJobs ?? [])) {
+    if (!j?.id) continue;
+    map.set(j.id, {
+      filename:   j.filename   ?? null,
+      totalPairs: j.totalPairs ?? null,
+      createdAt:  j.createdAt  ?? null,
+      status:     j.status     ?? null,
+    });
+  }
+
+  const job = state.bulkJob;
+  if (job?.jobId) {
+    const existing = map.get(job.jobId) ?? {};
+    map.set(job.jobId, {
+      ...existing,
+      filename:   job.filename   ?? existing.filename   ?? null,
+      totalPairs: job.totalPairs ?? job.pairs?.length ?? existing.totalPairs ?? null,
+      createdAt:  job.startedAt  ?? existing.createdAt  ?? null,
+      status:     job.status     ?? existing.status     ?? null,
+    });
+  }
+
+  _reportList.setJobMeta(map);
+}
+
 function wireEmptyClearSearchButton() {
   const btn = document.getElementById('empty-clear-search');
   if (!btn) return;
@@ -565,6 +604,36 @@ async function handleDeleteReport(report) {
   }
 }
 
+async function _handleDeleteBulkJob(jobId) {
+  if (!jobId) { return; }
+  let jobLabel = jobId.slice(0, 8) + '…';
+  try {
+    const meta = await storage.loadBulkJob?.(jobId);
+    if (meta?.filename) { jobLabel = meta.filename; }
+  } catch { void 0; }
+
+  const confirmed = await Modal.confirm(
+    'Delete bulk run',
+    `Delete bulk run "${jobLabel}" and all its pairs? This cannot be undone.`,
+    { confirmText: 'Delete', destructive: true }
+  );
+  if (!confirmed) { return; }
+  try {
+    if (typeof storage.deleteBulkJobCascade !== 'function') {
+      Toast.error('Bulk delete is not supported in this build.');
+      return;
+    }
+    await storage.deleteBulkJobCascade(jobId);
+    if (getState().bulkJob?.jobId === jobId) {
+      dispatch('BULK_JOB_RESET');
+    }
+    await loadAndRenderReports();
+    Toast.success('Bulk run deleted');
+  } catch (err) {
+    Toast.error(err?.message ?? 'Delete failed');
+  }
+}
+
 async function handleDeleteAllReports() {
   const state = getState();
   const reports = state.reports ?? [];
@@ -609,13 +678,19 @@ async function initializeApp(statusBar) {
     density: savedView.density
   });
   _persistListViewConfig();
+  _syncJobMeta(getState());
 
   if (typeof api?.onContextAction === 'function') {
     api.onContextAction((payload) => {
-      if (!payload || typeof payload.reportId !== 'string') {return;}
+      if (!payload) { return; }
+      if (payload.action === 'deleteBulkJob' && typeof payload.bulkJobId === 'string') {
+        void _handleDeleteBulkJob(payload.bulkJobId);
+        return;
+      }
+      if (typeof payload.reportId !== 'string') { return; }
       const reports = getState().reports ?? [];
       const report = reports.find((r) => r.id === payload.reportId);
-      if (!report) {return;}
+      if (!report) { return; }
       switch (payload.action) {
         case 'setBaseline':
           selectBaselineFromReport(report);
@@ -640,6 +715,7 @@ async function initializeApp(statusBar) {
   subscribe((state) => {
     _reportList?.setBaseline(state.selectedBaseline ?? null);
     _reportList?.setCompare(state.selectedCompare ?? null);
+    _syncJobMeta(state);
   });
 
   _injectSidebarControlIcons();

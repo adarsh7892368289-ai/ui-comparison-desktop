@@ -2,6 +2,7 @@
 
 import { iconChevronLeft } from '../utils/icons.js';
 import { syncLeftPanelRailState } from '../utils/left-panel-breakpoints.js';
+import { dispatch } from '../state.js';
 
 const SIDEBAR_MIN_W = 200;
 const SIDEBAR_MAX_W = 900;
@@ -39,7 +40,7 @@ function snapNearestResize(width) {
 
 export class AppShell {
   constructor() {
-    this._sectionIds = ['extract', 'compare'];
+    this._sectionIds = ['extract', 'compare', 'bulk'];
     this._activeSection = null;
     this._collapsed = false;
     this._toggleQueued = 0;
@@ -157,6 +158,26 @@ export class AppShell {
     const mainContent = document.getElementById('main-content');
     if (mainContent) { mainContent.dataset.activeSection = sectionId; }
     this._syncMainPaneSectionNavButtons(sectionId);
+    this._syncShellSectionPanes(sectionId);
+    if (sectionId === 'extract' || sectionId === 'compare') {
+      dispatch('BULK_ACTIVE_PAIR_CLEAR', {});
+    }
+  }
+
+  _syncShellSectionPanes(sectionId) {
+    const mainControls = document.getElementById('main-controls');
+    const sectionBulk = document.getElementById('section-bulk');
+    const compareStack = document.getElementById('compare-results-stack');
+    if (!mainControls || !sectionBulk) { return; }
+    if (sectionId === 'bulk') {
+      sectionBulk.hidden = false;
+      mainControls.hidden = true;
+      if (compareStack) { compareStack.hidden = true; }
+    } else {
+      sectionBulk.hidden = true;
+      mainControls.hidden = false;
+      if (compareStack) { compareStack.hidden = false; }
+    }
   }
 
   _syncMainPaneSectionNavButtons(sectionId) {
@@ -164,17 +185,13 @@ export class AppShell {
     if (!nav) { return; }
     nav.querySelectorAll('[data-main-pane-section]').forEach((btn) => {
       const sid = btn.getAttribute('data-main-pane-section');
-      if (sid === 'results') {
-        btn.setAttribute('aria-current', 'false');
-        return;
-      }
       btn.setAttribute('aria-current', String(sid === sectionId));
     });
   }
 
   _mainPaneIoPickWinner() {
     const rank = (el) => {
-      if (el.id === 'compare-results') { return 2; }
+      if (el.id === 'section-bulk') { return 2; }
       if (el.id === 'section-compare') { return 1; }
       return 0;
     };
@@ -193,7 +210,7 @@ export class AppShell {
       }
     }
     if (bestEl == null) { return null; }
-    if (bestEl.id === 'compare-results') { return 'results'; }
+    if (bestEl.id === 'section-bulk') { return 'bulk'; }
     if (bestEl.id === 'section-compare') { return 'compare'; }
     return 'extract';
   }
@@ -236,9 +253,9 @@ export class AppShell {
         scrollTo(document.getElementById('section-compare'), 'start');
         return;
       }
-      if (id === 'results') {
-        this.activateSection('compare');
-        scrollTo(document.getElementById('compare-results'), 'start');
+      if (id === 'bulk') {
+        this.activateSection('bulk');
+        return;
       }
     });
 
@@ -258,7 +275,7 @@ export class AppShell {
     const observed = [
       document.getElementById('section-extract'),
       document.getElementById('section-compare'),
-      document.getElementById('compare-results'),
+      document.getElementById('section-bulk'),
     ].filter(Boolean);
     this._mainPaneIoObserved = observed;
     for (const el of observed) {

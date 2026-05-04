@@ -12,7 +12,9 @@ const UNAVAILABLE_REASON_LABELS = Object.freeze({
   'playwright-requires-patched-build':
   'Playwright requires its own patched build of this engine — system installs cannot be driven.',
   'unsupported-os':
-  'This engine is not available on the current operating system.'
+  'This engine is not available on the current operating system.',
+  'devtools-blocked-by-policy':
+  'Blocked by your IT policy — DevTools remote debugging is disabled. Use Playwright Chromium instead.'
 });
 
 function _humanizeReason(reason) {

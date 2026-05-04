@@ -15,6 +15,7 @@ import { getState, dispatch, subscribe } from './state.js';
 
 if (process.env.NODE_ENV === 'development') {
   window.__debugState = () => getState();
+  window.__storage = storage;
 }
 
 import { Toast, syncCompareButton } from './ui.js';
@@ -40,6 +41,11 @@ import {
   renderCompareSummaryFromStrip } from
 './application/compare-workflow.js';
 import { createResultPanel } from './components/result-panel.js';
+import { createBulkPanel } from './components/bulk-panel.js';
+import {
+  initBulkListeners,
+  detectAndOfferResume } from
+'./application/bulk-workflow.js';
 import { createBrowserSelector } from './components/browser-selector.js';
 import { createAppShell } from './components/app-shell.js';
 import { SystemBanner } from './components/system-banner.js';
@@ -258,6 +264,7 @@ function wireExportSplitControls() {
 }
 
 let _resultPanel = null;
+let _bulkResultPanel = null;
 let _appShell = null;
 let _statusBar = null;
 
@@ -294,6 +301,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     _resultPanel.clear();
   }
 
+  const bulkResultHost = document.getElementById('bulk-result-panel-host');
+  if (bulkResultHost) {
+    _bulkResultPanel = createResultPanel(bulkResultHost);
+    _bulkResultPanel.clear();
+  }
+
   const browserSelectorSlot = document.getElementById('browser-selector-slot');
   if (browserSelectorSlot) {
 
@@ -307,19 +320,53 @@ document.addEventListener('DOMContentLoaded', async () => {
     const searchQ = document.getElementById('search-reports')?.value ?? '';
     _statusBar?.updateReportCount(reports, filteredReportCount(reports, searchQ));
 
+    const bulkDetailOpen =
+      state.bulkJob != null && state.bulkJob.activePairIndex != null;
+    const bulkViewer = state.bulkJob?.viewer;
+    const bulkResultArea = document.getElementById('bulk-result-area');
+    if (bulkResultArea) {
+      bulkResultArea.hidden = !bulkDetailOpen;
+    }
+    if (!bulkDetailOpen) {
+      document.getElementById('bulk-results-screenshot-section')?.replaceChildren();
+    }
+
     document.getElementById('main-content')?.classList.toggle(
       'main-content--compare-results-visible',
-      Boolean(state.comparison && state.phase === 'done')
+      Boolean(state.comparison && state.phase === 'done' && !bulkDetailOpen)
     );
 
-    if (state.phase === 'comparing') {
+    if (state.phase === 'comparing' && !bulkDetailOpen) {
       _resultPanel?.showComparing?.();
+      _bulkResultPanel?.clear?.();
+    } else if (state.phase === 'comparing' && bulkDetailOpen) {
+      _bulkResultPanel?.showComparing?.();
+      _resultPanel?.clear?.();
     } else if (state.phase === 'cancelling') {
       _resultPanel?.clear?.();
+      _bulkResultPanel?.clear?.();
     } else if (state.phase === 'error') {
-      _resultPanel?.showError?.(state.error);
+      if (bulkDetailOpen) {
+        _bulkResultPanel?.showError?.(state.error);
+        _resultPanel?.clear?.();
+      } else {
+        _resultPanel?.showError?.(state.error);
+        _bulkResultPanel?.clear?.();
+      }
+    } else if (bulkDetailOpen && bulkViewer) {
+      renderCompareSummaryFromStrip(null);
+      _resultPanel?.clear();
+      _bulkResultPanel?.render(
+        bulkViewer.result,
+        bulkViewer.cachedAt ?? null,
+        bulkViewer.fromCache ?? false
+      );
+    } else if (bulkDetailOpen && !bulkViewer) {
+      _resultPanel?.clear();
+      _bulkResultPanel?.showComparing?.();
     } else if (state.comparison && state.phase === 'done') {
       renderCompareSummaryFromStrip(state.compareSummaryStrip ?? null);
+      _bulkResultPanel?.clear();
       _resultPanel?.render(
         state.comparison,
         state.cachedAt ?? null,
@@ -327,12 +374,29 @@ document.addEventListener('DOMContentLoaded', async () => {
       );
     } else if (state.phase === 'idle') {
       _resultPanel?.clear();
+      _bulkResultPanel?.clear();
     }
   });
 
   await initializeApp(_statusBar);
 
+  const _bulkListenersCleanup = initBulkListeners();
+  const _bulkPanelHost =
+    document.getElementById('bulk-panel-root')
+    || document.getElementById('panel-bulk')
+    || document.getElementById('section-bulk');
+  if (_bulkPanelHost) {
+    createBulkPanel(_bulkPanelHost, api, storage);
+  }
 
+  try {
+    await detectAndOfferResume();
+  } catch (err) {
+    console.error('[bulk] detectAndOfferResume failed', err);
+  }
+  window.addEventListener('beforeunload', () => {
+    try { _bulkListenersCleanup?.(); } catch { void 0; }
+  });
 
 
 
@@ -375,6 +439,23 @@ document.addEventListener('DOMContentLoaded', async () => {
       SystemBanner.error(
         'Storage failure — too many consecutive write errors. No new data will be saved. Restart the app to recover.'
       );
+    }
+
+    const _bulkJob = getState().bulkJob;
+    if (_bulkJob?.status === 'running' && _bulkJob.jobId) {
+      // Per UI spec §7.2 row 13 / §8.5: storage-degraded marks the job
+      // and immediately enters the same Cancelling… visual state as a
+      // user-initiated cancel, then asks main to halt.
+      dispatch('BULK_JOB_STORAGE_DEGRADED', {});
+      dispatch('BULK_JOB_CANCELLING', {});
+      try {
+        const _api = window.electronAPI;
+        if (typeof _api?.cancelBulkJob === 'function') {
+          void _api.cancelBulkJob(_bulkJob.jobId);
+        }
+      } catch (err) {
+        console.error('[bulk] cancelBulkJob during storage-degraded failed', err);
+      }
     }
   });
 

@@ -36,6 +36,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   exportFile: (params) =>
     ipcRenderer.invoke(CH.EXPORT_FILE, params),
 
+  pickDirectory: (params) =>
+    ipcRenderer.invoke(CH.PICK_DIRECTORY, params ?? {}),
+
+  exportFileToDirectory: (params) =>
+    ipcRenderer.invoke(CH.EXPORT_FILE_TO_DIRECTORY, params),
+
   importFile: () =>
     ipcRenderer.invoke(CH.IMPORT_FILE),
 
@@ -68,4 +74,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onMenuAction: makePushBridge(CH.MENU_ACTION),
 
   onAppNotification: makePushBridge(CH.APP_NOTIFICATION),
+
+  startBulkJob: (spec) =>
+    ipcRenderer.invoke(CH.BULK_START_JOB, spec),
+
+  cancelBulkJob: (jobId) =>
+    ipcRenderer.invoke(CH.CANCEL_BULK_JOB, { jobId }),
+
+  bulkProvideElements: (payload) =>
+    ipcRenderer.invoke(CH.BULK_PROVIDE_ELEMENTS, payload),
+
+  getHostMemory: () =>
+    ipcRenderer.invoke(CH.GET_HOST_MEMORY),
+
+  onBulkProgress: makePushBridge(CH.BULK_PROGRESS),
+
+  onBulkPairCompleted: makePushBridge(CH.BULK_PAIR_COMPLETED),
+
+  onBulkJobComplete: makePushBridge(CH.BULK_JOB_COMPLETE),
 });

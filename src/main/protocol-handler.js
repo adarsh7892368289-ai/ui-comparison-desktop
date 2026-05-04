@@ -14,14 +14,16 @@ function _comparisonIdFromKey(key) {
   return sep === -1 ? key : key.slice(0, sep);
 }
 
-function _evictOldestComparisonGroup() {
+function _evictOldestComparisonGroup(activeComparisonId) {
   let targetId = null;
   for (const key of blobCache.keys()) {
-    targetId = _comparisonIdFromKey(key);
+    const candidate = _comparisonIdFromKey(key);
+    if (candidate === activeComparisonId) {continue;}
+    targetId = candidate;
     break;
   }
 
-  if (!targetId) {return;}
+  if (!targetId) {return false;}
 
   let freedBytes = 0;
   for (const [key, entry] of blobCache) {
@@ -35,6 +37,7 @@ function _evictOldestComparisonGroup() {
   if (_cacheTotalBytes < 0) {_cacheTotalBytes = 0;}
 
   log.warn('[Protocol] BlobCache eviction triggered', { evictedComparisonId: targetId, freedBytes });
+  return true;
 }
 
 function blobCacheSet(blobId, entry) {
@@ -45,8 +48,19 @@ function blobCacheSet(blobId, entry) {
     return;
   }
 
+  const activeComparisonId = _comparisonIdFromKey(blobId);
+
   while (_cacheTotalBytes + incoming > MAX_BLOB_CACHE_BYTES && blobCache.size > 0) {
-    _evictOldestComparisonGroup();
+    const evicted = _evictOldestComparisonGroup(activeComparisonId);
+    if (!evicted) {
+      log.warn('[Protocol] Cache cap reached but only the active comparison is present — refusing to self-evict', {
+        activeComparisonId,
+        bytesUsed: _cacheTotalBytes,
+        incoming,
+        cap: MAX_BLOB_CACHE_BYTES
+      });
+      break;
+    }
   }
 
   blobCache.set(blobId, entry);

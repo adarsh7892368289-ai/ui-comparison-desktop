@@ -245,6 +245,14 @@ const rawConfig = {
     stateKey:   'page_comparator_state'
   },
 
+  bulk: {
+    defaultConcurrency: 2,
+    maxConcurrency:     4,
+    maxRows:            500,
+    maxRetainedJobs:    10,
+    hostCooldownMs:     500
+  },
+
   logging: {
     level:                  'debug',
     persistLogs:            true,

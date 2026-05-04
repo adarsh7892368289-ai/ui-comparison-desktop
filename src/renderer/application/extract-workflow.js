@@ -7,6 +7,7 @@ import {
   updateProgress } from
 '../ui.js';
 import { iconAlertTriangle } from '../utils/icons.js';
+import { sanitizeErrorMessage } from '../utils/sanitize.js';
 import { loadAndRenderReports } from './report-manager.js';
 
 const api = window.electronAPI;
@@ -257,7 +258,7 @@ async function handleExtraction() {
 
     if (!result.success) {
       hideProgress('extract');
-      const errText = result.error ?? 'Extraction failed';
+      const errText = sanitizeErrorMessage(result.error ?? 'Extraction failed');
       setError('extract', errText);
       _renderExtractSummary({ status: 'error', message: errText });
       return;
@@ -292,7 +293,7 @@ async function handleExtraction() {
 
   } catch (err) {
     hideProgress('extract');
-    const msg = err.message ?? 'Unexpected error';
+    const msg = sanitizeErrorMessage(err?.message ?? err ?? 'Unexpected error');
     setError('extract', msg);
     _renderExtractSummary({ status: 'error', message: msg });
   } finally {

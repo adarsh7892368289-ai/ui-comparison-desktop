@@ -1,0 +1,692 @@
+@keyframes bulk-shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position:  200% center; }
+}
+
+@keyframes bulkReward {
+  0%   { transform: scale(1); }
+  50%  { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
+
+@keyframes bulkFadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.bulk-panel {
+  /* UI spec §3.2 — variable row heights as CSS custom properties so
+     bulk-panel.js can read them once on mount via getComputedStyle and
+     drive the variable-height virtual scroll without hardcoded constants. */
+  --bulk-row-h-compact: 48px;
+  --bulk-row-h-running: 64px;
+  --bulk-row-h-failed:  72px;
+
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.bulk-idle__lede {
+  margin: 0;
+}
+
+.bulk-idle__actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  align-items: center;
+}
+.bulk-example-table,
+.bulk-preview__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  color: var(--color-text-primary);
+}
+.bulk-example-table th,
+.bulk-example-table td,
+.bulk-preview__table th,
+.bulk-preview__table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--color-border-subtle, rgba(255,255,255,0.06));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bulk-example-table th,
+.bulk-preview__table th {
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+.bulk-idle__hint {
+  margin: 6px 0 0 0;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.bulk-idle__advanced summary {
+  cursor: pointer;
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+}
+
+.bulk-idle__advanced-field {
+  margin-top: var(--space-3);
+}
+
+.bulk-preview__row--invalid {
+  background: color-mix(in srgb, var(--color-state-error, #ef4444) 12%, transparent);
+}
+.bulk-preview__warning {
+  font-size: 12px;
+  color: var(--color-state-error, #ef4444);
+  min-height: 1em;
+}
+.bulk-preview__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.bulk-running {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.bulk-running__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.bulk-running__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.bulk-running__summary {
+  margin: 4px 0 0 0;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.bulk-running__progress {
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.bulk-running__controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* Download-all cluster — keeps the split-button + cancel + progress on
+   one logical line; allowed to wrap as a unit if the header is narrow. */
+.bulk-download-all {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Split-button: [Download all results | format ▾] visually fused so the
+   format chooser reads as a modifier of the action, not a separate
+   control. Uses btn-ghost colors/border for visual parity with siblings. */
+.bulk-download-all__split {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  overflow: hidden;
+  transition: border-color var(--dur-fast) var(--ease-standard);
+}
+.bulk-download-all__split:hover {
+  border-color: var(--color-border-default);
+}
+.bulk-download-all__split:focus-within {
+  border-color: var(--color-brand);
+  box-shadow: 0 0 0 3px var(--color-brand-ring);
+}
+
+/* Override the .btn-ghost defaults inside the split so the two halves
+   share one continuous border without doubling the seam. */
+.bulk-download-all__action.btn-ghost.btn-sm {
+  border: 0;
+  border-radius: 0;
+  padding: 0 var(--space-3);
+  font-size: var(--text-sm);
+  background: transparent;
+}
+.bulk-download-all__action.btn-ghost.btn-sm:hover:not(:disabled) {
+  background: var(--color-surface-overlay);
+}
+
+.bulk-download-all__divider {
+  width: 1px;
+  background: var(--color-border-subtle);
+  flex-shrink: 0;
+}
+
+.bulk-download-all__format-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+.bulk-download-all__format-wrap:hover {
+  background: var(--color-surface-overlay);
+}
+
+/* The native <select> is fully restyled to match btn-ghost typography,
+   with a custom chevron (the native one varies across platforms and
+   would clash with the flat ghost aesthetic). */
+.bulk-download-all__format {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  width: auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0 22px 0 var(--space-2);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  outline: none;
+}
+.bulk-download-all__format::-ms-expand { display: none; }
+
+/* Theme the popup option list — Chromium honors background/color on
+   <select> and <option>. Without these the OS native list paints white,
+   clashing with the dark app surface. */
+.bulk-download-all__format option {
+  background: var(--color-surface-raised);
+  color: var(--color-text-primary);
+  font-weight: var(--weight-regular);
+}
+.bulk-download-all__format option:checked,
+.bulk-download-all__format option:hover {
+  background: var(--color-brand);
+  color: var(--color-text-on-brand, #fff);
+}
+
+.bulk-download-all__chevron {
+  position: absolute;
+  right: var(--space-2);
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  line-height: 1;
+  color: var(--color-text-tertiary);
+  pointer-events: none;
+}
+.bulk-download-all__format:disabled,
+.bulk-download-all__action.btn-ghost.btn-sm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.bulk-download-all__format-wrap:has(.bulk-download-all__format:disabled) {
+  cursor: not-allowed;
+}
+
+.bulk-download-all__progress {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.bulk-nav-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--color-surface-sunken, var(--color-surface-base));
+  border: 1px solid var(--color-border-subtle, rgba(255,255,255,0.06));
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.bulk-nav-bar__position {
+  font-variant-numeric: tabular-nums;
+}
+
+.bulk-vscroll-viewport {
+  position: relative;
+  min-height: 200px;
+  max-height: min(480px, 50vh);
+  overflow-y: auto;
+  border: 1px solid var(--color-border-subtle, rgba(255,255,255,0.06));
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunken, var(--color-surface-base));
+  outline: none;
+}
+.bulk-vscroll-spacer {
+  position: relative;
+  width: 100%;
+}
+.bulk-vscroll-window {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+}
+
+.bulk-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--color-border-subtle, rgba(255,255,255,0.04));
+  font-size: 12px;
+  color: var(--color-text-primary);
+  box-sizing: border-box;
+  animation: bulkFadeIn 200ms ease-out;
+  transition: height 200ms ease-out;
+}
+.bulk-row__main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.bulk-row__index {
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+  min-width: 2.5em;
+}
+.bulk-row__urls {
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-text-secondary);
+}
+.bulk-row__state {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  min-width: 9em;
+  text-align: right;
+}
+.bulk-row__pct {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+  min-width: 3em;
+  text-align: right;
+}
+.bulk-row__error {
+  font-size: 11px;
+  color: var(--color-state-error, #ef4444);
+  padding-left: 22px;
+}
+.bulk-row__open-btn {
+  margin-left: auto;
+}
+
+.bulk-status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  background: var(--color-text-tertiary);
+  flex: 0 0 auto;
+  transform-origin: center;
+}
+.bulk-row--queued .bulk-status-dot,
+.bulk-row--cancelled .bulk-status-dot {
+  background: var(--color-text-tertiary);
+}
+.bulk-row--active .bulk-status-dot {
+  background: var(--color-brand);
+  box-shadow: 0 0 0 3px var(--color-brand-glow, rgba(37,99,235,0.25));
+}
+.bulk-row--done .bulk-status-dot {
+  background: var(--color-state-success, #16a34a);
+}
+.bulk-row--failed .bulk-status-dot {
+  background: color-mix(in srgb, var(--color-destructive, #ef4444) 70%, transparent);
+}
+
+.bulk-row--reward .bulk-status-dot {
+  /* UI spec §9.4 — micro-reward: dot scales 1.0→1.3→1.0 over 150 ms. */
+  animation: bulkReward 150ms ease-out forwards;
+}
+
+.bulk-row--entering {
+  animation: bulkFadeIn 200ms ease-out forwards;
+}
+
+.bulk-pair-row__inline-progress {
+  margin-left: 22px;
+}
+.bulk-pair-row__inline-progress .progress-track {
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--color-brand) 12%, transparent);
+  overflow: hidden;
+}
+.bulk-pair-row__inline-progress .progress-fill {
+  height: 100%;
+  background: var(--color-brand);
+  border-radius: 2px;
+  transition: width 300ms cubic-bezier(0.0, 0.0, 0.2, 1);
+}
+
+#bulk-job-progress-bar {
+  transition: width 300ms cubic-bezier(0.0, 0.0, 0.2, 1);
+}
+
+.progress-fill.progress-fill--finishing {
+  transition: width 600ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.bulk-pair-row__inline-progress--running .progress-fill {
+  background: linear-gradient(
+    100deg,
+    var(--color-brand) 0%,
+    color-mix(in srgb, var(--color-brand) 60%, white) 50%,
+    var(--color-brand) 100%
+  );
+  background-size: 200% 100%;
+  animation: bulk-shimmer 1.6s linear infinite;
+}
+
+.bulk-row--cancelled .bulk-pair-row__inline-progress--running .progress-fill {
+  animation-play-state: paused;
+}
+
+.bulk-running__title-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.bulk-running__elapsed {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.bulk-summary__reused {
+  color: var(--color-brand);
+  font-weight: 500;
+}
+.bulk-cancel-note {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  margin-left: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.bulk-auto-follow-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  margin-right: 8px;
+}
+
+.bulk-resume-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px;
+  margin: 8px 12px 0;
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+  border: 1px solid var(--color-warning, #d4a006);
+  border-radius: 6px;
+}
+.bulk-resume-banner__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.bulk-resume-banner__meta {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+.bulk-resume-banner__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.bulk-concurrency-hint {
+  font-size: 11px;
+  color: var(--color-warning, #d4a006);
+  margin-top: 4px;
+}
+
+.bulk-preview__job-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.bulk-preview__option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+.bulk-preview__option-hint {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  margin-left: 4px;
+}
+
+.bulk-pair-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  flex-wrap: wrap;
+}
+.bulk-pair-toolbar__search {
+  flex: 1 1 auto;
+  min-width: 160px;
+  font-size: 12px;
+  padding: 4px 8px;
+  background: var(--color-surface-base);
+  border: 1px solid var(--color-border-subtle, rgba(255,255,255,0.08));
+  border-radius: 4px;
+  color: var(--color-text-primary);
+}
+.bulk-pair-toolbar__btn {
+  flex: 0 0 auto;
+}
+.btn-ghost--active {
+  background: color-mix(in srgb, var(--color-brand) 18%, transparent);
+  color: var(--color-brand);
+}
+
+.bulk-pair-columns {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--color-border-subtle, rgba(255,255,255,0.06));
+}
+.bulk-pair-col--idx   { min-width: 2.5em; }
+.bulk-pair-col--urls  { flex: 1 1 auto; }
+.bulk-pair-col--state {
+  min-width: 9em;
+  text-align: right;
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+}
+.bulk-pair-col--sortable:hover {
+  color: var(--color-text-primary);
+}
+.bulk-pair-col--sorted::after {
+  content: ' ↑';
+  color: var(--color-brand);
+}
+
+.bulk-row__dedup {
+  color: var(--color-brand);
+  font-weight: 600;
+  margin-left: 2px;
+}
+.bulk-row__numbers {
+  display: inline-flex;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.bulk-row__num {
+  white-space: nowrap;
+}
+.bulk-row__num--crit {
+  color: color-mix(in srgb, var(--color-destructive, #ef4444) 80%, transparent);
+}
+.bulk-row__num--high {
+  color: color-mix(in srgb, var(--color-warning, #d4a006) 90%, transparent);
+}
+
+.nav-section-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  width: 12px;
+  height: 12px;
+  font-size: 11px;
+  line-height: 1;
+  vertical-align: middle;
+}
+.nav-section-status:empty { display: none; }
+
+.nav-section-status__dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  font-size: 0;
+  line-height: 0;
+}
+.nav-section-status__dot--success {
+  background: var(--color-success);
+}
+.nav-section-status__dot--warning {
+  background: var(--color-warning);
+}
+.nav-section-status__dot--error {
+  width: auto;
+  height: auto;
+  background: transparent;
+  font-size: 11px;
+  line-height: 1;
+  color: color-mix(in srgb, var(--color-destructive, #ef4444) 70%, transparent);
+}
+.nav-section-status__dot--active {
+  background: var(--color-brand);
+  animation: bulk-tab-pulse 1.6s linear infinite;
+}
+
+@keyframes bulk-tab-pulse {
+  0%   { opacity: 1;   transform: scale(1); }
+  50%  { opacity: 0.4; transform: scale(0.8); }
+  100% { opacity: 1;   transform: scale(1); }
+}
+
+.nav-section-status__spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid color-mix(in srgb, var(--color-brand) 30%, transparent);
+  border-top-color: var(--color-brand);
+  border-radius: 50%;
+  animation: bulk-tab-spinner 0.8s linear infinite;
+}
+
+@keyframes bulk-tab-spinner {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-section-status__dot--active,
+  .nav-section-status__spinner {
+    animation: none !important;
+  }
+}
+
+.report-group-header__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.report-group-header__chip--done      { color: var(--color-success);    background: color-mix(in srgb, var(--color-success)    18%, transparent); }
+.report-group-header__chip--partial   { color: var(--color-warning);    background: color-mix(in srgb, var(--color-warning)    18%, transparent); }
+.report-group-header__chip--failed    { color: var(--color-destructive); background: color-mix(in srgb, var(--color-destructive) 18%, transparent); }
+.report-group-header__chip--cancelled { color: var(--color-text-tertiary); background: color-mix(in srgb, var(--color-text-tertiary) 18%, transparent); }
+
+@media (prefers-reduced-motion: reduce) {
+  .bulk-pair-row__inline-progress--running .progress-fill,
+  .bulk-row--reward .bulk-status-dot,
+  .bulk-row,
+  #bulk-job-progress-bar,
+  .progress-fill.progress-fill--finishing,
+  .bulk-pair-row__inline-progress .progress-fill {
+    animation: none !important;
+    transition: none !important;
+  }
+  .bulk-pair-row__inline-progress--running .progress-fill {
+    background: var(--color-brand);
+  }
+}
+
+#bulk-results-screenshot-section:not(:empty) {
+  padding: var(--space-4) var(--space-6) 0;
+}
+
+#bulk-result-area:not([hidden]) {
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+#bulk-result-panel-host:empty {
+  display: none;
+}
+
+#bulk-result-panel-host:not(:empty) {
+  padding: var(--space-6);
+}
+
+.bulk-storage-degraded-notice {
+  margin: 8px 0;
+  padding: 10px 12px;
+  color: var(--color-destructive);
+  background: color-mix(in srgb, var(--color-destructive) 8%, transparent);
+  border-left: 3px solid var(--color-destructive);
+  font-size: var(--text-sm);
+  border-radius: 2px;
+}

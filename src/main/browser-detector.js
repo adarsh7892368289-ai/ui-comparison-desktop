@@ -414,6 +414,18 @@ function _buildSystemDescriptor(spec, foundPath, version) {
 
   const useChannel = spec.channel != null && _isCanonicalForChannel(spec.channel, foundPath);
 
+  let isLaunchable = true;
+  let unavailableReason = null;
+  if (
+  process.platform === 'win32' &&
+  browserType === 'chromium' &&
+  spec.channel === 'chrome' &&
+  _isChromeBlockedByDevToolsPolicy())
+  {
+    isLaunchable = false;
+    unavailableReason = 'devtools-blocked-by-policy';
+  }
+
   return {
     id,
     displayName: baseLabel,
@@ -423,10 +435,39 @@ function _buildSystemDescriptor(spec, foundPath, version) {
     executablePath: useChannel ? null : foundPath,
     version: version ?? null,
     isAvailable: true,
-    isLaunchable: true,
+    isLaunchable,
     isDefault: false,
-    unavailableReason: null
+    unavailableReason
   };
+}
+
+function _isChromeBlockedByDevToolsPolicy() {
+  if (process.platform !== 'win32' || !REG_EXE || !fs.existsSync(REG_EXE)) {
+    return false;
+  }
+  const policyKeys = [
+  'HKLM\\SOFTWARE\\Policies\\Google\\Chrome',
+  'HKCU\\SOFTWARE\\Policies\\Google\\Chrome'];
+
+  for (const key of policyKeys) {
+    try {
+      const r = child_process.spawnSync(
+        REG_EXE,
+        ['query', key, '/v', 'RemoteDebuggingAllowed'],
+        { timeout: REG_TIMEOUT_MS, encoding: 'utf8', windowsHide: true }
+      );
+      if (r.status !== 0) {continue;}
+      const out = r.stdout ?? '';
+      const m = out.match(/RemoteDebuggingAllowed\s+REG_DWORD\s+0x([0-9a-fA-F]+)/);
+      if (m && parseInt(m[1], 16) === 0) {
+        log.info('[browser-detector] Chrome RemoteDebuggingAllowed=0 detected', { key });
+        return true;
+      }
+    } catch (err) {
+      log.debug('[browser-detector] policy probe failed', { key, error: err.message });
+    }
+  }
+  return false;
 }
 
 function _isCanonicalForChannel(channel, foundPath) {

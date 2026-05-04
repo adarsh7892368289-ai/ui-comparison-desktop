@@ -1,11 +1,4 @@
 
-
-
-
-
-
-
-
 const BROWSER_CAPABILITY_PROFILES = Object.freeze({
   chromium: Object.freeze({
     cdpAvailable: true,
@@ -17,7 +10,8 @@ const BROWSER_CAPABILITY_PROFILES = Object.freeze({
     deviceScaleFactorOverride: true,
     bringToFront: 'cdp',
     expectedScrollbarGutterPx: 15,
-    subPixelScrollAccurate: true
+    subPixelScrollAccurate: true,
+    requiresLayoutWarmup: false
   }),
   firefox: Object.freeze({
     cdpAvailable: false,
@@ -29,7 +23,8 @@ const BROWSER_CAPABILITY_PROFILES = Object.freeze({
     deviceScaleFactorOverride: false,
     bringToFront: 'playwright',
     expectedScrollbarGutterPx: 17,
-    subPixelScrollAccurate: true
+    subPixelScrollAccurate: true,
+    requiresLayoutWarmup: false
   }),
   webkit: Object.freeze({
     cdpAvailable: false,
@@ -41,7 +36,8 @@ const BROWSER_CAPABILITY_PROFILES = Object.freeze({
     deviceScaleFactorOverride: false,
     bringToFront: 'playwright',
     expectedScrollbarGutterPx: 0,
-    subPixelScrollAccurate: true
+    subPixelScrollAccurate: true,
+    requiresLayoutWarmup: true
   })
 });
 
@@ -65,9 +61,5 @@ const BROWSER_NORMALIZATION_PROFILES = Object.freeze({
     requiresFontWeightCanonicalize: true
   })
 });
-
-
-
-
 
 export { BROWSER_CAPABILITY_PROFILES, BROWSER_NORMALIZATION_PROFILES };

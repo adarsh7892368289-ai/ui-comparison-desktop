@@ -4,7 +4,7 @@ import logger from './logger.js';
 import { performanceMonitor } from './performance-monitor.js';
 
 const DB_NAME                    = 'ui_comparison_db';
-const DB_VERSION                 = 8;
+const DB_VERSION                 = 9;
 const STORE_REPORTS              = 'reports';
 const STORE_ELEMENTS             = 'elements';
 const STORE_COMPARISONS          = 'comparisons';
@@ -15,8 +15,11 @@ const STORE_VISUAL_KEYFRAMES     = 'visual_keyframes';
 const STORE_VISUAL_ELEMENT_RECTS = 'visual_element_rects';
 const STORE_OP_LOG               = 'operation_log';
 const STORE_APP_META             = 'app_meta';
+const STORE_BULK_JOBS            = 'bulk_jobs';
+const STORE_BULK_PAIRS           = 'bulk_pairs';
 const META_KEY_V5_DATA_CLEARED   = 'v5_upgrade_data_cleared_notice';
 const MAX_COMPARISONS            = 20;
+const BULK_MAX_RETAINED_JOBS     = 10;
 const OP_STATUS_PENDING          = 'PENDING';
 const OP_STATUS_COMPLETE         = 'COMPLETE';
 const OP_STATUS_FAILED           = 'FAILED';
@@ -179,6 +182,38 @@ function upgradeToV8(db) {
   }
 }
 
+function upgradeToV9(db, upgradeTx) {
+  if (!db.objectStoreNames.contains(STORE_BULK_JOBS)) {
+    const jobsStore = db.createObjectStore(STORE_BULK_JOBS, { keyPath: 'id' });
+    jobsStore.createIndex('by_createdAt', 'createdAt', { unique: false });
+    jobsStore.createIndex('by_status',    'status',    { unique: false });
+  }
+
+  if (!db.objectStoreNames.contains(STORE_BULK_PAIRS)) {
+    const pairsStore = db.createObjectStore(STORE_BULK_PAIRS, { keyPath: 'id' });
+    pairsStore.createIndex('by_jobId',              'jobId',                  { unique: false });
+    pairsStore.createIndex('by_jobId_status',       ['jobId', 'status'],      { unique: false });
+    pairsStore.createIndex('by_jobId_pairIndex',    ['jobId', 'pairIndex'],   { unique: false });
+  }
+
+  if (db.objectStoreNames.contains(STORE_REPORTS)) {
+    const reportStore = upgradeTx.objectStore(STORE_REPORTS);
+    if (!reportStore.indexNames.contains('by_bulkJobId')) {
+      reportStore.createIndex('by_bulkJobId', 'bulkJobId', { unique: false });
+    }
+    if (!reportStore.indexNames.contains('by_extractionKey')) {
+      reportStore.createIndex('by_extractionKey', 'extractionKey', { unique: false });
+    }
+  }
+
+  if (db.objectStoreNames.contains(STORE_COMPARISONS)) {
+    const compStore = upgradeTx.objectStore(STORE_COMPARISONS);
+    if (!compStore.indexNames.contains('by_bulkJobId')) {
+      compStore.createIndex('by_bulkJobId', 'bulkJobId', { unique: false });
+    }
+  }
+}
+
 function runUpgrade(db, upgradeTx, oldVersion) {
   if (oldVersion < 1) { buildReportStores(db); }
   if (oldVersion < 2) { buildComparisonStores(db); }
@@ -187,6 +222,7 @@ function runUpgrade(db, upgradeTx, oldVersion) {
   if (oldVersion < 5) { upgradeToV5(upgradeTx); }
   if (oldVersion < 6) { upgradeToV6(db); }
   if (oldVersion < 7) { upgradeToV7(db, upgradeTx); }
+  if (oldVersion < 9) { upgradeToV9(db, upgradeTx); }
 }
 
 class IDBRepository {
@@ -302,7 +338,10 @@ class IDBRepository {
 
   async #saveReportInner(report) {
     const maxReports = get('storage.maxReports');
-    const { elements, ...meta } = report;
+    const { elements, extractionKey, ...rest } = report;
+    const meta = extractionKey === undefined
+      ? { ...rest }
+      : { ...rest, extractionKey };
     const logId = crypto.randomUUID();
 
     try {
@@ -325,17 +364,29 @@ class IDBRepository {
 
       transactionToPromise(tx).then(resolve).catch(reject);
 
-      const countReq = reportStore.count();
-      countReq.onerror  = () => tx.abort();
-      countReq.onsuccess = () => {
-        const excess    = countReq.result - maxReports + 1;
-        const reportCtx = { meta, elements, id: reportId };
+      const totalReq = reportStore.count();
+      const bulkReq  = reportStore.index('by_bulkJobId').count();
+      let totalCount = null;
+      let bulkCount  = null;
+
+      const proceed = () => {
+        if (totalCount === null || bulkCount === null) { return; }
+        const nonBulkCount = totalCount - bulkCount;
+        const isBulkWrite  = meta.bulkJobId != null;
+        const projected    = isBulkWrite ? nonBulkCount : nonBulkCount + 1;
+        const excess       = projected - maxReports;
+        const reportCtx    = { meta, elements, id: reportId };
         if (excess <= 0) {
           commitReportWrite(reportStore, elementStore, reportCtx);
           return;
         }
         this.#evictReports(reportStore, elementStore, reportCtx, excess);
       };
+
+      totalReq.onerror   = () => tx.abort();
+      bulkReq.onerror    = () => tx.abort();
+      totalReq.onsuccess = () => { totalCount = totalReq.result; proceed(); };
+      bulkReq.onsuccess  = () => { bulkCount  = bulkReq.result;  proceed(); };
     });
   }
 
@@ -347,6 +398,10 @@ class IDBRepository {
     cursorReq.onsuccess = () => {
       const cursor = cursorReq.result;
       if (cursor && deleted < excess) {
+        if (cursor.value?.bulkJobId != null) {
+          cursor.continue();
+          return;
+        }
         reportStore.delete(cursor.primaryKey);
         elementStore.delete(cursor.primaryKey);
         deleted += 1;
@@ -528,11 +583,18 @@ class IDBRepository {
       writeCtx.summary.put({ comparisonId: meta.id, timestamp: meta.timestamp, pairKey: meta.pairKey });
     };
 
-    const tx = writeCtx.comp.transaction;
-    const countReq = writeCtx.comp.count();
-    countReq.onerror  = () => tx.abort();
-    countReq.onsuccess = () => {
-      const excess = countReq.result - MAX_COMPARISONS + 1;
+    const tx       = writeCtx.comp.transaction;
+    const totalReq = writeCtx.comp.count();
+    const bulkReq  = writeCtx.comp.index('by_bulkJobId').count();
+    let totalCount = null;
+    let bulkCount  = null;
+
+    const proceed = () => {
+      if (totalCount === null || bulkCount === null) { return; }
+      const nonBulkCount = totalCount - bulkCount;
+      const isBulkWrite  = meta.bulkJobId != null;
+      const projected    = isBulkWrite ? nonBulkCount : nonBulkCount + 1;
+      const excess       = projected - MAX_COMPARISONS;
       if (excess <= 0) {
         writeAll();
         return;
@@ -543,6 +605,10 @@ class IDBRepository {
       cursorReq.onsuccess = () => {
         const cursor = cursorReq.result;
         if (cursor && deleted < excess) {
+          if (cursor.value?.bulkJobId != null) {
+            cursor.continue();
+            return;
+          }
           const oldId = cursor.primaryKey;
           writeCtx.comp.delete(oldId);
           writeCtx.diffs.delete(oldId);
@@ -554,6 +620,11 @@ class IDBRepository {
         }
       };
     };
+
+    totalReq.onerror   = () => tx.abort();
+    bulkReq.onerror    = () => tx.abort();
+    totalReq.onsuccess = () => { totalCount = totalReq.result; proceed(); };
+    bulkReq.onsuccess  = () => { bulkCount  = bulkReq.result;  proceed(); };
   }
 
   async #writeWalEntry(db, id, operation, payload) {
@@ -908,6 +979,270 @@ class IDBRepository {
     } catch {
       return null;
     }
+  }
+
+  saveBulkJob(job) {
+    return this.#enqueue(performanceMonitor.wrap('idb.saveBulkJob', () => this.#saveBulkJobInner(job)));
+  }
+
+  async #saveBulkJobInner(job) {
+    const logId = crypto.randomUUID();
+    try {
+      const db = await this.#getDB();
+      await this.#writeWalEntry(db, logId, 'SAVE_BULK_JOB', { job });
+
+      const readTx     = db.transaction(STORE_BULK_JOBS, 'readonly');
+      const jobCount   = await requestToPromise(readTx.objectStore(STORE_BULK_JOBS).count());
+      let oldestIds    = [];
+      if (jobCount >= BULK_MAX_RETAINED_JOBS) {
+        const overflow = jobCount - BULK_MAX_RETAINED_JOBS + 1;
+        const evictTx  = db.transaction(STORE_BULK_JOBS, 'readonly');
+        oldestIds = await this.#collectOldestBulkJobIds(evictTx, overflow, job.id);
+      }
+
+      for (const oldId of oldestIds) {
+        await this.#deleteBulkJobCascadeInner(oldId);
+      }
+
+      const writeTx = db.transaction(STORE_BULK_JOBS, 'readwrite');
+      writeTx.objectStore(STORE_BULK_JOBS).put(job);
+      await transactionToPromise(writeTx);
+
+      await this.#completeWalEntry(db, logId);
+      return { success: true, id: job.id };
+    } catch (writeError) {
+      trackError(ERROR_CODES.STORAGE_WRITE_FAILED, writeError.message, { id: job?.id });
+      return { success: false, error: writeError.message };
+    }
+  }
+
+  #collectOldestBulkJobIds(tx, count, excludeId) {
+    return new Promise((resolve, reject) => {
+      const ids = [];
+      const req = tx.objectStore(STORE_BULK_JOBS).index('by_createdAt').openCursor(null, 'next');
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (cursor && ids.length < count) {
+          if (cursor.primaryKey !== excludeId) {
+            ids.push(cursor.primaryKey);
+          }
+          cursor.continue();
+        } else {
+          resolve(ids);
+        }
+      };
+    });
+  }
+
+  updateBulkJob(jobId, patch) {
+    return this.#enqueue(performanceMonitor.wrap('idb.updateBulkJob', () => this.#updateBulkJobInner(jobId, patch)));
+  }
+
+  async #updateBulkJobInner(jobId, patch) {
+    try {
+      const db       = await this.#getDB();
+      const tx       = db.transaction(STORE_BULK_JOBS, 'readwrite');
+      const store    = tx.objectStore(STORE_BULK_JOBS);
+      const existing = await requestToPromise(store.get(jobId));
+      if (!existing) {
+        return { success: false, error: `Bulk job not found: ${jobId}` };
+      }
+      store.put({ ...existing, ...patch });
+      await transactionToPromise(tx);
+      return { success: true, id: jobId };
+    } catch (writeError) {
+      trackError(ERROR_CODES.STORAGE_WRITE_FAILED, writeError.message, { jobId });
+      return { success: false, error: writeError.message };
+    }
+  }
+
+  saveBulkPair(pair) {
+    return this.#enqueue(performanceMonitor.wrap('idb.saveBulkPair', () => this.#saveBulkPairInner(pair)));
+  }
+
+  async #saveBulkPairInner(pair) {
+    const logId = crypto.randomUUID();
+    try {
+      const db = await this.#getDB();
+      await this.#writeWalEntry(db, logId, 'SAVE_BULK_PAIR', { pair });
+      const tx = db.transaction(STORE_BULK_PAIRS, 'readwrite');
+      tx.objectStore(STORE_BULK_PAIRS).put(pair);
+      await transactionToPromise(tx);
+      await this.#completeWalEntry(db, logId);
+      return { success: true, id: pair.id };
+    } catch (writeError) {
+      trackError(ERROR_CODES.STORAGE_WRITE_FAILED, writeError.message, { id: pair?.id });
+      return { success: false, error: writeError.message };
+    }
+  }
+
+  updateBulkPair(pairId, patch) {
+    return this.#enqueue(performanceMonitor.wrap('idb.updateBulkPair', () => this.#updateBulkPairInner(pairId, patch)));
+  }
+
+  async #updateBulkPairInner(pairId, patch) {
+    try {
+      const db       = await this.#getDB();
+      const tx       = db.transaction(STORE_BULK_PAIRS, 'readwrite');
+      const store    = tx.objectStore(STORE_BULK_PAIRS);
+      const existing = await requestToPromise(store.get(pairId));
+      if (!existing) {
+        return { success: false, error: `Bulk pair not found: ${pairId}` };
+      }
+      store.put({ ...existing, ...patch });
+      await transactionToPromise(tx);
+      return { success: true, id: pairId };
+    } catch (writeError) {
+      trackError(ERROR_CODES.STORAGE_WRITE_FAILED, writeError.message, { pairId });
+      return { success: false, error: writeError.message };
+    }
+  }
+
+  async loadBulkJob(jobId) {
+    return performanceMonitor.wrap('idb.loadBulkJob', async () => {
+      try {
+        const db     = await this.#getDB();
+        const tx     = db.transaction(STORE_BULK_JOBS, 'readonly');
+        const record = await requestToPromise(tx.objectStore(STORE_BULK_JOBS).get(jobId));
+        return record ?? null;
+      } catch (readError) {
+        trackError(ERROR_CODES.STORAGE_READ_FAILED, readError.message, { jobId });
+        return null;
+      }
+    })();
+  }
+
+  async loadAllBulkJobs() {
+    return performanceMonitor.wrap('idb.loadAllBulkJobs', async () => {
+      try {
+        const db = await this.#getDB();
+        const tx = db.transaction(STORE_BULK_JOBS, 'readonly');
+        return collectCursor(tx.objectStore(STORE_BULK_JOBS).index('by_createdAt'), 'prev');
+      } catch (readError) {
+        trackError(ERROR_CODES.STORAGE_READ_FAILED, readError.message);
+        return [];
+      }
+    })();
+  }
+
+  async loadBulkPairsByJob(jobId) {
+    return performanceMonitor.wrap('idb.loadBulkPairsByJob', async () => {
+      try {
+        const db    = await this.#getDB();
+        const tx    = db.transaction(STORE_BULK_PAIRS, 'readonly');
+        const range = IDBKeyRange.bound([jobId, -Infinity], [jobId, Infinity]);
+        const recs  = await requestToPromise(
+          tx.objectStore(STORE_BULK_PAIRS).index('by_jobId_pairIndex').getAll(range)
+        );
+        return recs ?? [];
+      } catch (readError) {
+        trackError(ERROR_CODES.STORAGE_READ_FAILED, readError.message, { jobId });
+        return [];
+      }
+    })();
+  }
+
+  async loadBulkPairsByStatus(jobId, status) {
+    return performanceMonitor.wrap('idb.loadBulkPairsByStatus', async () => {
+      try {
+        const db   = await this.#getDB();
+        const tx   = db.transaction(STORE_BULK_PAIRS, 'readonly');
+        const recs = await requestToPromise(
+          tx.objectStore(STORE_BULK_PAIRS).index('by_jobId_status').getAll(IDBKeyRange.only([jobId, status]))
+        );
+        return recs ?? [];
+      } catch (readError) {
+        trackError(ERROR_CODES.STORAGE_READ_FAILED, readError.message, { jobId, status });
+        return [];
+      }
+    })();
+  }
+
+  deleteBulkJobCascade(jobId) {
+    return this.#enqueue(performanceMonitor.wrap('idb.deleteBulkJobCascade', () => this.#deleteBulkJobCascadeInner(jobId)));
+  }
+
+  async #deleteBulkJobCascadeInner(jobId) {
+    try {
+      const db = await this.#getDB();
+
+      const readTx = db.transaction([STORE_BULK_PAIRS, STORE_REPORTS, STORE_COMPARISONS], 'readonly');
+      const [pairKeys, reportKeys, compKeys] = await Promise.all([
+        requestToPromise(readTx.objectStore(STORE_BULK_PAIRS).index('by_jobId').getAllKeys(IDBKeyRange.only(jobId))),
+        requestToPromise(readTx.objectStore(STORE_REPORTS).index('by_bulkJobId').getAllKeys(IDBKeyRange.only(jobId))),
+        requestToPromise(readTx.objectStore(STORE_COMPARISONS).index('by_bulkJobId').getAllKeys(IDBKeyRange.only(jobId)))
+      ]);
+
+      const visualLookupTx = db.transaction([STORE_VISUAL_BLOBS, STORE_VISUAL_KEYFRAMES, STORE_VISUAL_ELEMENT_RECTS], 'readonly');
+      const visualBlobStore = visualLookupTx.objectStore(STORE_VISUAL_BLOBS);
+      const visualKfStore   = visualLookupTx.objectStore(STORE_VISUAL_KEYFRAMES);
+      const visualRectStore = visualLookupTx.objectStore(STORE_VISUAL_ELEMENT_RECTS);
+      const visualBlobKeys = [];
+      const visualKfKeys   = [];
+      const visualRectKeys = [];
+      for (const compId of (compKeys ?? [])) {
+        const range = IDBKeyRange.only(compId);
+        const [bk, kk, rk] = await Promise.all([
+          requestToPromise(visualBlobStore.index('by_comparisonId').getAllKeys(range)),
+          requestToPromise(visualKfStore.index('by_session').getAllKeys(range)),
+          requestToPromise(visualRectStore.index('by_session').getAllKeys(range)),
+        ]);
+        visualBlobKeys.push(...(bk ?? []));
+        visualKfKeys.push(...(kk ?? []));
+        visualRectKeys.push(...(rk ?? []));
+      }
+
+      const stores  = [
+        STORE_BULK_JOBS, STORE_BULK_PAIRS,
+        STORE_REPORTS, STORE_ELEMENTS,
+        STORE_COMPARISONS, STORE_COMP_DIFFS, STORE_COMP_SUMMARY,
+        STORE_VISUAL_BLOBS, STORE_VISUAL_KEYFRAMES, STORE_VISUAL_ELEMENT_RECTS,
+      ];
+      const writeTx = db.transaction(stores, 'readwrite');
+
+      writeTx.objectStore(STORE_BULK_JOBS).delete(jobId);
+      for (const k of (pairKeys   ?? [])) { writeTx.objectStore(STORE_BULK_PAIRS).delete(k); }
+      for (const k of (reportKeys ?? [])) {
+        writeTx.objectStore(STORE_REPORTS).delete(k);
+        writeTx.objectStore(STORE_ELEMENTS).delete(k);
+      }
+      for (const k of (compKeys   ?? [])) {
+        writeTx.objectStore(STORE_COMPARISONS).delete(k);
+        writeTx.objectStore(STORE_COMP_DIFFS).delete(k);
+        writeTx.objectStore(STORE_COMP_SUMMARY).delete(k);
+      }
+      for (const k of visualBlobKeys) { writeTx.objectStore(STORE_VISUAL_BLOBS).delete(k); }
+      for (const k of visualKfKeys)   { writeTx.objectStore(STORE_VISUAL_KEYFRAMES).delete(k); }
+      for (const k of visualRectKeys) { writeTx.objectStore(STORE_VISUAL_ELEMENT_RECTS).delete(k); }
+
+      await transactionToPromise(writeTx);
+      return { success: true, deletedComparisonIds: compKeys ?? [] };
+    } catch (deleteError) {
+      trackError(ERROR_CODES.STORAGE_WRITE_FAILED, deleteError.message, { jobId });
+      return { success: false, error: deleteError.message };
+    }
+  }
+
+  async loadReportByExtractionKey(extractionKey) {
+    return performanceMonitor.wrap('idb.loadReportByExtractionKey', async () => {
+      try {
+        const db   = await this.#getDB();
+        const tx   = db.transaction(STORE_REPORTS, 'readonly');
+        const recs = await requestToPromise(
+          tx.objectStore(STORE_REPORTS).index('by_extractionKey').getAll(IDBKeyRange.only(extractionKey))
+        );
+        if (!recs?.length) { return null; }
+        let newest = recs[0];
+        for (const r of recs) {
+          if ((r.timestamp ?? 0) > (newest.timestamp ?? 0)) { newest = r; }
+        }
+        return newest;
+      } catch (readError) {
+        trackError(ERROR_CODES.STORAGE_READ_FAILED, readError.message, { extractionKey });
+        return null;
+      }
+    })();
   }
 
   async consumeV5UpgradeDataClearedNotice() {

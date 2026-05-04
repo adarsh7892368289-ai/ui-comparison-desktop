@@ -90,10 +90,23 @@ async function loadBlobData(manifest, comparisonId) {
     if (entry.compareKeyframeId) {ids.add(entry.compareKeyframeId);}
   }
   const out = Object.create(null);
+  const missing = [];
   for (const id of ids) {
     const idbKey = comparisonId ? `${comparisonId}:${id}` : id;
     const blob = await storage.loadVisualBlob(idbKey);
-    if (blob) {out[id] = await blobToDataUri(blob);}
+    if (blob) {
+      out[id] = await blobToDataUri(blob);
+    } else {
+      missing.push({ keyframeId: id, idbKey });
+    }
+  }
+  if (missing.length > 0) {
+    logger.warn('HTML export: visual blobs missing from IDB', {
+      comparisonId,
+      missingCount: missing.length,
+      totalRequested: ids.size,
+      sample: missing.slice(0, 5)
+    });
   }
   return out;
 }

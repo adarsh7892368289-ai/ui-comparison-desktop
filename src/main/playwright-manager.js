@@ -27,6 +27,11 @@ function _profileFor(browserTypeName) {
   return BROWSER_CAPABILITY_PROFILES[browserTypeName] ?? BROWSER_CAPABILITY_PROFILES.chromium;
 }
 
+function _effectiveDprFor(browserTypeName) {
+  const profile = _profileFor(browserTypeName);
+  return profile.deviceScaleFactorOverride ? CAPTURE_SCALE_FACTOR : 1;
+}
+
 function getScrollTolerance(browserType) {
   switch (browserType) {
     case 'firefox':  return 5;
@@ -121,7 +126,25 @@ async function getBrowser(descriptorOrType = 'chromium') {
   }
 
   log.info('[PM] Launching browser', { browserType, channel, executablePath, cacheKey });
-  const browser = await launcher.launch(launchOptions);
+  let browser;
+  try {
+    browser = await launcher.launch(launchOptions);
+  } catch (err) {
+    const msg = err?.message ?? String(err);
+    const policyBlocked =
+      /DevTools remote debugging is disallowed/i.test(msg) ||
+      /remote.debugging.*disallowed/i.test(msg) ||
+      /Target page.*context.*browser has been closed/i.test(msg);
+    if (policyBlocked) {
+      log.warn('[PM] Browser launch blocked by IT policy', { browserType, channel, executablePath });
+      const friendly = new Error(
+        "This browser is blocked by your organisation's IT policy (DevTools remote debugging is disabled). Switch to Playwright Chromium in the browser selector."
+      );
+      friendly.code = 'BROWSER_POLICY_BLOCKED';
+      throw friendly;
+    }
+    throw err;
+  }
   _browsers.set(cacheKey, browser);
   return browser;
 }
@@ -479,7 +502,8 @@ function inPageScrollAndSettle([targetY, fallbackMs]) {
       if (done) {return;}
       done = true;
       clearTimeout(hardTimer);
-      resolve(y);
+      const reachedTarget = Math.abs(y - targetY) <= tolerance;
+      resolve({ actualY: y, reachedTarget });
     }
 
     const hardTimer = setTimeout(
@@ -501,6 +525,80 @@ function inPageScrollAndSettle([targetY, fallbackMs]) {
       requestAnimationFrame(tick);
     }
     requestAnimationFrame(tick);
+  });
+}
+
+function inPageWarmupLayout([stepPx, settleMs, perStepCapMs, hardCapMs, stableStepsToExit]) {
+  return new Promise(function (resolve) {
+    const startedAt = Date.now();
+    const docHeight = function () {
+      return Math.max(
+        document.documentElement.scrollHeight,
+        document.body ? document.body.scrollHeight : 0
+      );
+    };
+    const initialScrollY = Math.round(window.scrollY);
+    const exitOnStable = stableStepsToExit > 0 ? stableStepsToExit : 3;
+    const hardDeadline = startedAt + (hardCapMs > 0 ? hardCapMs : 30_000);
+    let nextY = 0;
+    let pageGrew = true;
+    let lastSeenHeight = 0;
+    let stableStepsAtBottom = 0;
+    let stepsTaken = 0;
+    let waitedForRaf = false;
+
+    function settleAndResolve() {
+      window.scrollTo(0, initialScrollY);
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          setTimeout(function () {
+            resolve({
+              finalDocHeight: docHeight(),
+              initialScrollY,
+              steps: stepsTaken,
+              pageGrewDuringWarmup: pageGrew,
+              elapsedMs: Date.now() - startedAt,
+              hitHardCap: Date.now() >= hardDeadline
+            });
+          }, settleMs);
+        });
+      });
+    }
+
+    function step() {
+      const h = docHeight();
+      const vp = window.innerHeight;
+      if (h > lastSeenHeight) {
+        pageGrew = true;
+        stableStepsAtBottom = 0;
+      }
+      lastSeenHeight = h;
+      const maxY = Math.max(0, h - vp);
+
+      if (Date.now() >= hardDeadline) {
+        settleAndResolve();
+        return;
+      }
+
+      if (nextY > maxY) {
+        stableStepsAtBottom++;
+        if (stableStepsAtBottom >= exitOnStable && waitedForRaf) {
+          settleAndResolve();
+          return;
+        }
+        nextY = maxY;
+      }
+
+      window.scrollTo(0, Math.min(nextY, maxY));
+      stepsTaken++;
+      requestAnimationFrame(function () {
+        waitedForRaf = true;
+        nextY += stepPx;
+        setTimeout(step, perStepCapMs);
+      });
+    }
+
+    step();
   });
 }
 
@@ -606,10 +704,11 @@ function prefixKeyframes(keyframes, sessionId, role) {
   }));
 }
 
-function buildManifestFromRemeasured(keyframes, remeasureResults, documentYById, actualDPR, documentHeight, viewportHeight) {
+function buildManifestFromRemeasured(keyframes, remeasureResults, documentYById, actualDPR, documentHeight, viewportHeight, effectiveDpr) {
   const resultByKfId = new Map(remeasureResults.map((r) => [r.keyframeId, r]));
   const manifest = new Map();
   const vpH = viewportHeight > 0 ? viewportHeight : Infinity;
+  const dprValue = effectiveDpr ?? actualDPR ?? 1;
 
   for (const kf of keyframes) {
     const remeasure = resultByKfId.get(kf.id);
@@ -623,7 +722,7 @@ function buildManifestFromRemeasured(keyframes, remeasureResults, documentYById,
 
       if (!m || !m.found) {
         manifest.set(elId, {
-          keyframeId: kf.id, actualDPR, dpr: CAPTURE_SCALE_FACTOR, kfScrollY: actualScrollY,
+          keyframeId: kf.id, actualDPR, dpr: dprValue, kfScrollY: actualScrollY,
           documentY: docY, totalDocumentHeight: documentHeight, viewportRect: null,
           misaligned: true, misalignReason: m?.misalignReason ?? 'element-not-found',
           selectorAmbiguous: false, selectorMatchCount: null, rectClipped: false
@@ -640,7 +739,7 @@ function buildManifestFromRemeasured(keyframes, remeasureResults, documentYById,
 
       if (clippedBottom <= 0) {
         manifest.set(elId, {
-          keyframeId: kf.id, actualDPR, dpr: CAPTURE_SCALE_FACTOR, kfScrollY: actualScrollY,
+          keyframeId: kf.id, actualDPR, dpr: dprValue, kfScrollY: actualScrollY,
           documentY: docY, totalDocumentHeight: documentHeight, viewportRect: null,
           misaligned: true, misalignReason: 'clipped-below-fold',
           selectorAmbiguous: m.selectorAmbiguous ?? false,
@@ -650,7 +749,7 @@ function buildManifestFromRemeasured(keyframes, remeasureResults, documentYById,
       }
 
       manifest.set(elId, {
-        keyframeId: kf.id, actualDPR, dpr: CAPTURE_SCALE_FACTOR, kfScrollY: actualScrollY,
+        keyframeId: kf.id, actualDPR, dpr: dprValue, kfScrollY: actualScrollY,
         documentY: docY, totalDocumentHeight: documentHeight,
         viewportRect: { x: m.viewportX, y: clippedY, width: m.width, height: clippedH },
         rawViewportRect: { x: m.viewportX, y: rawY, width: m.width, height: rawH },
@@ -748,21 +847,28 @@ async function captureKeyframe(sessionHandle, keyframe, kfSelectorPairs, session
   log.info(`VDIFF ${kfTag} bringToFront DONE`, { role: tabRole });
 
   const t0 = Date.now();
-  await executeInPage(sessionHandle, inPageScrollAndSettle, [scrollY, SCROLL_SETTLE_TIMEOUT_MS]);
-  log.info(`VDIFF ${kfTag} scroll+paint DONE`, { elapsed: ms(t0) });
+  const firstSettle = await executeInPage(sessionHandle, inPageScrollAndSettle, [scrollY, SCROLL_SETTLE_TIMEOUT_MS]);
+  log.info(`VDIFF ${kfTag} scroll+paint DONE`, { elapsed: ms(t0), reachedTarget: firstSettle?.reachedTarget });
 
   const browserTypeName = sessionHandle.browserTypeName;
   const scrollTolerance = getScrollTolerance(browserTypeName);
-  let actualScrollY = scrollY;
+  let actualScrollY = firstSettle?.actualY ?? scrollY;
   for (let attempt = 0; attempt < SCROLL_VERIFY_RETRY_MAX; attempt++) {
     const readY = await executeInPage(sessionHandle, () => Math.round(window.scrollY));
     actualScrollY = readY;
     if (Math.abs(readY - scrollY) <= scrollTolerance) {break;}
     log.warn(`VDIFF ${kfTag} scroll mismatch`, { expected: scrollY, actual: readY, attempt, tolerance: scrollTolerance, browserTypeName });
-    await executeInPage(sessionHandle, inPageScrollAndSettle, [scrollY, SCROLL_VERIFY_RETRY_MS]);
+    const retrySettle = await executeInPage(sessionHandle, inPageScrollAndSettle, [scrollY, SCROLL_VERIFY_RETRY_MS]);
+    actualScrollY = retrySettle?.actualY ?? actualScrollY;
   }
   const settledDrift = Math.abs(actualScrollY - scrollY);
-  if (settledDrift > scrollTolerance / 2 && settledDrift <= scrollTolerance) {
+  const scrollClamped = settledDrift > scrollTolerance;
+  if (scrollClamped) {
+    log.warn(`[SCROLL-CLAMPED] ${kfTag} target unreachable after retries`, {
+      targetY: scrollY, actualY: actualScrollY, drift: settledDrift,
+      tolerance: scrollTolerance, browserTypeName
+    });
+  } else if (settledDrift > scrollTolerance / 2) {
     log.warn(`[SCROLL-DRIFT-CANDIDATE] ${kfTag} settled drift near tolerance`, {
       expected: scrollY, actual: actualScrollY, drift: settledDrift,
       tolerance: scrollTolerance, browserTypeName
@@ -794,6 +900,8 @@ async function captureKeyframe(sessionHandle, keyframe, kfSelectorPairs, session
 
   log.info(`VDIFF ${kfTag} COMPLETE`, { totalElapsed: ms(roleStart) });
 
+  const effectiveDpr = _effectiveDprFor(browserTypeName);
+
   return {
     keyframeId: id,
     actualScrollY: confirmedScrollY,
@@ -802,11 +910,14 @@ async function captureKeyframe(sessionHandle, keyframe, kfSelectorPairs, session
     keyframeMeta: {
       id, sessionId, tabRole,
       scrollY: confirmedScrollY,
+      requestedScrollY: scrollY,
+      scrollClamped,
       viewportWidth,
       viewportHeight,
       documentHeight,
-      captureScaleFactor: CAPTURE_SCALE_FACTOR,
-      devicePixelRatio: actualDPR,
+      captureScaleFactor: effectiveDpr,
+      devicePixelRatio: effectiveDpr,
+      pageReportedDpr: actualDPR,
       capturedAt: Date.now()
     }
   };
@@ -889,6 +1000,44 @@ async function executeTabCapture(sessionHandle, selectorPairs, sessionId, role, 
 
   const diffSelectors = selectorPairs.map((p) => p.selector).filter(Boolean);
   await executeInPage(sessionHandle, inPageSuppressFixed, [SUPPRESS_ATTR, diffSelectors]);
+
+  const profile = _profileFor(sessionHandle.browserTypeName);
+  let postWarmupDocHeight = viewport.documentHeight;
+  if (profile.requiresLayoutWarmup) {
+    const tWarm = Date.now();
+    const warmupStep = Math.max(200, Math.floor(confirmedHeight * 0.6));
+    log.info(`VDIFF [${role}] WARMUP layout START`, {
+      browserTypeName: sessionHandle.browserTypeName,
+      requiresLayoutWarmup: profile.requiresLayoutWarmup,
+      stepPx: warmupStep,
+      preDocHeight: viewport.documentHeight
+    });
+    const warmupResult = await executeInPage(
+      sessionHandle, inPageWarmupLayout, [warmupStep, 350, 250, 30_000, 3]
+    );
+    postWarmupDocHeight = warmupResult?.finalDocHeight ?? viewport.documentHeight;
+    try {
+      await sessionHandle.page.waitForFunction(
+        () => document.readyState === 'complete',
+        null,
+        { timeout: 5000 }
+      );
+    } catch (_e) { /* readyState may already be complete or timeout — proceed */ }
+    log.info(`VDIFF [${role}] WARMUP layout DONE`, {
+      elapsed: ms(tWarm),
+      browserTypeName: sessionHandle.browserTypeName,
+      preDocHeight: viewport.documentHeight,
+      postDocHeight: postWarmupDocHeight,
+      growthRatio: viewport.documentHeight > 0
+        ? (postWarmupDocHeight / viewport.documentHeight).toFixed(2)
+        : 'n/a',
+      pageGrewDuringWarmup: warmupResult?.pageGrewDuringWarmup,
+      steps: warmupResult?.steps,
+      hitHardCap: warmupResult?.hitHardCap,
+      warmupElapsedMs: warmupResult?.elapsedMs
+    });
+  }
+
   await executeInPage(sessionHandle, inPageScrollAndSettle, [0, SCROLL_SETTLE_TIMEOUT_MS]);
 
   const raw = await executeInPage(sessionHandle, inPageGetRects, selectorPairs);
@@ -904,7 +1053,8 @@ async function executeTabCapture(sessionHandle, selectorPairs, sessionId, role, 
 
   const pseudoResults = await executeInPage(sessionHandle, inPageGetPseudoStyles, selectorPairs);
 
-  const { width: vpWidth, documentHeight } = viewport;
+  const { width: vpWidth } = viewport;
+  const documentHeight = postWarmupDocHeight;
   const rawFrames = groupIntoKeyframes(validRects, confirmedHeight, vpWidth, documentHeight);
   const keyframes = prefixKeyframes(rawFrames, sessionId, role);
   log.info(`VDIFF [${role}] keyframes grouped`, { count: keyframes.length });
@@ -916,8 +1066,9 @@ async function executeTabCapture(sessionHandle, selectorPairs, sessionId, role, 
     sessionHandle, keyframes, selectorById, sessionId, role, actualDPR, documentHeight, blobCache, comparisonId
   );
 
+  const effectiveDpr = _effectiveDprFor(sessionHandle.browserTypeName);
   const manifest = buildManifestFromRemeasured(
-    keyframes, remeasureResults, documentYById, actualDPR, documentHeight, confirmedHeight
+    keyframes, remeasureResults, documentYById, actualDPR, documentHeight, confirmedHeight, effectiveDpr
   );
 
   attachPseudoDataToManifest(manifest, pseudoResults ?? []);
@@ -1295,6 +1446,7 @@ async function runComparison({
   compareElements,
   includeScreenshots,
   browser: browserDescriptor,
+  comparisonId: incomingComparisonId,
   onProgress,
   blobCache,
   isCancelled
@@ -1302,7 +1454,7 @@ async function runComparison({
   const totalStart = Date.now();
   log.info('[PM] runComparison start', { baselineId, compareId, mode, baselineCount: baselineElements?.length, compareCount: compareElements?.length });
 
-  const comparisonId = crypto.randomUUID();
+  const comparisonId = incomingComparisonId ?? crypto.randomUUID();
   const send = (label, pct) => onProgress?.(label, pct);
 
   send('Pre-flight checks…', 5);
@@ -1413,21 +1565,32 @@ async function runComparison({
     comparisonId,
     baselineId,
     compareId,
+    baselineUrl,
+    compareUrl,
     mode,
     urlCompatibility: urlResult,
     matching: comparisonResult.matching,
     comparison: comparisonResult.comparison,
     unmatchedElements: comparisonResult.unmatchedElements,
     duration: comparisonResult.duration,
+    sessionId: visualData?.sessionId ?? null,
     visualDiffs: visualData?.diffs ?? {},
     visualKeyframes: visualData?.keyframes ?? [],
     visualRectRecords: visualData?.rectRecords ?? [],
     visualBlobs: visualData?.blobs ?? {},
-    visualDiffStatus: visualData ? {
-      status: 'completed',
-      reason: null,
-      devToolsWarnings: visualData.devToolsWarnings ?? []
-    } : null,
+    visualDiffStatus: (() => {
+      if (includeScreenshots === false) {
+        return null;
+      }
+      if (visualData) {
+        return {
+          status: 'completed',
+          reason: null,
+          devToolsWarnings: visualData.devToolsWarnings ?? []
+        };
+      }
+      return { status: 'skipped', reason: 'Screenshot phase did not complete', devToolsWarnings: [] };
+    })(),
     completedAt: new Date().toISOString()
   };
 

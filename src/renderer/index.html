@@ -14,6 +14,7 @@
   <link rel="stylesheet" href="styles/report-list.css">
   <link rel="stylesheet" href="styles/result-panel.css">
   <link rel="stylesheet" href="styles/navigation.css">
+  <link rel="stylesheet" href="styles/bulk.css">
 </head>
 <body>
 
@@ -117,7 +118,7 @@
       <nav id="main-pane-section-nav" class="main-pane-section-nav" aria-label="Main pane sections">
         <button type="button" class="main-pane-section-nav__btn" data-main-pane-section="extract">Extract</button>
         <button type="button" class="main-pane-section-nav__btn" data-main-pane-section="compare">Compare</button>
-        <button type="button" class="main-pane-section-nav__btn" data-main-pane-section="results">Results</button>
+        <button type="button" class="main-pane-section-nav__btn" data-main-pane-section="bulk" id="bulk-tab-btn">Bulk<span class="nav-section-status" id="nav-section-status-bulk" aria-hidden="true"></span></button>
       </nav>
 
       <div id="main-controls">
@@ -296,11 +297,35 @@
 
           </section>
 
-          <div id="compare-results"></div>
+          <div id="compare-results-stack" class="compare-results-stack">
+            <div id="compare-results-screenshot-section" class="result-panel__screenshot-section" aria-live="polite"></div>
+            <div id="compare-results"></div>
+          </div>
 
         </div>
       </div>
 
+      </div>
+
+      <div class="nav-section" id="section-bulk" hidden>
+        <button class="nav-section__header" id="header-bulk" aria-expanded="false" aria-controls="body-bulk">
+          <span class="nav-section__header-leading">
+            <span>Bulk</span>
+          </span>
+          <svg class="nav-section__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+            <path d="M9 18l6-6-6-6"/>
+          </svg>
+        </button>
+        <div class="nav-section__body" id="body-bulk" role="region" aria-labelledby="header-bulk">
+          <section id="panel-bulk" class="panel active">
+            <div id="bulk-resume-banner-slot"></div>
+            <div id="bulk-panel-root"></div>
+          </section>
+          <div id="bulk-result-area" hidden>
+            <div id="bulk-results-screenshot-section" class="result-panel__screenshot-section" aria-live="polite"></div>
+            <div id="bulk-result-panel-host"></div>
+          </div>
+        </div>
       </div>
 
     </div>

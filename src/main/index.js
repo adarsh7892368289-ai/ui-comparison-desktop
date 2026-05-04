@@ -162,25 +162,36 @@ app.on('ready', () => {
 
   if (!_contextMenuListenerRegistered) {
     ipcMain.on(IPC.SHOW_CONTEXT_MENU, (event, payload) => {
-      if (!payload || typeof payload.reportId !== 'string') {return;}
+      if (!payload) { return; }
       const win = BrowserWindow.fromWebContents(event.sender);
-      if (!win) {return;}
-      const { reportId } = payload;
+      if (!win) { return; }
       const send = (data) => {
         if (!event.sender.isDestroyed()) {
           event.sender.send(IPC.CONTEXT_ACTION, data);
         }
       };
-      const template = [
-      { label: 'Set as Baseline', click: () => send({ action: 'setBaseline', reportId }) },
-      { label: 'Set as Compare', click: () => send({ action: 'compare', reportId }) },
-      { type: 'separator' },
-      { label: 'Export as JSON', click: () => send({ action: 'export', format: 'json', reportId }) },
-      { label: 'Export as Excel', click: () => send({ action: 'export', format: 'excel', reportId }) },
-      { label: 'Export as CSV', click: () => send({ action: 'export', format: 'csv', reportId }) },
-      { type: 'separator' },
-      { label: 'Delete', click: () => send({ action: 'delete', reportId }) }];
 
+      let template = null;
+      if (typeof payload.bulkJobId === 'string') {
+        const { bulkJobId } = payload;
+        template = [
+          { label: 'Delete this bulk run', click: () => send({ action: 'deleteBulkJob', bulkJobId }) },
+        ];
+      } else if (typeof payload.reportId === 'string') {
+        const { reportId } = payload;
+        template = [
+          { label: 'Set as Baseline', click: () => send({ action: 'setBaseline', reportId }) },
+          { label: 'Set as Compare',  click: () => send({ action: 'compare',     reportId }) },
+          { type: 'separator' },
+          { label: 'Export as JSON',  click: () => send({ action: 'export', format: 'json',  reportId }) },
+          { label: 'Export as Excel', click: () => send({ action: 'export', format: 'excel', reportId }) },
+          { label: 'Export as CSV',   click: () => send({ action: 'export', format: 'csv',   reportId }) },
+          { type: 'separator' },
+          { label: 'Delete', click: () => send({ action: 'delete', reportId }) },
+        ];
+      }
+
+      if (!template) { return; }
       Menu.buildFromTemplate(template).popup({ window: win });
     });
     _contextMenuListenerRegistered = true;

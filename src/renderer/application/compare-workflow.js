@@ -3,6 +3,7 @@ import storage from '../../infrastructure/idb-repository.js';
 import { buildPairKey } from '../../infrastructure/idb-repository.js';
 import { assessUrlCompatibility } from '@core/comparison/url-compatibility.js';
 import { relativeTime } from '../utils/time.js';
+import { sanitizeErrorMessage } from '../utils/sanitize.js';
 import {
   Toast,
   setError,
@@ -188,6 +189,8 @@ function _renderCompareCancelledLine(baselineId, compareId, mode) {
 }
 
 function scrollCompareResultsIntoView() {
+  const main = document.getElementById('main-content');
+  if (main?.dataset.activeSection === 'bulk') { return; }
   const el = document.getElementById('compare-results');
   if (!el) { return; }
   requestAnimationFrame(() => {
@@ -195,6 +198,62 @@ function scrollCompareResultsIntoView() {
       el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   });
+}
+
+function _firstNonEmptyString(...candidates) {
+  for (const v of candidates) {
+    if (v == null) { continue; }
+    const s = String(v).trim();
+    if (s !== '') { return s; }
+  }
+  return '';
+}
+
+/**
+ * Builds consistent `baseline` / `compare` side objects (each with at least `id`
+ * and `url`) and canonical flat `baselineUrl` / `compareUrl` strings from whatever
+ * shape the raw result carries.
+ *
+ * Source priority for URLs (first non-empty wins):
+ *   1. flat `result.baselineUrl` / `result.compareUrl`   (set by renderer before normalize)
+ *   2. nested `result.baseline.url` / `result.compare.url` (already-normalized re-pass)
+ *   3. `result.urlCompatibility.baselineUrl/compareUrl`   (echoed from main process)
+ *
+ * Idempotent: safe to call on an already-normalized object.
+ */
+function _synthesizeReportSides(result) {
+  const compat = result.urlCompatibility;
+
+  const baselineUrl = _firstNonEmptyString(
+    result.baselineUrl,
+    result.baseline?.url,
+    compat?.baselineUrl
+  );
+  const compareUrl = _firstNonEmptyString(
+    result.compareUrl,
+    result.compare?.url,
+    compat?.compareUrl
+  );
+
+  const baselineExisting = result.baseline && typeof result.baseline === 'object'
+    ? result.baseline
+    : {};
+  const compareExisting = result.compare && typeof result.compare === 'object'
+    ? result.compare
+    : {};
+
+  const baseline = {
+    ...baselineExisting,
+    id:  baselineExisting.id  ?? result.baselineId ?? null,
+    url: baselineUrl,
+  };
+  const compare = {
+    ...compareExisting,
+    id:  compareExisting.id   ?? result.compareId  ?? null,
+    url: compareUrl,
+  };
+
+  return { baselineUrl, compareUrl, baseline, compare };
 }
 
 function normalizeComparisonResult(result) {
@@ -210,8 +269,11 @@ function normalizeComparisonResult(result) {
     ? result.comparison
     : {};
 
+  const sides = _synthesizeReportSides(result);
+
   return {
     ...result,
+    ...sides,
     visualDiffs,
     comparison: {
       ...comparison,
@@ -221,6 +283,112 @@ function normalizeComparisonResult(result) {
         : {},
     },
   };
+}
+
+async function _rebuildVisualDiffsFromSession(sessionId, diffRows) {
+  if (!sessionId) { return new Map(); }
+  let keyframesById;
+  let rectsByElementKey;
+  try {
+    [keyframesById, rectsByElementKey] = await Promise.all([
+      storage.loadKeyframesBySession(sessionId),
+      storage.loadElementRectsBySession(sessionId),
+    ]);
+  } catch (err) {
+    console.error('[visual] rebuild failed', err);
+    return new Map();
+  }
+
+  const diffsByHpid = new Map();
+  for (const row of diffRows ?? []) {
+    const hpid = row?.baselineElement?.hpid ?? row?.hpid ?? null;
+    if (!hpid) { continue; }
+    const annotated = row.annotatedDifferences ?? [];
+    if (annotated.length === 0) { continue; }
+    diffsByHpid.set(hpid, annotated);
+  }
+
+  const toEntry = (record) => {
+    if (!record) { return null; }
+    const kf = record.keyframeId ? keyframesById.get(record.keyframeId) ?? null : null;
+    const effectiveDpr = kf?.captureScaleFactor ?? kf?.devicePixelRatio ?? record.actualDPR ?? 1;
+    return {
+      keyframeId:         record.keyframeId ?? null,
+      viewportRect:       record.rect ?? null,
+      rawViewportRect:    record.rawRect ?? null,
+      actualDPR:          record.actualDPR ?? 1,
+      dpr:                effectiveDpr,
+      documentY:          record.documentY ?? null,
+      totalDocumentHeight: record.totalDocumentHeight ?? null,
+      kfScrollY:          kf?.scrollY ?? null,
+      pseudoBefore:       record.pseudoBefore ?? null,
+      pseudoAfter:        record.pseudoAfter ?? null,
+      misaligned:         record.misaligned ?? false,
+      misalignReason:     record.misalignReason ?? null,
+      selectorAmbiguous:  record.selectorAmbiguous ?? false,
+      selectorMatchCount: record.selectorMatchCount ?? null,
+      rectClipped:        record.rectClipped ?? false,
+    };
+  };
+
+  const diffs = new Map();
+  for (const [elementKey, sides] of rectsByElementKey) {
+    const baseline = toEntry(sides?.baseline);
+    const compare  = toEntry(sides?.compare);
+    if (!baseline && !compare) { continue; }
+    diffs.set(elementKey, {
+      baseline,
+      compare,
+      diffs: diffsByHpid.get(elementKey) ?? [],
+    });
+  }
+  return diffs;
+}
+
+export async function loadComparisonFromCacheByPairIds(baselineId, compareId, mode) {
+  if (!baselineId || !compareId || baselineId === compareId) {
+    return null;
+  }
+  try {
+    const cached = await storage.loadComparisonByPair(
+      baselineId,
+      compareId,
+      mode
+    );
+    if (!cached) {
+      return null;
+    }
+    const diffs = await storage.loadComparisonDiffs(cached.id).catch(() => []);
+    const visualDiffs = await _rebuildVisualDiffsFromSession(
+      cached.visualSessionId ?? null,
+      diffs,
+    );
+    const stLatest = getState();
+    const baselineRep = stLatest.reports?.find(r => r.id === cached.baselineId);
+    const compareRep  = stLatest.reports?.find(r => r.id === cached.compareId);
+    const normalized = normalizeComparisonResult({
+      baselineId:        cached.baselineId,
+      compareId:         cached.compareId,
+      mode:              cached.mode,
+      matching:          cached.matching,
+      comparison:        { summary: cached.summary, results: diffs },
+      visualDiffs,
+      visualDiffStatus:  cached.visualDiffStatus ?? null,
+      unmatchedElements: cached.unmatchedElements,
+      duration:          cached.duration ?? 0,
+      baselineUrl:       baselineRep?.url ?? '',
+      compareUrl:        compareRep?.url ?? '',
+    });
+    const compareSummaryStrip = _buildCompareSummaryStrip(normalized, true, cached.timestamp);
+    return {
+      result: { ...normalized, id: cached.id },
+      cachedAt: cached.timestamp,
+      fromCache: true,
+      compareSummaryStrip,
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function tryLoadCachedComparison() {
@@ -242,35 +410,13 @@ async function tryLoadCachedComparison() {
   }
 
   try {
-    const cached = await storage.loadComparisonByPair(
-      baselineId,
-      compareId,
-      mode
-    );
-    if (cached) {
-      let diffs = [];
-      try { diffs = await storage.loadComparisonDiffs(cached.id); } catch (_) { void 0; }
-      const stLatest = getState();
-      const baselineRep = stLatest.reports?.find(r => r.id === cached.baselineId);
-      const compareRep  = stLatest.reports?.find(r => r.id === cached.compareId);
-      const normalized = normalizeComparisonResult({
-        baselineId:        cached.baselineId,
-        compareId:         cached.compareId,
-        mode:              cached.mode,
-        matching:          cached.matching,
-        comparison:        { summary: cached.summary, results: diffs },
-        visualDiffs:       {},
-        unmatchedElements: cached.unmatchedElements,
-        duration:          cached.duration ?? 0,
-        baselineUrl:       baselineRep?.url ?? '',
-        compareUrl:        compareRep?.url ?? '',
-      });
-      const compareSummaryStrip = _buildCompareSummaryStrip(normalized, true, cached.timestamp);
+    const loaded = await loadComparisonFromCacheByPairIds(baselineId, compareId, mode);
+    if (loaded) {
       dispatch('COMPARISON_COMPLETE', {
-        result: { ...normalized, id: cached.id },
-        cachedAt: cached.timestamp,
-        fromCache: true,
-        compareSummaryStrip,
+        result: loaded.result,
+        cachedAt: loaded.cachedAt,
+        fromCache: loaded.fromCache,
+        compareSummaryStrip: loaded.compareSummaryStrip,
       });
       scrollCompareResultsIntoView();
     } else {
@@ -367,6 +513,7 @@ async function handleComparison() {
 
   const operationId = crypto.randomUUID();
   const activeOpId = operationId;
+  const comparisonId = crypto.randomUUID();
 
   _activeCompareCancel = async () => {
     const ack = await api.cancelOperation({ operationId: activeOpId, kind: 'compare' });
@@ -416,6 +563,7 @@ async function handleComparison() {
       includeScreenshots,
       browser:          browserPayload,
       operationId,
+      comparisonId,
     });
 
     if (_compareCancelAck.has(operationId) || result.cancelled) {
@@ -428,7 +576,7 @@ async function handleComparison() {
     if (!result.success) {
       hideProgress('compare');
       _clearCompareCancelLine();
-      const err = result.error ?? 'Comparison failed';
+      const err = sanitizeErrorMessage(result.error ?? 'Comparison failed');
       dispatch('COMPARISON_ERROR', { error: err });
       setError('compare', err);
       Toast.error(err);
@@ -452,7 +600,7 @@ async function handleComparison() {
     });
 
     const meta = {
-      id:                crypto.randomUUID(),
+      id:                comparisonId,
       pairKey:           buildPairKey(sr.baselineId, sr.compareId, sr.mode),
       baselineId:        sr.baselineId,
       compareId:         sr.compareId,
@@ -462,6 +610,8 @@ async function handleComparison() {
       unmatchedElements: sr.unmatchedElements,
       duration:          sr.duration,
       timestamp:         sr.completedAt ?? new Date().toISOString(),
+      visualSessionId:   sr.sessionId ?? null,
+      visualDiffStatus:  sr.visualDiffStatus ?? null,
     };
 
     await storage.saveComparison(meta, sr.comparison?.results ?? []);
@@ -510,7 +660,7 @@ async function handleComparison() {
   } catch (err) {
     hideProgress('compare');
     _clearCompareCancelLine();
-    const msg = err.message ?? 'Unexpected error';
+    const msg = sanitizeErrorMessage(err?.message ?? err ?? 'Unexpected error');
     dispatch('COMPARISON_ERROR', { error: msg });
     setError('compare', msg);
     Toast.error(msg);

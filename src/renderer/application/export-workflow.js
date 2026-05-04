@@ -174,9 +174,13 @@ async function handleExportAllReports() {
   }
 }
 
+function _getActiveComparison(state) {
+  return state.bulkJob?.viewer?.result ?? state.comparison ?? null;
+}
+
 async function handleExport() {
   const state  = getState();
-  const result = state.comparison;
+  const result = _getActiveComparison(state);
   if (!result) { Toast.error('No comparison result to export'); return; }
 
   const format = document.getElementById('export-format-select')?.value ?? 'html';
@@ -247,7 +251,7 @@ async function handleExport() {
 }
 
 async function handleFullReport() {
-  const capturedResult = getState().comparison;
+  const capturedResult = _getActiveComparison(getState());
   if (!capturedResult) { Toast.error('No comparison result to export'); return; }
 
   const btn  = document.getElementById('view-report-btn');

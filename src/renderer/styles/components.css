@@ -280,6 +280,11 @@
   color: var(--color-destructive);
   font-size: var(--text-sm);
   min-height: 18px;
+  max-height: 6rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-word;
+  white-space: normal;
 }
 
 .badge {
@@ -860,4 +865,9 @@
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   color: var(--color-text-primary);
+  max-height: 6rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-word;
+  white-space: normal;
 }
