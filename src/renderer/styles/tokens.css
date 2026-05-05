@@ -1,24 +1,36 @@
 :root {
-  --color-brand:              hsl(217 70% 54%);
-  --color-brand-hover:        hsl(217 70% 60%);
-  --color-brand-subtle:       hsl(217 70% 54% / 0.10);
-  --color-brand-subtle-faint:    hsl(217 70% 54% / 0.07);
-  --color-brand-subtle-hover:    hsl(217 70% 54% / 0.11);
-  --color-brand-border:       hsl(217 70% 54% / 0.30);
-  --color-brand-ring:         hsl(217 70% 54% / 0.40);
-  --color-brand-glow:         hsl(217 70% 54% / 0.30);
-  --color-brand-halo:         hsl(217 70% 54% / 0.50);
+  --hue-neutral: 220;
+  --sat-chrome:  30%;
+  --sat-surface: 22%;
+  --sat-raised:  20%;
+  --sat-overlay: 18%;
+  --sat-hover:   17%;
+
+  --color-brand:              hsl(217 75% 58%);
+  --color-brand-hover:        hsl(217 75% 64%);
+  --color-brand-subtle:       hsl(217 75% 58% / 0.10);
+  --color-brand-subtle-faint: hsl(217 75% 58% / 0.07);
+  --color-brand-subtle-hover: hsl(217 75% 58% / 0.11);
+  --color-brand-border:       hsl(217 75% 58% / 0.30);
+  --color-brand-ring:         hsl(217 75% 58% / 0.40);
+  --color-brand-glow:         hsl(217 75% 58% / 0.30);
+  --color-brand-halo:         hsl(217 75% 58% / 0.50);
   --color-brand-end:          hsl(239 84% 74%);
 
-  --color-surface-base:       #111827;
-  --color-surface-raised:     #1c2333;
-  --color-surface-overlay:    #212d42;
-  --color-surface-sunken:     #090e1a;
-  --color-surface-hover:      #263348;
+  --color-surface-chrome:     hsl(var(--hue-neutral) var(--sat-chrome) 6%);
+  --color-surface-sidebar:    hsl(var(--hue-neutral) var(--sat-chrome) 9%);
+  --color-surface-base:       hsl(var(--hue-neutral) var(--sat-surface) 11.5%);
+  --color-surface-raised:     hsl(var(--hue-neutral) var(--sat-raised) 17%);
+  --color-surface-overlay:    hsl(var(--hue-neutral) var(--sat-overlay) 23%);
+  --color-surface-hover:      hsl(var(--hue-neutral) var(--sat-hover) 28%);
+  --color-surface-sunken:     hsl(var(--hue-neutral) 34% 3%);
+
+  --color-scrollbar-thumb:       hsl(var(--hue-neutral) 22% 33%);
+  --color-scrollbar-thumb-hover: hsl(var(--hue-neutral) 22% 40%);
 
   --color-border-subtle:      #1e293b;
   --color-border-default:     #334155;
-  --color-border-focus:       hsl(217 70% 54% / 0.40);
+  --color-border-focus:       hsl(217 75% 58% / 0.40);
 
   --color-text-primary:       #E2E8F0;
   --color-text-secondary:     #94A3B8;
@@ -67,7 +79,7 @@
   --color-badge-added-bg:     var(--color-success-subtle);
   --color-badge-removed-bg:   var(--color-destructive-subtle);
 
-  --color-brand-subtle-strong: hsl(217 70% 54% / 0.12);
+  --color-brand-subtle-strong: hsl(217 75% 58% / 0.12);
   --color-success-text:       var(--color-success-fg);
 
   --color-coverage-matched:   var(--color-success);

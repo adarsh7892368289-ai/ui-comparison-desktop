@@ -342,7 +342,7 @@
   height: 32px;
   margin: 0 auto var(--space-4);
   border: 3px solid var(--color-border-subtle);
-  border-top-color: var(--color-accent, #63b3ed);
+  border-top-color: var(--color-brand);
   border-radius: 50%;
   animation: result-empty-spin 0.75s linear infinite;
 }
@@ -354,7 +354,7 @@
 }
 
 .result-empty-state--error .result-empty-icon--error {
-  color: var(--severity-high, #ed8936);
+  color: var(--severity-high);
   margin-bottom: var(--space-4);
 }
 

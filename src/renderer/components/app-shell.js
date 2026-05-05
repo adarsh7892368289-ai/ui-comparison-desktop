@@ -122,12 +122,6 @@ export class AppShell {
       this._closeSectionBody(section.el);
       section.el.classList.remove('nav-section--expanded');
       section.headerBtn?.setAttribute('aria-expanded', 'false');
-      if (sectionId === this._activeSection) {
-        const next = this._sectionIds.find(
-          (id) => id !== sectionId && this._sections.get(id)?.el.classList.contains('nav-section--expanded')
-        );
-        if (next) { this._applyWorkflowFocus(next); }
-      }
     } else {
       this._openSectionBody(section.el);
       section.el.classList.add('nav-section--expanded');

@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git stash *)",
+      "Bash(npm run *)",
+      "WebFetch(domain:developer.chrome.com)",
+      "WebFetch(domain:developers.google.com)",
+      "WebFetch(domain:web.dev)",
+      "WebFetch(domain:chromium.googlesource.com)",
+      "Bash(npx eslint *)",
+      "WebFetch(domain:m3.material.io)"
+    ]
+  }
+}

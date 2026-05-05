@@ -227,7 +227,9 @@ function _loadWindowState() {
 
 function _saveWindowState(win) {
   try {
-    const b = win.getBounds();
+    const b = typeof win.getNormalBounds === 'function'
+      ? win.getNormalBounds()
+      : win.getBounds();
     fs.writeFileSync(_stateFilePath(), JSON.stringify({
       x: b.x, y: b.y,
       width: b.width, height: b.height,
@@ -235,6 +237,19 @@ function _saveWindowState(win) {
     }));
   } catch (err) {
     log.error('Error saving window state', { err: err.message });
+  }
+}
+
+function _halfScreenBounds() {
+  try {
+    const wa = screen.getPrimaryDisplay().workArea;
+    const width  = Math.max(900, Math.floor(wa.width  / 2));
+    const height = Math.max(600, Math.floor(wa.height / 2));
+    const x = wa.x + Math.floor((wa.width  - width)  / 2);
+    const y = wa.y + Math.floor((wa.height - height) / 2);
+    return { x, y, width, height };
+  } catch {
+    return null;
   }
 }
 
@@ -302,7 +317,22 @@ function createMainWindow() {
     _mainWindowShown = true;
 
     const savedState = _loadWindowState();
-    if (!savedState || savedState.maximized) {
+    if (!savedState) {
+      const half = _halfScreenBounds();
+      if (half) {
+        win.setBounds(half);
+      }
+      win.maximize();
+    } else if (savedState.maximized) {
+      if (savedState.width && savedState.height) {
+        win.setSize(savedState.width, savedState.height);
+      } else {
+        const half = _halfScreenBounds();
+        if (half) { win.setBounds(half); }
+      }
+      if (savedState.x != null && savedState.y != null) {
+        win.setPosition(savedState.x, savedState.y);
+      }
       win.maximize();
     } else {
       if (savedState.width && savedState.height) {

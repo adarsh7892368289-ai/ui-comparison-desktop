@@ -26,6 +26,29 @@ const BULK_CONCURRENCY_HETEROGENEOUS_CAP = 1;
 const BULK_CONCURRENCY_HETEROGENEOUS_HINT =
   'Mixed browsers detected — concurrency limited to 1 on this machine.';
 
+const ROW_HEIGHT = 56;
+const OVERSCAN   = 3;
+
+const ACTIVE_STATES = new Set([
+  'extracting-baseline',
+  'extracting-compare',
+  'matching',
+  'screenshots',
+  'persisting',
+]);
+
+const FAILURE_FIRST_RANK = {
+  'failed':              0,
+  'cancelled':           1,
+  'extracting-baseline': 2,
+  'extracting-compare':  2,
+  'matching':            2,
+  'screenshots':         2,
+  'persisting':          2,
+  'queued':              3,
+  'done':                4,
+};
+
 let _hostTotalMemMB     = null;
 let _hostMemoryFetched  = false;
 let _hostMemoryPromise  = null;
@@ -67,41 +90,6 @@ function _isHeterogeneousPlan(parsedRows, selectedBrowser) {
   return false;
 }
 
-// Per UI spec §3.2 row heights live as CSS custom properties on the
-// panel (`--bulk-row-h-compact`, `--bulk-row-h-running`,
-// `--bulk-row-h-failed`); these defaults are overwritten on mount via
-// `_readRowHeightsFromCss(rootEl)`. Mutating module-level state is safe
-// because the renderer instantiates a single bulk panel.
-let ROW_HEIGHT_COMPACT = 48;
-let ROW_HEIGHT_ACTIVE  = 64;
-let ROW_HEIGHT_FAILED  = 72;
-const ACTIVE_STATES = new Set([
-  'extracting-baseline',
-  'extracting-compare',
-  'matching',
-  'screenshots',
-  'persisting',
-]);
-
-function _rowHeightFor(status) {
-  if (status === 'failed') { return ROW_HEIGHT_FAILED; }
-  if (ACTIVE_STATES.has(status)) { return ROW_HEIGHT_ACTIVE; }
-  return ROW_HEIGHT_COMPACT;
-}
-
-function _readRowHeightsFromCss(rootEl) {
-  if (!rootEl || typeof getComputedStyle !== 'function') { return; }
-  try {
-    const cs = getComputedStyle(rootEl);
-    const c = parseInt(cs.getPropertyValue('--bulk-row-h-compact'), 10);
-    const r = parseInt(cs.getPropertyValue('--bulk-row-h-running'), 10);
-    const f = parseInt(cs.getPropertyValue('--bulk-row-h-failed'),  10);
-    if (Number.isFinite(c) && c > 0) { ROW_HEIGHT_COMPACT = c; }
-    if (Number.isFinite(r) && r > 0) { ROW_HEIGHT_ACTIVE  = r; }
-    if (Number.isFinite(f) && f > 0) { ROW_HEIGHT_FAILED  = f; }
-  } catch { void 0; }
-}
-
 function _stateLabel(status) {
   switch (status) {
     case 'queued':              return 'Queued';
@@ -117,16 +105,12 @@ function _stateLabel(status) {
   }
 }
 
-function _firstVisibleIndex(offsets, scrollTop) {
-  if (offsets.length === 0) { return 0; }
-  let lo = 0;
-  let hi = offsets.length - 1;
-  while (lo < hi) {
-    const mid = (lo + hi + 1) >> 1;
-    if (offsets[mid] <= scrollTop) { lo = mid; }
-    else                           { hi = mid - 1; }
-  }
-  return lo;
+function _pairStateBucket(status) {
+  if (status === 'done')      { return 'done'; }
+  if (status === 'failed')    { return 'failed'; }
+  if (status === 'cancelled') { return 'cancelled'; }
+  if (ACTIVE_STATES.has(status)) { return 'active'; }
+  return 'queued';
 }
 
 function _esc(s) {
@@ -141,23 +125,10 @@ function createBulkPanel(containerEl /* api, storage */) {
   containerEl.classList.add('bulk-panel');
   containerEl.innerHTML = '';
 
-  // Spec §3.2 — pull row heights from CSS custom properties exactly once
-  // on mount; values cached on module-level constants for O(1) reads.
-  _readRowHeightsFromCss(containerEl);
-
   const _state = {
-    rowOffsets:           [],
     filteredIndexes:      [],
-    totalHeight:          0,
-    lastViewH:            0,
-    lastSeenStatus:       new Map(),
-    // For the "phase-change-only" recompute trigger (see _recomputeOffsets
-    // for the mechanism). Snapshot of statuses captured *after* the last
-    // successful recompute, indexed by pairIndex.
-    lastStatusForOffsets: new Map(),
     lastPairsLen:         0,
-    filterDirty:          false,
-    rewardTimers:         new Map(),
+    lastStatusByPair:     new Map(),
     cancelPendingTotal:   null,
     cancelledSinceClick:  0,
     elapsedInterval:      null,
@@ -170,7 +141,15 @@ function createBulkPanel(containerEl /* api, storage */) {
     downloadAllUnsub:     null,
   };
 
+  const _geom   = { containerHeight: 0, totalHeight: 0 };
+  const _scroll = { top: 0 };
+  const _raf    = { handle: 0 };
+  const _mountedByPairIndex = new Map();
+  const _recyclePool = [];
+  const POOL_PARK_Y  = -9999;
+
   const _refs = {};
+  let _keyboardUnbind = null;
 
   function _renderIdle(inlineError = null) {
     const inlineErrorHtml = inlineError && inlineError.message
@@ -573,7 +552,6 @@ function createBulkPanel(containerEl /* api, storage */) {
                   class="bulk-pair-col bulk-pair-col--state bulk-pair-col--sortable"
                   title="Click to sort: failures first">State</button>
         </div>
-        <div id="bulk-nav-bar" hidden></div>
         <div id="bulk-storage-degraded-slot"></div>
         <div class="bulk-vscroll-viewport vscroll-viewport" id="bulk-pair-list" role="list" tabindex="0">
           <div class="bulk-vscroll-spacer">
@@ -599,7 +577,6 @@ function createBulkPanel(containerEl /* api, storage */) {
     _refs.downloadAllCancel   = containerEl.querySelector('#bulk-download-all-cancel-btn');
     _refs.downloadAllProgress = containerEl.querySelector('#bulk-download-all-progress');
     _refs.backBtn      = containerEl.querySelector('#bulk-back-btn');
-    _refs.navBar       = containerEl.querySelector('#bulk-nav-bar');
     _refs.storageDegradedSlot = containerEl.querySelector('#bulk-storage-degraded-slot');
     _refs.autoFollow   = containerEl.querySelector('#bulk-auto-follow');
 
@@ -628,20 +605,14 @@ function createBulkPanel(containerEl /* api, storage */) {
       format:    null,
     });
     _refs.backBtn?.addEventListener('click', () => {
-      const area = document.getElementById('bulk-result-area');
-      const shot = document.getElementById('bulk-results-screenshot-section');
-      const host = document.getElementById('bulk-result-panel-host');
-      if (host) { host.replaceChildren(); }
-      if (shot) { shot.replaceChildren(); }
-      if (area) { area.hidden = true; }
       const hadViewer = getState().bulkJob?.activePairIndex != null;
       if (hadViewer) {
-        dispatch('BULK_ACTIVE_PAIR_CLEAR', {});
+        _closeResultPanel();
         return;
       }
       void routeBulkResetClick();
     });
-    _refs.viewport?.addEventListener('scroll', _renderRows, { passive: true });
+    _refs.viewport?.addEventListener('scroll', _onScroll, { passive: true });
     _refs.window?.addEventListener('click', _onWindowClick);
     _refs.autoFollow?.addEventListener('change', () => {
       _writeAutoFollow(Boolean(_refs.autoFollow?.checked));
@@ -654,32 +625,282 @@ function createBulkPanel(containerEl /* api, storage */) {
 
     _refs.filterInput?.addEventListener('input', () => {
       _state.searchQuery = String(_refs.filterInput.value ?? '');
-      _refreshFilteredView();
+      _fullRelayoutAndRepaint();
     });
     _refs.failuresOnlyBtn?.addEventListener('click', () => {
       _state.failuresOnly = !_state.failuresOnly;
       _refs.failuresOnlyBtn.classList.toggle('btn-ghost--active', _state.failuresOnly);
-      _refreshFilteredView();
+      _fullRelayoutAndRepaint();
     });
     _refs.showNumbersBtn?.addEventListener('click', () => {
       _state.showNumbers = !_state.showNumbers;
       _refs.showNumbersBtn.classList.toggle('btn-ghost--active', _state.showNumbers);
       if (_state.showNumbers) { void _lazyLoadNumbersForVisiblePairs(); }
-      _renderRows();
+      _patchInPlaceAll();
     });
     _refs.colStateBtn?.addEventListener('click', () => {
       _state.failureFirstSort = !_state.failureFirstSort;
       _refs.colStateBtn.classList.toggle('bulk-pair-col--sorted', _state.failureFirstSort);
-      _refreshFilteredView();
+      _fullRelayoutAndRepaint();
     });
 
     if (typeof ResizeObserver !== 'undefined' && _refs.viewport) {
-      _refs.resizeObs = new ResizeObserver(() => {
-        const h = _refs.viewport.clientHeight;
-        if (h > 0) { _state.lastViewH = h; }
-        _renderRows();
-      });
+      _refs.resizeObs = new ResizeObserver(_onResize);
       _refs.resizeObs.observe(_refs.viewport);
+    }
+
+    _geom.containerHeight = _refs.viewport?.clientHeight ?? 0;
+    _scroll.top           = _refs.viewport?.scrollTop ?? 0;
+    _ensurePoolCapacity();
+  }
+
+  function _scheduleRepaint() {
+    if (_raf.handle !== 0) { cancelAnimationFrame(_raf.handle); }
+    _raf.handle = requestAnimationFrame(() => {
+      _raf.handle = 0;
+      _repaint();
+    });
+  }
+
+  function _onScroll() {
+    if (!_refs.viewport) { return; }
+    _scroll.top = _refs.viewport.scrollTop;
+    _scheduleRepaint();
+  }
+
+  function _onResize() {
+    if (!_refs.viewport) { return; }
+    _geom.containerHeight = _refs.viewport.clientHeight;
+    _ensurePoolCapacity();
+    _scheduleRepaint();
+  }
+
+  function _updateTotalHeight() {
+    _geom.totalHeight = _state.filteredIndexes.length * ROW_HEIGHT;
+    if (_refs.spacer) {
+      _refs.spacer.style.height = `${_geom.totalHeight}px`;
+    }
+  }
+
+  function _visibleRange() {
+    const viewH = _geom.containerHeight || (_refs.viewport?.clientHeight ?? 400);
+    const total = _state.filteredIndexes.length;
+    if (total === 0) { return { start: 0, end: 0 }; }
+    const firstIdx = Math.floor(_scroll.top / ROW_HEIGHT);
+    const lastIdx  = Math.floor((_scroll.top + viewH) / ROW_HEIGHT);
+    const start = Math.max(0, firstIdx - OVERSCAN);
+    const end   = Math.min(total, lastIdx + OVERSCAN + 1);
+    return { start, end };
+  }
+
+  function _repaint() {
+    if (!_refs.window) { return; }
+    _ensurePoolCapacity();
+    const pairs = getState().bulkJob?.pairs ?? [];
+    const filtered = _state.filteredIndexes;
+    const { start, end } = _visibleRange();
+
+    const keep = new Set();
+    for (let i = start; i < end; i++) { keep.add(filtered[i]); }
+    for (const [pairIndex, node] of _mountedByPairIndex) {
+      if (!keep.has(pairIndex)) {
+        _mountedByPairIndex.delete(pairIndex);
+        _releaseNode(node);
+      }
+    }
+
+    for (let i = start; i < end; i++) {
+      const originalIndex = filtered[i];
+      const pair = pairs[originalIndex];
+      if (!pair) { continue; }
+      let node = _mountedByPairIndex.get(originalIndex);
+      if (!node) {
+        node = _acquireNode();
+        node.dataset.pairIndex = String(originalIndex);
+        node.style.visibility  = 'visible';
+        _mountedByPairIndex.set(originalIndex, node);
+      }
+      const yPx = i * ROW_HEIGHT;
+      if (node.dataset.translateY !== String(yPx)) {
+        node.dataset.translateY = String(yPx);
+        node.style.transform    = `translateY(${yPx}px)`;
+      }
+      _syncRow(node, pair);
+    }
+  }
+
+  function _createRow() {
+    const node = document.createElement('div');
+    node.className = 'bulk-row';
+    node.setAttribute('role', 'listitem');
+    node.style.transform  = `translateY(${POOL_PARK_Y}px)`;
+    node.style.visibility = 'hidden';
+    node.dataset.translateY = String(POOL_PARK_Y);
+    node.innerHTML = `
+      <div class="bulk-row__inner" data-field="inner">
+        <div class="bulk-row__main">
+          <span class="bulk-status-dot" aria-hidden="true"></span>
+          <span class="bulk-row__index" data-field="index"></span>
+          <span class="bulk-row__urls"  data-field="urls"></span>
+          <span class="bulk-row__dedup" data-field="dedup" title="Reused recent extraction" aria-label="Reused recent extraction" hidden>⤴</span>
+          <span class="bulk-row__numbers" data-field="numbers" aria-hidden="true" hidden></span>
+          <span class="bulk-row__pct"   data-field="pct" hidden></span>
+          <span class="bulk-row__state" data-field="state"></span>
+          <button type="button" class="btn-ghost btn-sm bulk-row__open-btn"
+                  data-field="openBtn" hidden>Open</button>
+        </div>
+        <div class="bulk-row__progress" data-field="progress" aria-hidden="true" hidden>
+          <div class="bulk-row__progress-fill" data-field="progressFill"></div>
+        </div>
+      </div>
+    `;
+    node._fields = {
+      inner:        node.querySelector('[data-field="inner"]'),
+      index:        node.querySelector('[data-field="index"]'),
+      urls:         node.querySelector('[data-field="urls"]'),
+      dedup:        node.querySelector('[data-field="dedup"]'),
+      numbers:      node.querySelector('[data-field="numbers"]'),
+      state:        node.querySelector('[data-field="state"]'),
+      pct:          node.querySelector('[data-field="pct"]'),
+      openBtn:      node.querySelector('[data-field="openBtn"]'),
+      progress:     node.querySelector('[data-field="progress"]'),
+      progressFill: node.querySelector('[data-field="progressFill"]'),
+    };
+    node._fields.inner.addEventListener('animationend', (ev) => {
+      if (ev.target === node._fields.inner && node.dataset.animOnce) {
+        node.dataset.animOnce = '';
+      }
+    });
+    return node;
+  }
+
+  function _desiredPoolSize() {
+    const viewH = _geom.containerHeight || (_refs.viewport?.clientHeight ?? 400);
+    return Math.ceil(viewH / ROW_HEIGHT) + OVERSCAN * 2 + 4;
+  }
+
+  function _ensurePoolCapacity() {
+    if (!_refs.window) { return; }
+    const target    = _desiredPoolSize();
+    const liveTotal = _recyclePool.length + _mountedByPairIndex.size;
+    if (liveTotal >= target) { return; }
+    const frag = document.createDocumentFragment();
+    for (let i = liveTotal; i < target; i++) {
+      const node = _createRow();
+      _recyclePool.push(node);
+      frag.appendChild(node);
+    }
+    _refs.window.appendChild(frag);
+  }
+
+  function _acquireNode() {
+    if (_recyclePool.length > 0) { return _recyclePool.pop(); }
+    const node = _createRow();
+    if (_refs.window) { _refs.window.appendChild(node); }
+    return node;
+  }
+
+  function _releaseNode(node) {
+    const f = node._fields;
+    if (f) {
+      if (node.dataset.pairState  !== 'queued') { node.dataset.pairState  = 'queued'; }
+      if (node.dataset.pairStatus !== 'queued') { node.dataset.pairStatus = 'queued'; }
+      node.dataset.animOnce = '';
+      if (f.index.textContent   !== '') { f.index.textContent   = ''; }
+      if (f.urls.textContent    !== '') { f.urls.textContent    = ''; f.urls.title = ''; }
+      if (f.state.textContent   !== '') { f.state.textContent   = ''; f.state.title = ''; }
+      if (f.pct.textContent     !== '') { f.pct.textContent     = ''; }
+      if (!f.dedup.hidden)    { f.dedup.hidden    = true; }
+      if (!f.numbers.hidden)  { f.numbers.hidden  = true; f.numbers.dataset.html = ''; f.numbers.textContent = ''; }
+      if (!f.pct.hidden)      { f.pct.hidden      = true; }
+      if (!f.progress.hidden) { f.progress.hidden = true; }
+      if (!f.openBtn.hidden)  { f.openBtn.hidden  = true; }
+      if (f.progressFill.style.width !== '0%') { f.progressFill.style.width = '0%'; }
+    }
+    node.style.visibility = 'hidden';
+    if (node.dataset.translateY !== String(POOL_PARK_Y)) {
+      node.dataset.translateY = String(POOL_PARK_Y);
+      node.style.transform    = `translateY(${POOL_PARK_Y}px)`;
+    }
+    _recyclePool.push(node);
+  }
+
+  function _syncRow(node, pair) {
+    const bucket   = _pairStateBucket(pair.status);
+    const prevBkt  = node.dataset.pairState;
+    if (prevBkt !== bucket) {
+      node.dataset.pairState = bucket;
+      if (prevBkt && prevBkt !== 'queued' && (bucket === 'done' || bucket === 'failed')) {
+        node.dataset.animOnce = bucket;
+      } else if (bucket !== 'done' && bucket !== 'failed') {
+        node.dataset.animOnce = '';
+      }
+    }
+    if (node.dataset.pairStatus !== pair.status) {
+      node.dataset.pairStatus = pair.status;
+    }
+    const f = node._fields;
+    if (!f) { return; }
+
+    const indexText = `#${pair.pairIndex + 1}`;
+    if (f.index.textContent !== indexText) { f.index.textContent = indexText; }
+
+    const labelText = pair.label ? ` · ${pair.label}` : '';
+    const urlsText  = `${pair.baselineUrl} → ${pair.compareUrl}${labelText}`;
+    if (f.urls.textContent !== urlsText) {
+      f.urls.textContent = urlsText;
+      f.urls.title       = urlsText;
+    }
+
+    const stateText = pair.status === 'failed'
+      ? `${_stateLabel(pair.status)} — ${getErrorHint(pair.errorCode)}`
+      : _stateLabel(pair.status);
+    if (f.state.textContent !== stateText) {
+      f.state.textContent = stateText;
+      f.state.title       = pair.status === 'failed' ? (pair.error ?? '') : '';
+    }
+
+    const showDedup = Boolean(pair.deduped && pair.deduped !== 'none');
+    if (f.dedup.hidden !== !showDedup) { f.dedup.hidden = !showDedup; }
+
+    const active = ACTIVE_STATES.has(pair.status);
+    if (f.progress.hidden !== !active) { f.progress.hidden = !active; }
+    if (f.pct.hidden      !== !active) { f.pct.hidden      = !active; }
+    if (active) {
+      const pctText  = `${Math.round(pair.pct ?? 0)}%`;
+      const widthStr = `${Math.max(2, Math.min(100, pair.pct ?? 0))}%`;
+      if (f.pct.textContent !== pctText) { f.pct.textContent = pctText; }
+      if (f.progressFill.style.width !== widthStr) {
+        f.progressFill.style.width = widthStr;
+      }
+    }
+
+    const showOpen = pair.status === 'done';
+    if (f.openBtn.hidden !== !showOpen) {
+      f.openBtn.hidden = !showOpen;
+    }
+    if (showOpen && f.openBtn.dataset.pairIndex !== String(pair.pairIndex)) {
+      f.openBtn.dataset.pairIndex = String(pair.pairIndex);
+    }
+
+    const showNumbers = _state.showNumbers && pair.status === 'done';
+    if (showNumbers) {
+      const cached = _state.numbersByPair.get(pair.pairIndex);
+      const delta = cached && Number.isFinite(cached.elementDelta) ? cached.elementDelta : null;
+      const crit  = cached && Number.isFinite(cached.critical)     ? cached.critical     : null;
+      const high  = cached && Number.isFinite(cached.high)         ? cached.high         : null;
+      const fmtDelta = delta == null ? '—' : (delta > 0 ? `+${delta}` : String(delta));
+      const nextHtml =
+        `<span class="bulk-row__num bulk-row__num--delta" title="Element delta (compare − baseline)">Δ ${fmtDelta}</span>` +
+        `<span class="bulk-row__num bulk-row__num--crit"  title="Critical diffs">C ${crit ?? '—'}</span>` +
+        `<span class="bulk-row__num bulk-row__num--high"  title="High diffs">H ${high ?? '—'}</span>`;
+      if (f.numbers.dataset.html !== nextHtml) {
+        f.numbers.dataset.html = nextHtml;
+        f.numbers.innerHTML    = nextHtml;
+      }
+      if (f.numbers.hidden) { f.numbers.hidden = false; }
+    } else if (!f.numbers.hidden) {
+      f.numbers.hidden = true;
     }
   }
 
@@ -715,18 +936,6 @@ function createBulkPanel(containerEl /* api, storage */) {
     catch { void 0; }
   }
 
-  const FAILURE_FIRST_RANK = {
-    'failed':              0,
-    'cancelled':           1,
-    'extracting-baseline': 2,
-    'extracting-compare':  2,
-    'matching':            2,
-    'screenshots':         2,
-    'persisting':          2,
-    'queued':              3,
-    'done':                4,
-  };
-
   function _computeFilteredIndexes(pairs) {
     const q = (_state.searchQuery ?? '').trim().toLowerCase();
     const failuresOnly = Boolean(_state.failuresOnly);
@@ -751,62 +960,29 @@ function createBulkPanel(containerEl /* api, storage */) {
     return indexes;
   }
 
-  // [BUG FIX] Phase-change-only recompute trigger (UI spec §3.5).
-  //
-  // Mechanism: _recomputeOffsets allocates new arrays of length N (≤500)
-  // and walks every pair to rebuild the cumulative `_offsets` table. At
-  // concurrency 4 with ~10 BULK_PROGRESS events/sec/pair, the panel
-  // receives ~40 state-change subscriptions per second; running this
-  // O(N) work on every one is ~20 000 array writes/sec at 500 pairs.
-  //
-  // Most BULK_PROGRESS events bump pct *within the same phase*; row
-  // heights only change on phase transitions (queued→active 48→64,
-  // active→done 64→48, *→failed →72). So we short-circuit when no
-  // status has flipped since the last recompute and the filter
-  // configuration is unchanged. The pre-check is N hash-map lookups
-  // (≈50 µs at 500 pairs) instead of allocating two N-sized arrays.
-  //
-  // Filter mutations (search input, failures-only toggle, sort toggle)
-  // set `_state.filterDirty = true` to force the next recompute.
-  function _shouldRecomputeOffsets(pairs) {
-    if (pairs.length !== _state.lastPairsLen)         { return true; }
-    if (_state.filterDirty)                            { return true; }
-    if (_state.rowOffsets.length === 0 && pairs.length > 0) { return true; }
-    for (const p of pairs) {
-      if (_state.lastStatusForOffsets.get(p.pairIndex) !== p.status) {
-        return true;
-      }
-    }
-    return false;
+  function _recomputeFilteredIndexes() {
+    const pairs = getState().bulkJob?.pairs ?? [];
+    _state.filteredIndexes = _computeFilteredIndexes(pairs);
+    _updateTotalHeight();
   }
 
-  function _recomputeOffsets(pairs) {
-    if (!_shouldRecomputeOffsets(pairs)) { return; }
-    const filtered = _computeFilteredIndexes(pairs);
-    _state.filteredIndexes = filtered;
-    const offs = new Array(filtered.length);
-    let acc = 0;
-    for (let i = 0; i < filtered.length; i++) {
-      offs[i] = acc;
-      acc += _rowHeightFor(pairs[filtered[i]].status);
-    }
-    _state.rowOffsets  = offs;
-    _state.totalHeight = acc;
-    _state.lastPairsLen = pairs.length;
-    _state.lastStatusForOffsets.clear();
-    for (const p of pairs) {
-      _state.lastStatusForOffsets.set(p.pairIndex, p.status);
-    }
-    _state.filterDirty = false;
-    if (_refs.spacer) { _refs.spacer.style.height = `${acc}px`; }
+  function _fullRelayoutAndRepaint() {
+    _recomputeFilteredIndexes();
+    for (const node of _mountedByPairIndex.values()) { _releaseNode(node); }
+    _mountedByPairIndex.clear();
+    _scheduleRepaint();
   }
 
-  function _refreshFilteredView() {
-    const job = getState().bulkJob;
-    if (!job) { return; }
-    _state.filterDirty = true;
-    _recomputeOffsets(job.pairs);
-    _renderRows();
+  function _patchInPlaceAll() {
+    const pairs = getState().bulkJob?.pairs ?? [];
+    for (const [pairIndex, node] of _mountedByPairIndex) {
+      const pair = pairs[pairIndex];
+      if (pair) { _syncRow(node, pair); }
+    }
+  }
+
+  function _filterAffectsOrderOrInclusion() {
+    return _state.failuresOnly || _state.failureFirstSort;
   }
 
   async function _lazyLoadNumbersForPair(pair, reports) {
@@ -835,7 +1011,10 @@ function createBulkPanel(containerEl /* api, storage */) {
         critical: sev?.critical ?? 0,
         high:     sev?.high     ?? 0,
       });
-      if (_state.showNumbers) { _renderRows(); }
+      if (_state.showNumbers) {
+        const node = _mountedByPairIndex.get(pair.pairIndex);
+        if (node) { _syncRow(node, pair); }
+      }
     } finally {
       _state.numbersLoading.delete(pair.pairIndex);
     }
@@ -845,130 +1024,34 @@ function createBulkPanel(containerEl /* api, storage */) {
     const job = getState().bulkJob;
     if (!job) { return; }
     const reports = getState().reports ?? [];
-    const filtered = _state.filteredIndexes;
-    for (const idx of filtered) {
-      const pair = job.pairs[idx];
+    for (const pairIndex of _mountedByPairIndex.keys()) {
+      const pair = job.pairs[pairIndex];
       if (pair?.status === 'done' && !_state.numbersByPair.has(pair.pairIndex)) {
         void _lazyLoadNumbersForPair(pair, reports);
       }
     }
   }
 
-  function _buildRow(pair) {
-    const node = document.createElement('div');
-    const activeCls = ACTIVE_STATES.has(pair.status) ? ' bulk-row--active' : '';
-    const failedCls = pair.status === 'failed' ? ' bulk-row--failed' : '';
-    const doneCls   = pair.status === 'done'   ? ' bulk-row--done'   : '';
-    node.className = `bulk-row bulk-row--${pair.status}${activeCls}${failedCls}${doneCls}`;
-    node.dataset.pairIndex = String(pair.pairIndex);
-    node.setAttribute('role', 'listitem');
-
-    const showProgress = ACTIVE_STATES.has(pair.status);
-    const pctNum       = Math.max(2, Math.min(100, pair.pct ?? 0));
-    const finishingCls = pctNum >= 95 ? ' progress-fill--finishing' : '';
-    const progressHtml = showProgress
-      ? `<div class="bulk-pair-row__inline-progress bulk-pair-row__inline-progress--running">
-           <div class="progress-track">
-             <div class="progress-fill${finishingCls}" style="width:${pctNum}%"></div>
-           </div>
-         </div>
-         <span class="bulk-row__pct">${Math.round(pair.pct ?? 0)}%</span>`
-      : '';
-
-    const errorHtml = pair.status === 'failed'
-      ? `<div class="bulk-row__error" title="${_esc(pair.error ?? '')}">${_esc(getErrorHint(pair.errorCode))}</div>`
-      : '';
-
-    const labelText = pair.label ? ` · ${_esc(pair.label)}` : '';
-
-    const dedupGlyph = (pair.deduped && pair.deduped !== 'none')
-      ? '<span class="bulk-row__dedup" title="Reused recent extraction" aria-label="Reused recent extraction">⤴</span>'
-      : '';
-
-    let numbersHtml = '';
-    if (_state.showNumbers && pair.status === 'done') {
-      const cached = _state.numbersByPair.get(pair.pairIndex);
-      const delta = cached && Number.isFinite(cached.elementDelta) ? cached.elementDelta : null;
-      const crit  = cached && Number.isFinite(cached.critical)     ? cached.critical     : null;
-      const high  = cached && Number.isFinite(cached.high)         ? cached.high         : null;
-      const fmtDelta = delta == null ? '—' : (delta > 0 ? `+${delta}` : String(delta));
-      numbersHtml = `
-        <span class="bulk-row__numbers" aria-hidden="true">
-          <span class="bulk-row__num bulk-row__num--delta" title="Element delta (compare − baseline)">Δ ${fmtDelta}</span>
-          <span class="bulk-row__num bulk-row__num--crit"  title="Critical diffs">C ${crit ?? '—'}</span>
-          <span class="bulk-row__num bulk-row__num--high"  title="High diffs">H ${high ?? '—'}</span>
-        </span>
-      `;
-    }
-
-    node.innerHTML = `
-      <div class="bulk-row__main">
-        <span class="bulk-status-dot bulk-status-dot--${pair.status}" aria-hidden="true"></span>
-        <span class="bulk-row__index">#${pair.pairIndex + 1}</span>
-        <span class="bulk-row__urls" title="${_esc(pair.baselineUrl)} → ${_esc(pair.compareUrl)}">
-          ${_esc(pair.baselineUrl)} → ${_esc(pair.compareUrl)}${labelText}
-        </span>
-        ${dedupGlyph}
-        ${numbersHtml}
-        <span class="bulk-row__state">${_stateLabel(pair.status)}</span>
-        ${pair.status === 'done'
-          ? `<button type="button" class="btn-ghost btn-sm bulk-row__open-btn" data-pair-index="${pair.pairIndex}">Open</button>`
-          : ''}
-      </div>
-      ${progressHtml}
-      ${errorHtml}
-    `;
-    return node;
-  }
-
-  function _renderRows() {
-    if (!_refs.viewport || !_refs.window) { return; }
-    const pairs = getState().bulkJob?.pairs ?? [];
-    const filtered = _state.filteredIndexes;
-    if (pairs.length === 0 || filtered.length === 0) {
-      _refs.window.replaceChildren();
-      return;
-    }
-
-    const viewH = _state.lastViewH || _refs.viewport.clientHeight || 400;
-    const scrollTop = _refs.viewport.scrollTop;
-    const overscanPx = 3 * ROW_HEIGHT_ACTIVE;
-    const renderTop = Math.max(0, scrollTop - overscanPx);
-    const renderBot = scrollTop + viewH + overscanPx;
-
-    let pos = _firstVisibleIndex(_state.rowOffsets, renderTop);
-    const frag = document.createDocumentFragment();
-    while (pos < filtered.length && _state.rowOffsets[pos] < renderBot) {
-      const originalIndex = filtered[pos];
-      const pair = pairs[originalIndex];
-      const node = _buildRow(pair);
-      node.style.position  = 'absolute';
-      node.style.left      = '0';
-      node.style.right     = '0';
-      node.style.transform = `translateY(${_state.rowOffsets[pos]}px)`;
-      node.style.height    = `${_rowHeightFor(pair.status)}px`;
-      if (_state.rewardTimers.has(pair.pairIndex)) {
-        node.classList.add('bulk-row--reward');
-      }
-      frag.appendChild(node);
-      pos++;
-    }
-    _refs.window.replaceChildren(frag);
-
-    if (_state.showNumbers) { void _lazyLoadNumbersForVisiblePairs(); }
-  }
-
   function _ensureVisible(pairIndex) {
     if (!_refs.viewport) { return; }
     if (_refs.autoFollow && !_refs.autoFollow.checked) { return; }
     const pos = _state.filteredIndexes.indexOf(pairIndex);
-    if (pos < 0 || pos >= _state.rowOffsets.length) { return; }
-    const top = _state.rowOffsets[pos];
-    const h = _rowHeightFor(getState().bulkJob.pairs[pairIndex].status);
-    const viewH = _state.lastViewH || _refs.viewport.clientHeight || 400;
-    const scrollTop = _refs.viewport.scrollTop;
-    if (top < scrollTop || top + h > scrollTop + viewH) {
+    if (pos < 0) { return; }
+    const top = pos * ROW_HEIGHT;
+    const viewH = _geom.containerHeight || _refs.viewport.clientHeight || 400;
+    const scrollTop = _scroll.top;
+    if (top < scrollTop || top + ROW_HEIGHT > scrollTop + viewH) {
       _refs.viewport.scrollTop = Math.max(0, top - viewH / 2);
+    }
+  }
+
+  function _ensureVisibleForActivePairs(pairs) {
+    if (!_refs.viewport) { return; }
+    if (_refs.autoFollow && !_refs.autoFollow.checked) { return; }
+    for (const pair of pairs) {
+      if (ACTIVE_STATES.has(pair.status)) {
+        _ensureVisible(pair.pairIndex);
+      }
     }
   }
 
@@ -1106,109 +1189,126 @@ function createBulkPanel(containerEl /* api, storage */) {
     _state.elapsedInterval = setInterval(tick, 1000);
   }
 
-  function _detectTransitionsAndReward(pairs) {
-    for (const pair of pairs) {
-      const prev = _state.lastSeenStatus.get(pair.pairIndex);
-      if (prev !== pair.status) {
-        _state.lastSeenStatus.set(pair.pairIndex, pair.status);
-        if (pair.status === 'done' && prev && ACTIVE_STATES.has(prev)) {
-          if (_state.rewardTimers.has(pair.pairIndex)) {
-            clearTimeout(_state.rewardTimers.get(pair.pairIndex));
-          }
-          // UI spec §9.4: dot scales 1.0→1.3→1.0 over 150 ms; class is
-          // removed at 200 ms so the animation can re-trigger if the row
-          // re-renders. Failed/cancelled rows skip this entirely (we only
-          // arm the timer when status === 'done').
-          const t = setTimeout(() => {
-            _state.rewardTimers.delete(pair.pairIndex);
-            _renderRows();
-          }, 200);
-          _state.rewardTimers.set(pair.pairIndex, t);
-        }
-      }
-    }
-  }
-
-  // [BUG FIX] UI spec §3.5 / §9.3: ensureVisible runs after every
-  // BULK_PROGRESS, not only on phase transitions. _ensureVisible is a
-  // no-op when the row is already in view (avoids jitter); it also
-  // honours the auto-follow toggle. Calling it for every active row
-  // costs <1 µs per row when in-view (single arithmetic comparison).
-  function _ensureVisibleForActivePairs(pairs) {
-    if (!_refs.viewport) { return; }
-    if (_refs.autoFollow && !_refs.autoFollow.checked) { return; }
-    for (const pair of pairs) {
-      if (ACTIVE_STATES.has(pair.status)) {
-        _ensureVisible(pair.pairIndex);
-      }
-    }
-  }
-
   function _onWindowClick(ev) {
     const btn = ev.target.closest('.bulk-row__open-btn');
-    if (!btn) return;
+    if (!btn) { return; }
     const idx = parseInt(btn.dataset.pairIndex, 10);
-    if (!Number.isFinite(idx)) return;
+    if (!Number.isFinite(idx)) { return; }
     ev.stopPropagation();
     void routeBulkPairOpenClick(idx);
   }
 
-  function _renderNavBar(job, hasComparison) {
-    if (!_refs.navBar) return;
-    const activePairIndex = job?.activePairIndex;
-    if (activePairIndex == null || !hasComparison) {
-      _refs.navBar.hidden = true;
-      _refs.navBar.textContent = '';
-      return;
+  function _findAdjacentDonePairIndex(pairs, from, delta) {
+    if (delta < 0) {
+      for (let i = from - 1; i >= 0; i--) {
+        if (pairs[i]?.status === 'done') { return i; }
+      }
+      return -1;
     }
+    for (let i = from + 1; i < pairs.length; i++) {
+      if (pairs[i]?.status === 'done') { return i; }
+    }
+    return -1;
+  }
 
-    const pairs = job.pairs ?? [];
-    const total = pairs.length;
-
-    const prevDone = (function findPrev() {
-      for (let i = activePairIndex - 1; i >= 0; i--) {
-        if (pairs[i]?.status === 'done') return i;
-      }
-      return -1;
-    }());
-
-    const nextDone = (function findNext() {
-      for (let i = activePairIndex + 1; i < total; i++) {
-        if (pairs[i]?.status === 'done') return i;
-      }
-      return -1;
-    }());
-
-    const prevDisabled = prevDone < 0;
-    const nextDisabled = nextDone < 0;
-
-    _refs.navBar.hidden = false;
-    _refs.navBar.innerHTML = `
-      <div class="bulk-nav-bar">
-        <button type="button" class="btn-ghost btn-sm" id="bulk-prev-pair-btn"
-                data-nav-index="${prevDone}" ${prevDisabled ? 'disabled' : ''}>
-          ‹ Pair ${prevDone >= 0 ? prevDone + 1 : '—'}
-        </button>
-        <span class="bulk-nav-bar__position">
-          Pair ${activePairIndex + 1} of ${total}
-        </span>
-        <button type="button" class="btn-ghost btn-sm" id="bulk-next-pair-btn"
-                data-nav-index="${nextDone}" ${nextDisabled ? 'disabled' : ''}>
-          Pair ${nextDone >= 0 ? nextDone + 1 : '—'} ›
+  function _ensureNavFooter() {
+    let footer = document.getElementById('bulk-pair-nav-footer');
+    if (footer) { return footer; }
+    const area = document.getElementById('bulk-result-area');
+    if (!area) { return null; }
+    footer = document.createElement('div');
+    footer.id = 'bulk-pair-nav-footer';
+    footer.className = 'bulk-pair-nav-footer';
+    footer.innerHTML = `
+      <button type="button" class="btn-ghost btn-sm bulk-pair-nav-footer__prev" data-field="prev">
+        ‹ Previous
+      </button>
+      <span class="bulk-pair-nav-footer__position" data-field="position"></span>
+      <div class="bulk-pair-nav-footer__actions">
+        <button type="button" class="btn-ghost btn-sm bulk-pair-nav-footer__close" data-field="close"
+                title="Close (Esc)">Close</button>
+        <button type="button" class="btn-ghost btn-sm bulk-pair-nav-footer__next" data-field="next">
+          Next ›
         </button>
       </div>
     `;
+    area.appendChild(footer);
+    footer.querySelector('[data-field="prev"]').addEventListener('click', () => _navigatePair(-1));
+    footer.querySelector('[data-field="next"]').addEventListener('click', () => _navigatePair(1));
+    footer.querySelector('[data-field="close"]').addEventListener('click', () => _closeResultPanel());
+    return footer;
+  }
 
-    if (!prevDisabled) {
-      _refs.navBar.querySelector('#bulk-prev-pair-btn')?.addEventListener('click', () => {
-        void routeBulkPairOpenClick(prevDone);
-      });
+  function _renderNavFooter(job, hasComparison) {
+    const area = document.getElementById('bulk-result-area');
+    if (!area) { return; }
+    const activePairIndex = job?.activePairIndex;
+    if (activePairIndex == null || !hasComparison) {
+      const existing = document.getElementById('bulk-pair-nav-footer');
+      if (existing) { existing.hidden = true; }
+      return;
     }
-    if (!nextDisabled) {
-      _refs.navBar.querySelector('#bulk-next-pair-btn')?.addEventListener('click', () => {
-        void routeBulkPairOpenClick(nextDone);
-      });
-    }
+
+    const footer = _ensureNavFooter();
+    if (!footer) { return; }
+    footer.hidden = false;
+
+    const pairs = job.pairs ?? [];
+    const total = pairs.length;
+    const prevIdx = _findAdjacentDonePairIndex(pairs, activePairIndex, -1);
+    const nextIdx = _findAdjacentDonePairIndex(pairs, activePairIndex,  1);
+
+    const prevBtn = footer.querySelector('[data-field="prev"]');
+    const nextBtn = footer.querySelector('[data-field="next"]');
+    const posEl   = footer.querySelector('[data-field="position"]');
+
+    prevBtn.disabled = prevIdx < 0;
+    nextBtn.disabled = nextIdx < 0;
+    prevBtn.dataset.targetIndex = String(prevIdx);
+    nextBtn.dataset.targetIndex = String(nextIdx);
+    posEl.textContent = `Pair ${activePairIndex + 1} of ${total}`;
+  }
+
+  function _navigatePair(delta) {
+    const job = getState().bulkJob;
+    if (!job || job.activePairIndex == null) { return; }
+    const target = _findAdjacentDonePairIndex(job.pairs ?? [], job.activePairIndex, delta);
+    if (target >= 0) { void routeBulkPairOpenClick(target); }
+  }
+
+  function _closeResultPanel() {
+    const area = document.getElementById('bulk-result-area');
+    const shot = document.getElementById('bulk-results-screenshot-section');
+    const host = document.getElementById('bulk-result-panel-host');
+    if (host) { host.replaceChildren(); }
+    if (shot) { shot.replaceChildren(); }
+    if (area) { area.hidden = true; }
+    const footer = document.getElementById('bulk-pair-nav-footer');
+    if (footer) { footer.hidden = true; }
+    dispatch('BULK_ACTIVE_PAIR_CLEAR', {});
+  }
+
+  function _setupKeyboardNav() {
+    const handler = (ev) => {
+      const job = getState().bulkJob;
+      if (!job || job.activePairIndex == null) { return; }
+      const area = document.getElementById('bulk-result-area');
+      if (!area || area.hidden) { return; }
+      const t = ev.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) { return; }
+      if (ev.key === 'ArrowLeft') {
+        ev.preventDefault();
+        _navigatePair(-1);
+      } else if (ev.key === 'ArrowRight') {
+        ev.preventDefault();
+        _navigatePair(1);
+      } else if (ev.key === 'Escape') {
+        ev.preventDefault();
+        _closeResultPanel();
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
   }
 
   function _renderTabStatus(state) {
@@ -1241,19 +1341,48 @@ function createBulkPanel(containerEl /* api, storage */) {
     if (span.innerHTML !== html) { span.innerHTML = html; }
   }
 
+  function _handleJobPairsChanged(job, forceRelayout) {
+    const pairs = job.pairs;
+    let needRelayout = forceRelayout;
+
+    if (pairs.length !== _state.lastPairsLen) {
+      needRelayout = true;
+      _state.lastPairsLen = pairs.length;
+    }
+
+    if (!needRelayout && _filterAffectsOrderOrInclusion()) {
+      for (const p of pairs) {
+        if (_state.lastStatusByPair.get(p.pairIndex) !== p.status) {
+          needRelayout = true;
+          break;
+        }
+      }
+    }
+
+    for (const p of pairs) {
+      _state.lastStatusByPair.set(p.pairIndex, p.status);
+    }
+
+    if (needRelayout) {
+      _fullRelayoutAndRepaint();
+    } else {
+      _patchInPlaceAll();
+    }
+
+    _ensureVisibleForActivePairs(pairs);
+  }
+
   function _renderForState(state) {
     _renderTabStatus(state);
     const job = state.bulkJob;
     const rows = state.bulkParsedRows ?? [];
 
     if (job) {
-      if (!_refs.viewport) { _renderRowsRequiresShell(); }
-      _recomputeOffsets(job.pairs);
-      _detectTransitionsAndReward(job.pairs);
+      const justMounted = !_refs.viewport;
+      if (justMounted) { _renderRunningShell(); }
+      _handleJobPairsChanged(job, justMounted);
       _renderJobHeader(job);
-      _renderNavBar(job, Boolean(state.bulkJob?.viewer));
-      _renderRows();
-      _ensureVisibleForActivePairs(job.pairs);
+      _renderNavFooter(job, Boolean(state.bulkJob?.viewer));
       return;
     }
 
@@ -1267,13 +1396,12 @@ function createBulkPanel(containerEl /* api, storage */) {
     _renderIdle();
   }
 
-  function _renderRowsRequiresShell() {
-    _resetViewportRefs();
-    _renderRunningShell();
-  }
-
   function _resetViewportRefs() {
     if (_refs.resizeObs) { try { _refs.resizeObs.disconnect(); } catch { void 0; } }
+    if (_raf.handle !== 0) {
+      cancelAnimationFrame(_raf.handle);
+      _raf.handle = 0;
+    }
     if (_state.elapsedInterval) {
       clearInterval(_state.elapsedInterval);
       _state.elapsedInterval = null;
@@ -1296,13 +1424,17 @@ function createBulkPanel(containerEl /* api, storage */) {
     if (_state.downloadAllUnsub) { try { _state.downloadAllUnsub(); } catch { void 0; } _state.downloadAllUnsub = null; }
     _refs.backBtn = null;
     _refs.resizeObs = null;
-    _refs.navBar = null;
     _refs.storageDegradedSlot = null;
     _refs.autoFollow = null;
     _refs.filterInput     = null;
     _refs.failuresOnlyBtn = null;
     _refs.showNumbersBtn  = null;
     _refs.colStateBtn     = null;
+    _mountedByPairIndex.clear();
+    _recyclePool.length   = 0;
+    _geom.containerHeight = 0;
+    _geom.totalHeight     = 0;
+    _scroll.top           = 0;
     _state.cancelPendingTotal  = null;
     _state.cancelledSinceClick = 0;
     _state.searchQuery        = '';
@@ -1312,26 +1444,25 @@ function createBulkPanel(containerEl /* api, storage */) {
     _state.numbersByPair.clear();
     _state.numbersLoading.clear();
     _state.filteredIndexes    = [];
-    _state.rowOffsets         = [];
-    _state.totalHeight        = 0;
-    _state.lastStatusForOffsets.clear();
     _state.lastPairsLen       = 0;
-    _state.filterDirty        = false;
+    _state.lastStatusByPair.clear();
   }
 
   _renderForState(getState());
   const unsubscribe = subscribe((state) => _renderForState(state));
+  _keyboardUnbind = _setupKeyboardNav();
 
   return {
     destroy() {
       try { unsubscribe(); } catch { void 0; }
+      if (_keyboardUnbind) { try { _keyboardUnbind(); } catch { void 0; } _keyboardUnbind = null; }
       _resetViewportRefs();
-      for (const t of _state.rewardTimers.values()) { clearTimeout(t); }
-      _state.rewardTimers.clear();
       if (_state.elapsedInterval) {
         clearInterval(_state.elapsedInterval);
         _state.elapsedInterval = null;
       }
+      const footer = document.getElementById('bulk-pair-nav-footer');
+      if (footer) { footer.remove(); }
       containerEl.innerHTML = '';
     },
     ensureVisible: _ensureVisible,
