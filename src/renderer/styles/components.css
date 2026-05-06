@@ -300,11 +300,11 @@
 
 .badge-optional {
   font-size: var(--text-xs);
+  font-weight: var(--weight-regular);
   color: var(--color-text-tertiary);
-  background: var(--color-surface-overlay);
-  border-radius: var(--radius-full);
-  padding: 1px var(--space-2);
-  font-weight: var(--weight-medium);
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
 }
 
 .badge-critical { background: var(--color-sev-critical-bg); color: var(--color-sev-critical); }
@@ -318,30 +318,25 @@
   display: inline-flex;
   align-items: center;
   font-size: var(--text-xs);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-semibold);
   letter-spacing: 0.04em;
   border-radius: var(--radius-xs);
-  padding: 1px var(--space-2);
+  padding: 1px 6px;
   flex-shrink: 0;
   flex-grow: 0;
   white-space: nowrap;
   text-transform: uppercase;
-  border-style: none;
-  border-left-style: solid;
-  border-left-width: 2px;
-  background: var(--color-surface-raised);
+  border: none;
 }
 
 .env-badge--stage {
-  color: var(--env-stage-color);
-  border-left-color: var(--env-stage-color);
-  background: var(--env-stage-color-subtle);
+  color: var(--color-stage);
+  background: var(--color-stage-subtle);
 }
 
 .env-badge--prod {
-  color: var(--env-prod-color);
-  border-left-color: var(--env-prod-color);
-  background: var(--env-prod-color-subtle);
+  color: var(--color-prod);
+  background: var(--color-prod-subtle);
 }
 
 .split-btn {

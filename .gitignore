@@ -47,11 +47,15 @@ playwright/.cache/
 project structure.txt
 project-structure.txt
 
-# Ignore all .md files except README.md
+# Ignore all .md files except README.md and SYSTEM_REFERENCE.md
 *.md
 !README.md
+!SYSTEM_REFERENCE.md
 
 # Ignore zip files
 *.zip
 
 .docs
+
+# Local AI assistant settings
+.claude/

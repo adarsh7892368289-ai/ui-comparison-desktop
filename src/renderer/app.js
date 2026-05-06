@@ -222,7 +222,7 @@ function wireExportSplitControls() {
     const badge = primary?.querySelector('.format-badge');
     if (badge) badge.textContent = badgeText;
     if (primary) {
-      primary.title = `Export all as ${name}`;
+      primary.removeAttribute('title');
       primary.setAttribute('aria-label', `Export all reports as ${name}`);
     }
     if (primary && !primary.querySelector('svg')) {

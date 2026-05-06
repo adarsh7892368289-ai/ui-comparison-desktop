@@ -144,10 +144,18 @@
   --main-pane-sticky-offset: 56px;
   --z-tooltip: 10000;
 
-  --env-prod-color:         var(--color-success);
-  --env-stage-color:        var(--color-warning);
-  --env-prod-color-subtle:  var(--color-success-subtle);
-  --env-stage-color-subtle: var(--color-warning-subtle);
+  --color-prod:             hsl(142 35% 55%);
+  --color-prod-subtle:      hsl(142 35% 55% / 0.10);
+  --color-stage:            hsl(38 45% 60%);
+  --color-stage-subtle:     hsl(38 45% 60% / 0.10);
+
+  --env-prod-color:         var(--color-prod);
+  --env-stage-color:        var(--color-stage);
+  --env-prod-color-subtle:  var(--color-prod-subtle);
+  --env-stage-color-subtle: var(--color-stage-subtle);
+
+  --color-danger:              var(--color-destructive);
+  --color-danger-subtle:       var(--color-destructive-subtle);
 
   --color-surface-active: var(--color-surface-hover);
 

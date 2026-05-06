@@ -171,7 +171,7 @@ application source currently imports it.
 | `src/renderer/styles/` | `tokens.css` design tokens, plus `base`, `shell`, `components`, `navigation`, `report-list`, `result-panel`, and the new `bulk` stylesheet. |
 | `src/renderer/utils/` | Renderer helpers: icons, panel-rail breakpoints, report metadata, `sanitize.js` (`sanitize`, `sanitizeErrorMessage` — strips Playwright "Browser logs:" / "Call log:" tails, `sanitizeFilename`), time. |
 | `scripts/` | Build-time guards. `check-env.js` enforces `PLAYWRIGHT_BROWSERS_PATH`; `strip-comments.js` is a developer utility. |
-| `docs/` | Optional design notes and migration specs. Not loaded at runtime. |
+| `docs/` | Optional design notes and migration specs. Not loaded at runtime. Contains `ui-redesign/` with depth audit, token-redesign spec, and implementation plan (each in v1 and v2). |
 | `dist/` | Webpack output. Not committed. |
 | `release/` | electron-builder output. Not committed. |
 | `.playwright-browsers/` | Project-local Playwright browser tree consumed by `electron-builder` `extraResources`. |
@@ -179,7 +179,7 @@ application source currently imports it.
 
 Top-level files of note: `webpack.main.config.js`, `webpack.renderer.config.js`,
 `webpack.extractor.config.js`, `electron-builder.yml`, `.eslintrc.json`,
-`.prettierrc`, `package.json`.
+`.prettierrc`, `package.json`, `SYSTEM_REFERENCE.md`.
 
 ## Architectural overview
 
@@ -227,7 +227,7 @@ paths and what breaks if the rule is violated.
 
 ### Preload (isolated Node bridge)
 
-- `src/main/preload.js` — `contextBridge.exposeInMainWorld('electronAPI', …)` (now exposes `startBulkJob`, `cancelBulkJob`, `bulkProvideElements`, `getHostMemory`, `onBulkProgress`, `onBulkPairCompleted`, `onBulkJobComplete` in addition to the original surface)
+- `src/main/preload.js` — `contextBridge.exposeInMainWorld('electronAPI', …)` (now exposes `startBulkJob`, `cancelBulkJob`, `bulkProvideElements`, `getHostMemory`, `onBulkProgress`, `onBulkPairCompleted`, `onBulkJobComplete`, `pickDirectory`, `exportFileToDirectory` in addition to the original surface)
 - `src/main/ipc-channels.js`
 
 ### Renderer (Chromium, sandboxed)
@@ -245,7 +245,8 @@ What crosses via IPC: extraction requests, comparison requests, file
 import/export, blob registration for the `app://` protocol, version + perf
 metrics, **available-browsers detection (`GET_AVAILABLE_BROWSERS`)**, **host
 memory probe (`GET_HOST_MEMORY`)**, **bulk job start/cancel/element-provide
-(`BULK_START_JOB`, `CANCEL_BULK_JOB`, `BULK_PROVIDE_ELEMENTS`)**, cancellation,
+(`BULK_START_JOB`, `CANCEL_BULK_JOB`, `BULK_PROVIDE_ELEMENTS`)**, **directory-
+scoped export (`PICK_DIRECTORY`, `EXPORT_FILE_TO_DIRECTORY`)**, cancellation,
 progress and notification pushes (single-op and bulk), native context-menu
 (report-id and bulk-job-id variants) and application-menu actions,
 window-title updates. See `SYSTEM_REFERENCE.md` → *IPC Registry* for every
@@ -510,3 +511,236 @@ The contract that must hold:
   bulk run" item, action `'deleteBulkJob'`) vs. `payload.reportId` (the
   full report menu). Adding new bulk actions means extending that branch
   *and* the renderer-side `onContextAction` consumer.
+- **`PICK_DIRECTORY` / `EXPORT_FILE_TO_DIRECTORY` defense-in-depth.** The
+  `EXPORT_FILE_TO_DIRECTORY` handler only writes into directories the user
+  has explicitly chosen *this session* via `PICK_DIRECTORY`. Paths outside
+  that set are rejected with `{ success:false, error:'Directory not
+  approved …' }`. This prevents rogue renderer-side code from writing to
+  arbitrary filesystem locations.
+
+## CI / Release pipeline
+
+`.github/workflows/release-build.yml` — triggered on `workflow_dispatch`.
+
+| Job | Runner | What it does |
+|---|---|---|
+| `build-win` | `windows-latest` | Checkout → Node 22 → set `PLAYWRIGHT_BROWSERS_PATH` → `npm ci` → `playwright install chromium` → `npm run dist:win` (with `CSC_IDENTITY_AUTO_DISCOVERY=false`) → upload `release/*.exe`, `*.blockmap`, `latest.yml` |
+| `build-mac` | `macos-latest` | Same flow, except `npm run dist:mac` → upload `release/*.dmg` |
+
+Both jobs pin `actions/checkout@v5`, `actions/setup-node@v5`, and
+`actions/upload-artifact@v4`. No Linux job is defined yet — add one following
+the same pattern if AppImage / .deb artifacts are needed.
+
+## Webpack configurations
+
+| Config | Entry | Target | Output | Notable |
+|---|---|---|---|---|
+| `webpack.main.config.js` | `src/main/index.js`, `src/main/preload.js` | `electron-main`, Electron 33 | `dist/index.js`, `dist/preload.js` | Externals: `playwright`, `electron-log`, `electron-updater`. Uses `@core`/`@config`/`@infra` aliases. `bail:true`. |
+| `webpack.renderer.config.js` | `src/renderer/app.js` | `web`, Chrome 120 | `dist/renderer/app.js` | `CopyStaticAssetsPlugin` copies `index.html` + `styles/` to `dist/renderer/`. Aliases `electron` → stub, `electron-log` → `electron-log/renderer`. |
+| `webpack.extractor.config.js` | `src/core/extraction/extractor.js` | `web`, Chrome 108 | `dist/extractor-bundle.js` (UMD `__uiCompare`) | Aliases `electron`/`electron-log` → `_page_stubs_/`. No code splitting. |
+
+## Design tokens
+
+`src/renderer/styles/tokens.css` provides all design constants used by the UI.
+Token prefixes: `--color-*` (brand, surface, text, border, severity, match,
+success, warning, destructive, scrim), `--font-*`, `--space-*`, `--radius-*`,
+`--shadow-*`, `--z-*`, `--motion-*`. Every other stylesheet imports these
+tokens — never raw values. The dark theme is the only mode (no light variant
+at present). Typography: Inter (weights 400/500/600) for UI, JetBrains Mono
+(weight 400) for monospace code / selector displays.
+
+## Preload API surface
+
+The full `window.electronAPI` surface exposed by `src/main/preload.js`:
+
+| Method | Channel | Pattern |
+|---|---|---|
+| `startComparison(params)` | `START_COMPARISON` | invoke |
+| `extractElements(params)` | `EXTRACT_ELEMENTS` | invoke |
+| `cancelOperation(payload)` | `CANCEL_OPERATION` | invoke |
+| `exportHTML(params)` | `EXPORT_HTML` | invoke |
+| `exportFile(params)` | `EXPORT_FILE` | invoke |
+| `pickDirectory(params?)` | `PICK_DIRECTORY` | invoke |
+| `exportFileToDirectory(params)` | `EXPORT_FILE_TO_DIRECTORY` | invoke |
+| `importFile()` | `IMPORT_FILE` | invoke |
+| `registerBlob(params)` | `REGISTER_BLOB` | invoke |
+| `unregisterBlobsByComparison(id)` | `UNREGISTER_BLOBS_BY_COMPARISON` | invoke |
+| `openReport(params)` | `OPEN_REPORT` | invoke |
+| `getVersion()` | `GET_VERSION` | invoke |
+| `getPerfMetrics()` | `GET_PERF_METRICS` | invoke |
+| `getAvailableBrowsers(opts?)` | `GET_AVAILABLE_BROWSERS` | invoke |
+| `getHostMemory()` | `GET_HOST_MEMORY` | invoke |
+| `startBulkJob(spec)` | `BULK_START_JOB` | invoke |
+| `cancelBulkJob(jobId)` | `CANCEL_BULK_JOB` | invoke |
+| `bulkProvideElements(payload)` | `BULK_PROVIDE_ELEMENTS` | invoke |
+| `setWindowTitle(title)` | `SET_WINDOW_TITLE` | send (one-way) |
+| `showContextMenu(payload)` | `SHOW_CONTEXT_MENU` | send (one-way) |
+| `onComparisonProgress(cb)` | `COMPARISON_PROGRESS` | push (unsubscribe fn) |
+| `onExtractionProgress(cb)` | `EXTRACTION_PROGRESS` | push (unsubscribe fn) |
+| `onOperationCancelled(cb)` | `OPERATION_CANCELLED` | push (dead) |
+| `onContextAction(cb)` | `CONTEXT_ACTION` | push (unsubscribe fn) |
+| `onMenuAction(cb)` | `MENU_ACTION` | push (unsubscribe fn) |
+| `onAppNotification(cb)` | `APP_NOTIFICATION` | push (dead) |
+| `onBulkProgress(cb)` | `BULK_PROGRESS` | push (unsubscribe fn) |
+| `onBulkPairCompleted(cb)` | `BULK_PAIR_COMPLETED` | push (unsubscribe fn) |
+| `onBulkJobComplete(cb)` | `BULK_JOB_COMPLETE` | push (unsubscribe fn) |
+| `platform` | — | property (`process.platform`) |
+
+## Renderer state actions (complete list)
+
+Single-extract/compare lifecycle:
+- `REPORTS_LOADED` — hydrate reports array
+- `REPORT_DELETED` — remove one report by id
+- `EXTRACTION_STARTED` — phase → `extracting`
+- `EXTRACTION_PROGRESS` — update label + pct (ignored during `cancelling`)
+- `EXTRACT_UI_END` — transition extracting/cancelling → idle/done
+- `COMPARISON_STARTED` — phase → `comparing`, clear prior result
+- `COMPARISON_PROGRESS` — update label + pct (ignored during `cancelling`)
+- `COMPARISON_COMPLETE` — phase → `done`, store result + cache metadata
+- `COMPARISON_ERROR` — phase → `error`
+- `COMPARE_UI_END` — transition comparing/cancelling → idle
+- `OPERATION_CANCELLING` — phase → `cancelling`
+- `RESET_COMPARISON` — clear comparison + viewer state
+- `DISMISS_ERROR` — reset to initial (preserves reports, browser, bulk, filters)
+- `BASELINE_SELECTED` — set selected baseline report id
+- `COMPARE_SELECTED` — set selected compare report id
+- `MODE_CHANGED` — set compare mode (`dynamic`/`static`)
+- `FILTERS_UPDATED` — merge partial filter update
+- `EXPORT_STARTED` — exportState → `pending`
+- `EXPORT_COMPLETE` — exportState → `done`/`error`
+- `EXPORT_ERROR` — exportState → `error` + store message
+
+Browser detection:
+- `BROWSER_DETECTION_STARTED` — browserDetectionState → `loading`
+- `BROWSERS_DETECTED` — store list, auto-select default, state → `ready`
+- `BROWSER_DETECTION_FAILED` — state → `error` + store message
+- `BROWSER_SELECTED` — store user-chosen browser descriptor
+
+Bulk:
+- `BULK_PARSED_ROWS_SET` — store validated rows + detection state
+- `BULK_DETECTION_STATE` — update detection phase
+- `BULK_JOB_STARTED` — build running job from spec, first pair optimistically `extracting-baseline`
+- `BULK_PROGRESS` — update one pair's status/pct/operationId
+- `BULK_PAIR_COMPLETED` — finalize one pair (done/failed/cancelled + report/comparison ids)
+- `BULK_JOB_COMPLETE` — derive terminal status from summary + cancelling flag
+- `BULK_JOB_CANCELLING` — flip `cancelling` flag (button renders "Cancelling…")
+- `BULK_JOB_CANCELLED` — flip queued pairs → cancelled, status → `cancelled`
+- `BULK_JOB_STORAGE_DEGRADED` — mark storageDegraded + cancelling
+- `BULK_JOB_LOADED` — hydrate a job from IDB (e.g. resume detection)
+- `BULK_JOB_RESET` — null out job + parsed rows
+- `BULK_JOB_RESUMED` / `BULK_JOB_RESUME_ACCEPTED` — re-queue incomplete pairs, status → `running`
+- `BULK_JOB_RESUME_OFFERED` — show resume banner with offer metadata
+- `BULK_JOB_RESUME_DECLINED` — cascade delete or mark partial
+- `BULK_PAIR_OPEN` — set activePairIndex for viewer
+- `BULK_PAIR_VIEWER_READY` — store viewer result + cache metadata
+- `BULK_ACTIVE_PAIR_CLEAR` — close pair viewer
+
+## Infrastructure services
+
+### Performance monitor (`src/infrastructure/performance-monitor.js`)
+
+Tracks per-operation timing with `start(op)` / `end(handle)` / `wrap(op, fn)`.
+Retains the last 100 samples per operation in a circular buffer. Exposes
+`getStats(op)` → `{ count, total, average, min, max, stdDev, p50, p95, p99 }`
+and `getAllStats()`. Togglable via `enabled` flag without losing accumulated
+data. `reset(op?)` clears one or all operations.
+
+### Error tracker (`src/infrastructure/error-tracker.js`)
+
+Deduplicates errors by `${code}:${message}` key. Tracks `count`, `firstSeen`,
+`lastSeen` per unique error. Bounded at 100 entries (FIFO eviction of oldest).
+Exports `ERROR_CODES` with 18 named codes covering extraction, selector
+generation, comparison, and storage failures.
+
+### IDB repository public API (`src/infrastructure/idb-repository.js`)
+
+The singleton `storage` exports 25+ public methods:
+
+| Category | Methods |
+|---|---|
+| Reports | `saveReport`, `loadReports`, `loadReportElements`, `loadReportByExtractionKey`, `deleteReport`, `deleteAllReports` |
+| Comparisons | `saveComparison`, `loadComparisonByPair`, `loadComparisonDiffs` |
+| Visual blobs | `saveVisualBlob`, `loadVisualBlob`, `deleteVisualBlobsByComparisonId` |
+| Keyframes | `saveVisualKeyframe`, `loadKeyframesBySession` |
+| Element rects | `saveVisualElementRect`, `saveVisualElementRects`, `loadElementRectsBySession`, `deleteVisualDataBySession` |
+| Bulk | `saveBulkJob`, `updateBulkJob`, `loadBulkJob`, `loadAllBulkJobs`, `saveBulkPair`, `updateBulkPair`, `loadBulkPairsByJob`, `loadBulkPairsByStatus`, `deleteBulkJobCascade` |
+| Recovery | `applyPendingOperations`, `consumeV5UpgradeDataClearedNotice` |
+| Quota | `checkQuota` |
+
+Helper: `buildPairKey(baselineId, compareId, mode)` → `${baselineId}_${compareId}_${mode}`.
+
+## Normalization engine (`src/core/normalization/`)
+
+`normalizer-engine.js` normalizes captured CSS values before diffing:
+
+1. **Shorthand expansion** — `expandShorthands(styles)` splits shorthand
+   properties (border, margin, padding, etc.) into longhands.
+2. **Color normalization** — 11 color properties normalized to canonical RGB
+   (handles named colors, hex, hsl, rgb with alpha).
+3. **Size normalization** — 25 size properties have units standardized and
+   values rounded to `normalization.rounding.decimals = 2`.
+4. **Font family** — dequoted on Firefox/WebKit (per engine quirks profile).
+5. **Font weight** — keywords → numeric (`normal`→`400`, `bold`→`700`).
+6. **Box shadow** — reordered on WebKit (per engine quirks profile).
+
+Engine-specific behavior is driven by `BROWSER_NORMALIZATION_PROFILES` from
+`src/config/browser-capability-profile.js`. LRU cache (`normalization.cache`
+config: `maxEntries=1000`, policy `LRU`) avoids re-normalizing repeated
+values. Errors during normalization silently return the original value.
+
+## Selector engine (`src/core/selectors/selector-engine.js`)
+
+Generates CSS and XPath selectors for each extracted element. Key behaviors:
+
+- **Bounded concurrency** — `BoundedQueue(selectors.concurrency = 4)` gates
+  parallel selector generation across many elements.
+- **Total timeout** — `selectors.totalTimeout = 600` ms hard limit per element
+  (returns `NULL_SELECTORS` on timeout).
+- **Parallel execution** — CSS and XPath generators run in parallel via
+  `Promise.allSettled` (configurable per-type via
+  `selectors.xpath.parallelExecution` / `selectors.css.parallelExecution`).
+- **Shadow DOM** — `buildShadowPath` walks `getRootNode({ composed: false })`
+  to detect shadow boundaries and returns host selector chain.
+- **NULL_SELECTORS** — `{ xpath:null, css:null, shadowPath:null, xpathConfidence:0, cssConfidence:0, xpathStrategy:null, cssStrategy:null }` returned on any failure.
+
+## Report manager / sidebar (`src/renderer/application/report-manager.js`)
+
+`initializeApp(statusBar)` is the renderer entry point (called from `app.js`):
+
+1. Awaits `storage.applyPendingOperations()` (WAL replay).
+2. Creates the virtual-scrolled report list component.
+3. Loads view config from `localStorage` key `'sidebar-view-config'`.
+4. Wires sidebar controls (search with **250 ms debounce**, sort, group, density).
+5. Subscribes to state for selection sync.
+
+**View config**: `{ sortField, sortDirection, density, groupBy }`.
+- Sort fields: `date`, `name` (host), `elements`.
+- Density cycle: `compact` → `default` → `comfortable`.
+- Group by: `null`, `host`, `date`, `environment`, `job`.
+
+## Comparator (`src/core/comparison/comparator.js`)
+
+`Comparator.compare()` is an async generator yielding `{ type:'progress' }` and
+finally `{ type:'result' }` frames. Progress weight: matching = 50%, diffing =
+49%, final 1% for assembly. Match rate formula:
+`(matched / (matched + unmatchedBaseline + unmatchedCompare)) * 100`.
+
+## Protocol handler (`src/main/protocol-handler.js`)
+
+Registers the `app://` custom scheme. Routes:
+- `app://./blob/<blobId>` — serves from in-memory LRU blob cache (default MIME
+  `image/webp`, header `Cache-Control: no-store`).
+- `app://./<path>` — serves static files from `dist/renderer/` with path
+  traversal protection (403 on escape).
+
+Blob cache: `MAX_BLOB_CACHE_BYTES = 512 MiB`. Eviction is **per-comparison-
+group** (all blobs for the oldest `comparisonId` evicted together). Single
+blobs exceeding the cap are silently rejected. The active comparison is never
+self-evicted.
+
+## Resource paths (`src/main/resource-paths.js`)
+
+Exports `mainDistributionDir()` — resolves to the app's distribution root:
+- **Dev:** `__dirname` (inside `dist/`).
+- **Packaged:** replaces `/app.asar/` with `/app.asar.unpacked/` so
+  `fs.readFileSync` can reach unpacked resources (extractor bundle, playwright).

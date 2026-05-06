@@ -25,7 +25,7 @@ const Modal = {
         <p class="modal-title" id="modal-title">${sanitize(title)}</p>
         <p class="modal-message">${sanitize(message)}</p>
         <div class="modal-actions">
-          <button class="btn-ghost modal-cancel">Cancel</button>
+          <button class="btn-ghost btn-sm modal-cancel">Cancel</button>
           <button class="btn-${destructive ? 'destructive' : 'primary'} btn-sm modal-confirm">
             ${sanitize(confirmText)}
           </button>

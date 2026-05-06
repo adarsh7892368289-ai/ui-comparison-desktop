@@ -1,0 +1,1792 @@
+# UI Comparison Desktop — System Reference
+
+Audience: any engineer debugging or extending a specific subsystem. Every
+claim is anchored to a file path and function/class/constant name. Where the
+source itself is non-deterministic at a point, that point is marked
+**[STILL AMBIGUOUS]** with the source-level evidence for why.
+
+The companion `README.md` covers onboarding (prerequisites, install, build).
+This document covers the runtime contracts.
+
+## Table of Contents
+
+1. [Architecture & Layer Rules](#1-architecture--layer-rules)
+2. [Electron Context Map](#2-electron-context-map)
+3. [IPC Registry](#3-ipc-registry)
+4. [IndexedDB Schema](#4-indexeddb-schema)
+5. [WAL & Circuit Breaker State Machines](#5-wal--circuit-breaker-state-machines)
+6. [Element Capture Pipeline](#6-element-capture-pipeline)
+7. [Element Matching Pipeline](#7-element-matching-pipeline)
+8. [CSS Diff Engine](#8-css-diff-engine)
+9. [Renderer UI Architecture](#9-renderer-ui-architecture)
+10. [Persistence Path for a Comparison](#10-persistence-path-for-a-comparison)
+11. [Build Pipeline](#11-build-pipeline)
+12. [Failure Mode Catalog](#12-failure-mode-catalog)
+13. [Browser Detection & Capability Profiles](#13-browser-detection--capability-profiles)
+14. [Bulk Pipeline](#14-bulk-pipeline)
+15. [CI / Release Pipeline](#15-ci--release-pipeline)
+
+---
+
+## 1. Architecture & Layer Rules
+
+```
+┌───────────────────────────────────────────────────────────────────────────┐
+│ presentation   src/renderer/components/, src/renderer/styles/, index.html │
+│                ─────────────────────────────────────────────────────────  │
+│ application    src/renderer/application/, src/renderer/state.js,          │
+│                src/renderer/app.js, src/renderer/ui.js                    │
+│                ─────────────────────────────────────────────────────────  │
+│ core           src/core/**            infrastructure  src/infrastructure/**│
+│                                                                            │
+│ main process   src/main/** (own runtime context, not part of layer stack) │
+│ in-page bundle src/core/extraction/** (compiled to dist/extractor-bundle) │
+└───────────────────────────────────────────────────────────────────────────┘
+```
+
+**Rule.** A module in layer L imports only from layers strictly below L plus
+peers in L. `core/` and `infrastructure/` are peers; the only intentional
+crossing is `core/*` reading `infrastructure/logger.js`. `core/` may not
+import Electron, the renderer DOM, anything under `src/renderer/`, or anything
+under `src/main/`. `infrastructure/` may not import from `application/`,
+`presentation/`, or `src/main/`. Renderer components reach native capabilities
+exclusively through `window.electronAPI` (exposed by
+`src/main/preload.js:14`).
+
+`src/main/` is a separate runtime; it freely `require()`s from `src/core/**`
+(e.g. `bulk-runner.js` imports `playwright-manager`; the latter loads
+`core/comparison/comparator.js`, `core/comparison/keyframe-grouper.js`,
+`core/comparison/url-compatibility.js`, and the capability profiles from
+`config/`). It must **not** import from `src/renderer/` or
+`src/infrastructure/`.
+
+**Enforcement.** There is no automated rule check (no `madge` rule in CI, no
+ESLint `import/no-restricted-paths`). Enforcement is editorial, supported by
+the webpack alias map (`@core`, `@config`, `@infra` in all three webpack
+configs) and the `target` differentiation: `webpack.main.config.js` sets
+`target: 'electron-main'`; `webpack.renderer.config.js` and
+`webpack.extractor.config.js` set `target: 'web'`. A boundary violation will
+typically surface as a webpack build failure (e.g. importing
+`src/main/index.js` from a renderer module would fail to resolve `electron`
+because `webpack.renderer.config.js` aliases `electron` to a stub).
+
+**The renderer-side electron stub.** `src/renderer/stubs/electron.js`
+intercepts any `import 'electron'` from renderer code so it cannot reach the
+real module. Same pattern in
+`src/core/extraction/_page_stubs_/electron.js` and
+`.../electron-log.js` for the in-page bundle.
+
+---
+
+## 2. Electron Context Map
+
+### Main (Node)
+
+- **Files:** `src/main/index.js`, `src/main/ipc-handlers.js`, `src/main/playwright-manager.js`, `src/main/bulk-runner.js`, `src/main/protocol-handler.js`, `src/main/resource-paths.js`, `src/main/ipc-channels.js`, `src/core/comparison/*.js`, `src/core/bulk/plan-validator.js` (loaded by the validator path), `src/config/defaults.js` (loaded via `index.js`).
+- **Why it must run there:** Needs `app`, `BrowserWindow`, `protocol`, `ipcMain`, `dialog`, `Menu`, `os`, file system, `playwright`, raw buffers. Sandboxed renderer cannot do any of this.
+- **What breaks if moved:** Renderer cannot launch browsers (`chromium.launch` requires Node), cannot register custom protocols, cannot read `extractor-bundle.js` from disk, cannot probe host memory.
+
+### Preload
+
+- **Files:** `src/main/preload.js`.
+- **Why it must run there:** Single allowed bridge between sandboxed renderer and main: `contextBridge.exposeInMainWorld('electronAPI', …)`. Runs in an isolated world with `contextIsolation: true` (`src/main/index.js`).
+- **What breaks if moved:** Without preload, `window.electronAPI` is undefined and `src/renderer/app.js:68-84` shows the fatal banner and throws.
+
+### Renderer (Chromium, sandboxed)
+
+- **Files:** `src/renderer/**`, `src/infrastructure/**`, plus `src/core/bulk/extraction-key.js` (uses `crypto.subtle`, available in renderer) and `src/core/export/bulk-summary-exporter.js` (uses `xlsx` in the renderer bundle).
+- **Why it must run there:** Owns the DOM, IndexedDB (`infrastructure/idb-repository.js` opens `indexedDB.open(DB_NAME, 9)`). `app.enableSandbox()` (`src/main/index.js:22`) plus `nodeIntegration:false`, `sandbox:true` (`src/main/index.js:282-285`).
+- **What breaks if moved:** IndexedDB does not exist in main; SaaS workflows that touch DOM (`getComputedStyle`, `getBoundingClientRect`) only work here. `crypto.subtle.digest` for the extraction key would have to be re-implemented in main.
+
+### In-page (target site)
+
+- **Files:** `dist/extractor-bundle.js` (compiled from `src/core/extraction/**`) injected via `page.addScriptTag`.
+- **Why it must run there:** Must execute inside the target page's JavaScript context to read live DOM and computed styles. Bundled UMD with `library.name='__uiCompare'` (`webpack.extractor.config.js`).
+- **What breaks if moved:** If executed in the renderer instead, it sees the UI Comparison app DOM, not the target page.
+
+---
+
+## 3. IPC Registry
+
+All channel constants live in `src/main/ipc-channels.js` and are imported as
+`CH` everywhere. The preload exposes them under `window.electronAPI`
+(`src/main/preload.js`).
+
+### Channel: `START_COMPARISON`
+
+- **Runtime string:** `START_COMPARISON`
+- **Direction / method:** renderer → main, `invoke`
+- **Renderer payload:** `{ baselineId, compareId, mode, baselineUrl, compareUrl, baselineElements, compareElements, includeScreenshots, browser:{ browserType, channel, executablePath }, operationId, comparisonId? }`. The `browser` field is sourced from the renderer state's `selectedBrowser` (see §13). When omitted, screenshot phase defaults to `{ browserType: 'chromium', channel: null, executablePath: null }`. `comparisonId` defaults to `operationId` if not provided.
+- **Main behavior:** Calls `playwrightManager.runComparison`; returns `{ success:true, result }` or `{ success:false, error }` or `{ success:false, cancelled:true }` if `error.code==='CANCELLED'`. The result's `visualDiffs.devToolsWarnings` may include `{ kind:'screenshot-engine-fallback', from, to, reason }` when the WebKit→Chromium screenshot fallback was triggered.
+- **Handler:** `ipc-handlers.js` → `_registerComparisonHandlers`
+- **Producer:** —
+
+### Channel: `EXTRACT_ELEMENTS`
+
+- **Runtime string:** `EXTRACT_ELEMENTS`
+- **Direction / method:** renderer → main, `invoke`
+- **Renderer payload:** `{ url, options:{ filters?, browser?:{ browserType, channel, executablePath } }, operationId }`. `extract-workflow.js` always populates `options.browser` from the renderer's `selectedBrowser`; missing → defaults to `{ browserType:'chromium', channel:null, executablePath:null }`.
+- **Main behavior:** Calls `playwrightManager.runExtraction`; returns `{ success:true, report }` / `{ success:false, error }` / `{ success:false, cancelled:true }`. Report is stamped with `report.engine` (the requested `browserType`) and `report.platform` (`process.platform`).
+- **Handler:** `ipc-handlers.js` → `_registerExtractionHandlers`
+- **Producer:** —
+
+### Channel: `GET_AVAILABLE_BROWSERS`
+
+- **Runtime string:** `GET_AVAILABLE_BROWSERS`
+- **Direction / method:** renderer → main, `invoke`
+- **Renderer payload:** `{ refresh?: boolean }` (default `false` — uses module-level cache; `true` forces re-detection).
+- **Main behavior:** Lazily `require('./browser-detector')` and calls `detectBrowsers({ refresh })`. Returns `{ success:true, browsers, detectedAt }` or `{ success:false, error }`. `browsers[]` shape documented in §13.
+- **Handler:** `ipc-handlers.js` → `_registerBrowserHandlers`
+- **Producer:** —
+
+### Channel: `GET_HOST_MEMORY`
+
+- **Runtime string:** `GET_HOST_MEMORY`
+- **Direction / method:** renderer → main, `invoke`
+- **Renderer payload:** `()`
+- **Main behavior:** Returns `{ totalMemMB, freeMemMB }` from `os.totalmem()` / `os.freemem()` (rounded to integers). No error path; always succeeds.
+- **Handler:** `ipc-handlers.js` → `_registerBulkHandlers`
+- **Producer:** —
+- **Used by:** Bulk concurrency clamp (`bulk-workflow.js _hostTotalMemMB`, `bulk-panel.js _ensureHostMemory`). Memoised once per renderer session.
+
+### Channel: `BULK_START_JOB`
+
+- **Runtime string:** `BULK_START_JOB`
+- **Direction / method:** renderer → main, `invoke`
+- **Renderer payload:** `{ jobId, filename, pairs[], concurrency, hostCooldownMs, comparisonIdsByPairIndex }`. `pairs[i]` shape: `{ pairIndex, pairId, comparisonId, baselineUrl, compareUrl, mode, label, includeScreenshots, browser:{ browserType, channel, executablePath }, filterClass, filterId, filterTag, dedupedSides:{ baseline?:{ reportId }, compare?:{ reportId } } }`.
+- **Main behavior:** Validates non-empty `pairs[]`, clamps `concurrency` to `[1, defaultsConfig.bulk.maxConcurrency=4]`, registers a job entry in `_bulkJobs` (with its own `opIds` Set, `pLimitInstance` slot, and `providedElements`/`providedWaiters` Maps for the dedup bridge), then **fires-and-forgets** `bulkRunner.runBulkJob(...)`. Returns synchronously: `{ success:true, jobId }` or `{ success:false, error }`. All real progress is reported on `BULK_PROGRESS` / `BULK_PAIR_COMPLETED` / `BULK_JOB_COMPLETE`.
+- **Handler:** `ipc-handlers.js` → `_registerBulkHandlers`
+- **Producer:** —
+
+### Channel: `CANCEL_BULK_JOB`
+
+- **Runtime string:** `CANCEL_BULK_JOB`
+- **Direction / method:** renderer → main, `invoke`
+- **Renderer payload:** `{ jobId }`
+- **Main behavior:** Looks up the entry in `_bulkJobs`. If found: clears the `p-limit` queue (drops not-yet-dispatched pairs), flips every per-op `cancelled` flag in `_cancelRegistry`, and deletes the job entry (which causes `bulk-runner.js`'s `isMasterCancelled()` check `() => !_bulkJobs.has(jobId)` to return `true` for any in-flight pair). Returns `{ acknowledged: true }` regardless. Idempotent.
+- **Handler:** `ipc-handlers.js` → `_registerBulkHandlers`
+- **Producer:** —
+
+### Channel: `BULK_PROVIDE_ELEMENTS`
+
+- **Runtime string:** `BULK_PROVIDE_ELEMENTS`
+- **Direction / method:** renderer → main, `invoke`
+- **Renderer payload:** `{ jobId, pairIndex:number, side:'baseline'|'compare', elements:Array }`
+- **Main behavior:** Looks up the bulk job in `_bulkJobs`; rejects with `{ accepted:false, error }` on bad shape or missing job. Stores the elements list under key `${pairIndex}:${side}` in `entry.providedElements`, then resolves any waiter currently parked in `entry.providedWaiters`. Returns `{ accepted:true }`.
+- **Handler:** `ipc-handlers.js` → `_registerBulkHandlers`
+- **Producer:** —
+- **Used by:** Renderer's `_provideDedupedElementsToMain` after `BULK_START_JOB` returns success — for every pair whose `dedupedSides` has a hit, the renderer loads the cached report's elements via `storage.loadReportElements(...)` and pushes them to main, which lets `bulk-runner.js`'s `_awaitProvided('baseline'|'compare')` resolve instantly inside `_runPair`.
+
+### Channel: `BULK_PROGRESS`
+
+- **Runtime string:** `BULK_PROGRESS`
+- **Direction / method:** main → renderer, `webContents.send`
+- **Payload:** `{ jobId, pairIndex, phase: 'extracting-baseline'|'extracting-compare'|'matching'|'screenshots'|'persisting', label?, pct, operationId }`
+- **Main behavior:** `bulk-runner.js` emits these via `pushPairProgress(...)` after every Playwright `onProgress` callback. The `persisting` phase is *renderer-synthesised* in `_runPersistingPhaseAnimation` (4 setTimeout ticks: 95→97→99→100 over 900 ms) — main never emits `'persisting'`.
+- **Handler:** —
+- **Producer:** `bulk-runner.js` (per pair, multiple per phase)
+
+### Channel: `BULK_PAIR_COMPLETED`
+
+- **Runtime string:** `BULK_PAIR_COMPLETED`
+- **Direction / method:** main → renderer, `webContents.send`
+- **Payload:** `{ jobId, pairIndex, status:'done'|'failed'|'cancelled', baselineReport?, compareReport?, comparisonResult?:slimResult, deduped?, error?, errorCode? }`. `errorCode` is one of: `CANCELLED`, `BROWSER_POLICY_BLOCKED`, `BROWSER_NOT_FOUND`, `TIMEOUT`, `CSP_BLOCKED`, `INCOMPATIBLE_URLS`, `STORAGE_DEGRADED`, `INTERRUPTED`, `UNKNOWN`. `deduped` is `'baseline'` / `'compare'` / `'both'` / `'none'`.
+- **Main behavior:** Emitted exactly once per pair by `bulk-runner.js`, even on cancel/fail. Error messages run through `_sanitize` (collapse whitespace, slice 500 chars).
+- **Handler:** —
+- **Producer:** `bulk-runner.js _runPair`
+
+### Channel: `BULK_JOB_COMPLETE`
+
+- **Runtime string:** `BULK_JOB_COMPLETE`
+- **Direction / method:** main → renderer, `webContents.send`
+- **Payload:** `{ jobId, summary:{ total, succeeded, failed, cancelled, deduped }, durationMs, error? }`
+- **Main behavior:** Emitted after `Promise.all(slotPromises)` resolves (or, in the catch branch of the dispatch wrapper, when `runBulkJob` itself threw). Always emitted exactly once per job.
+- **Handler:** —
+- **Producer:** `bulk-runner.js` (and the `.catch` of the dispatch wrapper inside `_registerBulkHandlers`)
+
+### Channel: `EXPORT_HTML`
+
+- **Runtime string:** `EXPORT_HTML`
+- **Direction / method:** renderer → main, `invoke`
+- **Renderer payload:** `{ htmlContent, filename }`
+- **Main behavior:** `dialog.showSaveDialog` then `fs.promises.writeFile`. Returns `{ success, filePath }` / `{ success:false, reason:'cancelled' }` / `{ success:false, error }`. EACCES → "Permission denied", EBUSY → "File is in use".
+- **Handler:** `ipc-handlers.js` → `_registerFileHandlers`
+- **Producer:** —
+
+### Channel: `EXPORT_FILE`
+
+- **Runtime string:** `EXPORT_FILE`
+- **Direction / method:** renderer → main, `invoke`
+- **Renderer payload:** `{ data, filename, format }` (data: `Uint8Array` / `ArrayBuffer` / `number[]` / string)
+- **Main behavior:** Save dialog + write. Same return shape as `EXPORT_HTML`. The bulk summary exporter (`bulk-summary-exporter.js`) hands back a `Uint8Array` and the renderer wraps it as `Array.from(uint8Array)` before invoke (because preload IPC structured-clones the argument).
+- **Handler:** `ipc-handlers.js` → `_registerFileHandlers`
+- **Producer:** —
+
+### Channel: `PICK_DIRECTORY`
+
+- **Runtime string:** `PICK_DIRECTORY`
+- **Direction / method:** renderer → main, `invoke`
+- **Renderer payload:** `{ title?: string }` (defaults to `'Choose folder for bulk export'`)
+- **Main behavior:** Opens a native folder-picker dialog (`dialog.showOpenDialog` with `['openDirectory','createDirectory']`, `defaultPath: app.getPath('downloads')`). On success, adds the chosen path to the session-scoped `_approvedDirs` Set and returns `{ success:true, dirPath }`. On cancel: `{ success:false, reason:'cancelled' }`.
+- **Handler:** `ipc-handlers.js` → `_registerFileHandlers`
+- **Producer:** —
+- **Used by:** Bulk-export file-per-pair flow (renderer picks output directory once, then writes N files via `EXPORT_FILE_TO_DIRECTORY`).
+
+### Channel: `EXPORT_FILE_TO_DIRECTORY`
+
+- **Runtime string:** `EXPORT_FILE_TO_DIRECTORY`
+- **Direction / method:** renderer → main, `invoke`
+- **Renderer payload:** `{ dirPath:string, filename:string, content:Uint8Array|ArrayBuffer|number[]|string, encoding?:string }`
+- **Main behavior:** Validates `dirPath` is absolute and present in the session-scoped `_approvedDirs` Set (populated by `PICK_DIRECTORY`). Validates `filename` does not contain slashes or `..`. Writes `path.join(dirPath, filename)` via `fs.promises.writeFile`. Returns `{ success:true, filePath }` on success. Rejects with `{ success:false, error }` on unapproved dir, bad input, EACCES, EBUSY, ENOENT, or unknown write error.
+- **Handler:** `ipc-handlers.js` → `_registerFileHandlers`
+- **Producer:** —
+- **Security note:** Defense-in-depth — only directories explicitly chosen by the user this session are writable. Prevents rogue renderer code from writing to arbitrary filesystem locations even if the sandbox or preload is compromised.
+
+### Channel: `IMPORT_FILE`
+
+- **Runtime string:** `IMPORT_FILE`
+- **Direction / method:** renderer → main, `invoke`
+- **Renderer payload:** `()` (no args)
+- **Main behavior:** `dialog.showOpenDialog`, returns `{ success, content, ext, filename }`. xlsx returned as base64; json/csv as utf-8.
+- **Handler:** `ipc-handlers.js` → `_registerFileHandlers`
+- **Producer:** —
+
+### Channel: `OPEN_REPORT`
+
+- **Runtime string:** `OPEN_REPORT`
+- **Direction / method:** renderer → main, `invoke`
+- **Renderer payload:** `{ htmlContent }`
+- **Main behavior:** Writes to `os.tmpdir()`, opens new sandboxed `BrowserWindow` (1400×900), unlinks tmp file on close.
+- **Handler:** `ipc-handlers.js` → `_registerFileHandlers`
+- **Producer:** —
+
+### Channel: `REGISTER_BLOB`
+
+- **Runtime string:** `REGISTER_BLOB`
+- **Direction / method:** renderer → main, `invoke`
+- **Renderer payload:** `{ blobId, base64, mimeType }`; `blobId` must match `^[^:]+:[^:]+$` (i.e. `comparisonId:keyframeId`)
+- **Main behavior:** Inserts into `protocol-handler.js` LRU. Returns `{ success }`.
+- **Handler:** `ipc-handlers.js` → `_registerBlobHandlers`
+- **Producer:** —
+
+### Channel: `UNREGISTER_BLOBS_BY_COMPARISON`
+
+- **Runtime string:** `UNREGISTER_BLOBS_BY_COMPARISON`
+- **Direction / method:** renderer → main, `invoke`
+- **Renderer payload:** `comparisonId` (string)
+- **Main behavior:** Deletes every key that startsWith `comparisonId:`. Returns `{ success, removed }`.
+- **Handler:** `ipc-handlers.js` → `_registerBlobHandlers`
+- **Producer:** —
+
+### Channel: `GET_VERSION`
+
+- **Runtime string:** `GET_VERSION`
+- **Direction / method:** renderer → main, `invoke`
+- **Renderer payload:** `()`
+- **Main behavior:** Returns `app.getVersion()` (string).
+- **Handler:** `ipc-handlers.js` → `_registerMetaHandlers`
+- **Producer:** —
+
+### Channel: `GET_PERF_METRICS`
+
+- **Runtime string:** `GET_PERF_METRICS`
+- **Direction / method:** renderer → main, `invoke`
+- **Renderer payload:** `()`
+- **Main behavior:** Returns `{ success:true, metrics, timestamp }` from `playwrightManager.getPerformanceSnapshot()`.
+- **Handler:** `ipc-handlers.js` → `_registerMetaHandlers`
+- **Producer:** —
+
+### Channel: `CANCEL_OPERATION`
+
+- **Runtime string:** `CANCEL_OPERATION`
+- **Direction / method:** renderer → main, `invoke`
+- **Renderer payload:** `{ operationId, kind }` (renderer sends `kind:'compare'\|'extract'`; main reads only `operationId`)
+- **Main behavior:** Sets `_cancelRegistry.get(operationId).cancelled = true`. Returns `{ acknowledged: true }`.
+- **Handler:** `ipc-handlers.js` → `_registerCancelHandlers`
+- **Producer:** —
+
+### Channel: `COMPARISON_PROGRESS`
+
+- **Runtime string:** `COMPARISON_PROGRESS`
+- **Direction / method:** main → renderer, `webContents.send`
+- **Payload:** `{ label, pct, operationId }`
+- **Main behavior:** Pushed during `runComparison`; consumer is `compare-workflow.js` (single-pair compare workflow only — bulk uses `BULK_PROGRESS`).
+- **Handler:** —
+- **Producer:** `ipc-handlers.js _registerComparisonHandlers` (via `_pushToWindow`)
+
+### Channel: `EXTRACTION_PROGRESS`
+
+- **Runtime string:** `EXTRACTION_PROGRESS`
+- **Direction / method:** main → renderer, `webContents.send`
+- **Payload:** `{ label, pct, operationId }`
+- **Main behavior:** Pushed during `runExtraction` for the single-extract workflow. The bulk runner does **not** emit on this channel — it pipes per-pair extraction progress through `BULK_PROGRESS` instead.
+- **Handler:** —
+- **Producer:** `ipc-handlers.js _registerExtractionHandlers`
+
+### Channel: `OPERATION_CANCELLED`
+
+- **Runtime string:** `OPERATION_CANCELLED`
+- **Direction / method:** main → renderer, `webContents.send`
+- **Payload (would be):** `{ operationId, … }`
+- **Main behavior:** **Dead code.** Channel constant defined; bridged by `preload.js` as `onOperationCancelled`. No `webContents.send(IPC.OPERATION_CANCELLED, …)` exists anywhere in `src/main/`. Cancellation is signaled by the invoke return `{ cancelled:true }` and reconciled in `compare-workflow.js` / `report-manager.js`.
+- **Handler:** —
+- **Producer:** **none**
+
+### Channel: `SET_WINDOW_TITLE`
+
+- **Runtime string:** `SET_WINDOW_TITLE`
+- **Direction / method:** renderer → main, `send` (one-way)
+- **Renderer payload:** string title
+- **Main behavior:** `BrowserWindow.fromWebContents(event.sender)?.setTitle(title)`. Listener registered once (idempotent guard at `index.js:155-161`).
+- **Handler:** `index.js`
+- **Producer:** —
+
+### Channel: `SHOW_CONTEXT_MENU`
+
+- **Runtime string:** `show-context-menu`
+- **Direction / method:** renderer → main, `send`
+- **Renderer payload:** `{ reportId }` **or** `{ bulkJobId }` (the listener in `index.js:163-198` branches on which key is present; `bulkJobId` produces a single "Delete this bulk run" item that pushes `CONTEXT_ACTION` with `{ action:'deleteBulkJob', bulkJobId }`; `reportId` produces the standard 7-item report menu).
+- **Main behavior:** Builds a native `Menu` from the appropriate template and `popup()`s. Item clicks call `event.sender.send(CH.CONTEXT_ACTION, payload)`.
+- **Handler:** `index.js`
+- **Producer:** —
+
+### Channel: `CONTEXT_ACTION`
+
+- **Runtime string:** `context-action`
+- **Direction / method:** main → renderer, `webContents.send`
+- **Payload:** `{ action: 'setBaseline'|'compare'|'export'|'delete'|'deleteBulkJob', format?:'json'|'excel'|'csv', reportId?, bulkJobId? }`
+- **Main behavior:** Pushed when context menu item clicked.
+- **Handler:** —
+- **Producer:** `index.js` (per item click)
+
+### Channel: `MENU_ACTION`
+
+- **Runtime string:** `menu-action`
+- **Direction / method:** main → renderer, `webContents.send`
+- **Payload:** string action (currently only `'toggle-sidebar'`)
+- **Main behavior:** Pushed by application-menu items.
+- **Handler:** —
+- **Producer:** `index.js`
+
+### Channel: `APP_NOTIFICATION`
+
+- **Runtime string:** `APP_NOTIFICATION`
+- **Direction / method:** main → renderer, `webContents.send`
+- **Payload (would be):** `{ id?, tier, title, body?, durationMs?, dedupeKey? }`
+- **Main behavior:** **Dead code.** Bridged by `preload.js`, consumed by `app.js:88-101` to forward into `dispatchEnqueue`. No producer in `src/main/`.
+- **Handler:** —
+- **Producer:** **none**
+
+**Sender preconditions** (what the renderer must guarantee before invoking):
+
+- `START_COMPARISON`: `baselineElements` and `compareElements` must each be non-empty arrays loaded from IDB before invocation. `playwright-manager.js` throws `"Baseline elements array is empty …"` otherwise.
+- `EXTRACT_ELEMENTS`: `url` must be a navigable URL; `playwright-manager.js` calls `page.goto(url, { waitUntil: 'load', timeout: 60000 })`.
+- `START_COMPARISON` / `EXTRACT_ELEMENTS`: `operationId` must be a string the renderer keeps a reference to until cancellation is no longer possible. `_cancelRegistry` is keyed on this id.
+- `BULK_START_JOB`: every entry in `pairs[]` must already be the dedup-resolved row (`dedupedSides` populated) and the renderer must call `_provideDedupedElementsToMain(jobId, pairs)` immediately after the invoke returns success — otherwise reused-side waits inside the bulk runner time out after 10 s with `errorCode:'STORAGE_DEGRADED'`.
+- `BULK_PROVIDE_ELEMENTS`: must arrive while the job entry still exists in `_bulkJobs` (i.e. before `cleanupJob` / cancel). Late deliveries are rejected with `{ accepted:false, error:'Bulk job not found: …' }`.
+- `REGISTER_BLOB`: `blobId` must match `^[^:]+:[^:]+$` exactly; rejected otherwise.
+- `EXPORT_HTML`/`EXPORT_FILE`/`OPEN_REPORT`: payload `htmlContent` / `data` is serialized over IPC; treat large payloads as expensive.
+- `EXPORT_FILE_TO_DIRECTORY`: `dirPath` must have been approved by a prior successful `PICK_DIRECTORY` call in the same renderer session; `filename` must not contain path separators or `..`.
+- `MENU_ACTION` / `CONTEXT_ACTION` / `APP_NOTIFICATION` / `OPERATION_CANCELLED`: renderer must not assume any of these will arrive — the first two are produced; the latter two are not.
+
+---
+
+## 4. IndexedDB Schema
+
+Database name: `ui_comparison_db`. **Current version: `9`.** All constants in
+`src/infrastructure/idb-repository.js:6-26`. Single connection per renderer
+process; opened lazily by `IDBRepository.#getDB()`.
+
+### 4.1 Object stores and indexes
+
+#### Store: `reports`
+
+- **Constant:** `STORE_REPORTS`
+- **keyPath:** `id`
+- **Created in:** `buildReportStores` (v1)
+- **Indexes:**
+  - `by_timestamp` → `timestamp`, not unique
+  - `by_url` → `url`, not unique
+  - `by_url_ts` → `['url','timestamp']`, not unique
+  - `by_bulkJobId` → `bulkJobId`, not unique (added v9)
+  - `by_extractionKey` → `extractionKey`, not unique (added v9)
+- **Owner of writes:** `IDBRepository.saveReport`
+- **Eviction:** `_writeReportWithEviction` counts `total - byBulkJobId.count()` and applies `storage.maxReports = 50` (`config/defaults.js:242`) **only against non-bulk rows**. Cursor walk skips any row whose `bulkJobId != null`.
+
+#### Store: `elements`
+
+- **Constant:** `STORE_ELEMENTS`
+- **keyPath:** `reportId`
+- **Created in:** `buildReportStores` (v1)
+- **Indexes:** none
+- **Owner of writes:** `IDBRepository.#writeReportWithEviction`
+
+#### Store: `comparisons`
+
+- **Constant:** `STORE_COMPARISONS`
+- **keyPath:** `id`
+- **Created in:** `buildComparisonStores` (v2)
+- **Indexes:**
+  - `by_pair` → `pairKey`, **unique**
+  - `by_timestamp` → `timestamp`, not unique
+  - `by_baseline` → `baselineId`, not unique
+  - `by_compare` → `compareId`, not unique
+  - `by_triple` → `['baselineId','compareId','mode']`, **unique** (added v5)
+  - `by_bulkJobId` → `bulkJobId`, not unique (added v9)
+- **Owner of writes:** `IDBRepository.saveComparison`
+- **Eviction:** `MAX_COMPARISONS = 20`, applied to non-bulk rows only by the same total-minus-bulk subtraction trick.
+
+#### Store: `comparison_diffs`
+
+- **Constant:** `STORE_COMP_DIFFS`
+- **keyPath:** `comparisonId`
+- **Created in:** `buildComparisonStores` (v2)
+- **Indexes:** none
+- **Owner of writes:** `IDBRepository.#evictAndWrite`
+
+#### Store: `comparison_summary`
+
+- **Constant:** `STORE_COMP_SUMMARY`
+- **keyPath:** `comparisonId`
+- **Created in:** `buildAuxStores` (v4, guarded)
+- **Indexes:**
+  - `by_timestamp` → `timestamp`, not unique
+- **Owner of writes:** `IDBRepository.#evictAndWrite`
+
+#### Store: `visual_blobs`
+
+- **Constant:** `STORE_VISUAL_BLOBS`
+- **keyPath:** `key` (format `comparisonId:keyframeId` after v7)
+- **Created in:** `buildAuxStores` (v4, guarded)
+- **Indexes:**
+  - `by_comparisonId` → `comparisonId`, not unique
+  - `by_timestamp` → `timestamp`, not unique
+- **Owner of writes:** `IDBRepository.saveVisualBlob`
+
+#### Store: `operation_log`
+
+- **Constant:** `STORE_OP_LOG`
+- **keyPath:** `id`
+- **Created in:** `buildAuxStores` (v4, guarded)
+- **Indexes:**
+  - `by_status` → `status`, not unique
+  - `by_timestamp` → `timestamp`, not unique
+- **Owner of writes:** WAL machinery (`#writeWalEntry`/`#completeWalEntry`/`#failWalEntry`/`#incrementWalEntry`)
+
+#### Store: `visual_keyframes`
+
+- **Constant:** `STORE_VISUAL_KEYFRAMES`
+- **keyPath:** `id`
+- **Created in:** `upgradeToV6`
+- **Indexes:**
+  - `by_session` → `sessionId`, not unique
+- **Owner of writes:** `IDBRepository.saveVisualKeyframe`
+
+#### Store: `visual_element_rects`
+
+- **Constant:** `STORE_VISUAL_ELEMENT_RECTS`
+- **keyPath:** `id`
+- **Created in:** `upgradeToV6`
+- **Indexes:**
+  - `by_session` → `sessionId`, not unique
+  - `by_session_element` → `['sessionId','elementKey']`, not unique
+- **Owner of writes:** `IDBRepository.saveVisualElementRects` (batch) / `saveVisualElementRect`
+
+#### Store: `app_meta`
+
+- **Constant:** `STORE_APP_META`
+- **keyPath:** `key`
+- **Created in:** `upgradeToV8` (guarded)
+- **Indexes:** none
+- **Owner of writes:** `consumeV5UpgradeDataClearedNotice`; the v5 upgrade `complete` listener
+
+#### Store: `bulk_jobs` (v9)
+
+- **Constant:** `STORE_BULK_JOBS`
+- **keyPath:** `id`
+- **Created in:** `upgradeToV9`
+- **Indexes:**
+  - `by_createdAt` → `createdAt`, not unique
+  - `by_status` → `status`, not unique
+- **Owner of writes:** `IDBRepository.saveBulkJob` (with bulk-job retention enforcement, see below) and `updateBulkJob`.
+- **Retention:** `BULK_MAX_RETAINED_JOBS = 10` (`idb-repository.js:22`). On save, if `count() >= 10`, the oldest jobs (by `by_createdAt` ascending, excluding the job being written) are cascade-deleted via `#deleteBulkJobCascadeInner`, which removes the job row plus every `bulk_pairs` / `reports` / `elements` / `comparisons` / `comparison_diffs` / `comparison_summary` / `visual_blobs` / `visual_keyframes` / `visual_element_rects` row tagged with the same `bulkJobId` (and every visual artifact for the deleted comparisons).
+
+#### Store: `bulk_pairs` (v9)
+
+- **Constant:** `STORE_BULK_PAIRS`
+- **keyPath:** `id` (a pre-allocated UUID, separate from `pairIndex`)
+- **Created in:** `upgradeToV9`
+- **Indexes:**
+  - `by_jobId` → `jobId`, not unique
+  - `by_jobId_status` → `['jobId','status']`, not unique
+  - `by_jobId_pairIndex` → `['jobId','pairIndex']`, not unique
+- **Owner of writes:** `IDBRepository.saveBulkPair` (initial state `'queued'`), `updateBulkPair` (in-place patch by `pairId`).
+
+### 4.2 Upgrade ladder
+
+Source: `runUpgrade(db, upgradeTx, oldVersion)` at `idb-repository.js:217-226`. Execution order is the lexical order of the `if` statements:
+
+| Order | Block | Trigger | Action |
+|---|---|---|---|
+| 1 | `buildReportStores` | `oldVersion < 1` | Create `reports` (with 3 indexes — `by_bulkJobId`/`by_extractionKey` are added later in v9) and `elements`. |
+| 2 | `buildComparisonStores` | `oldVersion < 2` | Create `comparisons` (4 indexes — `by_bulkJobId` added later in v9) and `comparison_diffs`. |
+| 3 | `buildAuxStores` | `oldVersion < 4` | Conditionally create `comparison_summary`, `visual_blobs`, `operation_log` if absent. |
+| 4 | `upgradeToV8` | `oldVersion < 8` | Conditionally `db.createObjectStore('app_meta', { keyPath: 'key' })`. |
+| 5 | `upgradeToV5` | `oldVersion < 5` | (a) Add `by_triple` unique index on `comparisons`; (b) cursor-walk `reports` to log a `PRE_UPGRADE_V5_BACKUP` row in `operation_log`; (c) clear `reports`, `elements`, `comparisons`, `comparison_diffs`, `comparison_summary`; (d) attach a `complete`-listener on `upgradeTx` that opens a fresh `[app_meta]` r/w tx and writes `{ key:'v5_upgrade_data_cleared_notice', pending:true, at:Date.now() }`. |
+| 6 | `upgradeToV6` | `oldVersion < 6` | Create `visual_keyframes` and `visual_element_rects` with their indexes. |
+| 7 | `upgradeToV7` | `oldVersion < 7` | Cursor-walk `visual_blobs`; for any record whose key lacks `:` and has `comparisonId`, delete and re-insert with key `${comparisonId}:${oldKey}`. |
+| 8 | `upgradeToV9` | `oldVersion < 9` | Create `bulk_jobs` (with `by_createdAt`/`by_status`) and `bulk_pairs` (with `by_jobId`/`by_jobId_status`/`by_jobId_pairIndex`). On the existing `reports` store add `by_bulkJobId` and `by_extractionKey`. On `comparisons` add `by_bulkJobId`. All steps are guarded with `objectStoreNames.contains` / `indexNames.contains`. |
+
+**The v5/v8 ordering anomaly, mechanically.** v8 creates `app_meta`; v5
+attaches a `complete` listener that, after the upgrade transaction commits,
+opens a *new* readwrite transaction on `[app_meta]` and writes the data-cleared
+notice. By placing the v8 block before the v5 block in `runUpgrade`, `app_meta`
+is created synchronously on the upgrade tx before v5 even runs; both schema
+additions commit atomically when the upgrade tx auto-commits. The v5 listener
+also guards itself with `if (!db.objectStoreNames.contains(STORE_APP_META)) return`
+(`idb-repository.js:143`) — so even without the ordering, a missing
+`app_meta` would cause a silent skip rather than a crash. The current order is
+defensive; the listener guard makes it strictly redundant under IDB's
+all-or-nothing version-change semantics. See §[Verification answer](#verification-answer-v5v8-ordering) at the end.
+
+### 4.3 Bounded sizes
+
+- `MAX_COMPARISONS = 20` (`idb-repository.js:21`). Enforced in `#evictAndWrite` (lines 579-628): on each save, count `total = comp.count()`, `bulk = comp.index('by_bulkJobId').count()`, project `(total - bulk) + (isBulk ? 0 : 1)`, and if `> 20` evict the oldest non-bulk rows by `by_timestamp` ascending until the projection fits. Bulk-tagged rows are skipped during the cursor walk (`if (cursor.value?.bulkJobId != null) cursor.continue()`).
+- `storage.maxReports = 50` (`config/defaults.js:242`). Enforced in `_writeReportWithEviction` / `_evictReports` by the same total-minus-bulk pattern.
+- `BULK_MAX_RETAINED_JOBS = 10` (`idb-repository.js:22`). Enforced in `#saveBulkJobInner` via `_collectOldestBulkJobIds` + `#deleteBulkJobCascadeInner`.
+
+---
+
+## 5. WAL & Circuit Breaker State Machines
+
+Both live inside `IDBRepository` (`src/infrastructure/idb-repository.js`).
+
+### 5.1 Write-Ahead Log
+
+Each write helper that goes through the WAL takes the shape:
+
+```
+crypto.randomUUID() → logId
+#writeWalEntry(db, logId, OPERATION, payload)   // status=PENDING
+<perform the actual store mutation in its own tx>
+#completeWalEntry(db, logId)                    // delete the WAL row
+```
+
+Operations actually wrapped in WAL (verified by grep):
+
+**`SAVE_REPORT`**
+- **Wrapper:** `#saveReportInner`
+- **WAL payload:** `{ report }`
+- **Replay behavior in `applyPendingOperations`:** Replayable; calls `#writeReportWithEviction` again. Bounded retry (3 attempts).
+
+**`SAVE_COMPARISON`**
+- **Wrapper:** `#saveComparisonInner`
+- **WAL payload:** `{ meta, slimResults }`
+- **Replay behavior:** Replayable; calls `#writeComparisonWithEviction` again. Bounded retry.
+
+**`SAVE_VISUAL_BLOB`**
+- **Wrapper:** `#saveVisualBlobInner`
+- **WAL payload:** `{ key, comparisonId }` (**metadata only — no `Blob` bytes**)
+- **Replay behavior:** **Never replayed.** `applyPendingOperations:687-691` matches this operation first and immediately calls `#failWalEntry`. The original `Blob` is in-process memory that does not survive a renderer restart, so replay is impossible.
+
+**`SAVE_BULK_JOB` / `SAVE_BULK_PAIR`**
+- **Wrapper:** `#saveBulkJobInner` / `#saveBulkPairInner`
+- **WAL payload:** `{ job }` / `{ pair }`
+- **Replay behavior:** **Not in the known-replayable set.** `applyPendingOperations:693-699` only treats `SAVE_REPORT` and `SAVE_COMPARISON` as replayable; everything else is force-failed with `unknown operation type`. In practice the only way these entries can stay PENDING is a crash between `#writeWalEntry` and `#completeWalEntry` for a bulk row — survival of the bulk job itself is governed by `detectAndOfferResume` (which scans `bulk_jobs.status === 'running'`, not the WAL).
+
+**any other operation string**
+- **Replay behavior:** `applyPendingOperations:693-699` logs `unknown operation type` and marks FAILED.
+
+#### State diagram (per WAL entry)
+
+```
+                +---------+
+                |  none   |
+                +----+----+
+                     |  #writeWalEntry()
+                     v
+                +---------+
+                | PENDING |<-------------------+  (replay attempt loop)
+                +----+----+                    |
+        success   /  |  \   crash / restart    |
+                 /   |   \                     |
+                v    |    v                    |
+          +--------+ | +-----------+           |
+          |COMPLETE|<+ | replay #N |-----------+
+          | (deleted)| +-----+-----+
+          +--------+        |
+                            |  replayCount >= 3
+                            v
+                       +--------+
+                       | FAILED |
+                       +--------+
+                       (retained;
+                        emits 'storage-degraded' / WAL_REPLAY_EXHAUSTED)
+```
+
+Key transitions:
+
+- `PENDING → COMPLETE`: `#completeWalEntry` *deletes* the row. There is no literal "COMPLETE" state on disk; absence is success.
+- `PENDING → FAILED`:
+  1. After 3 replay attempts (`(entry.replayCount ?? 0) >= 3` at `applyPendingOperations:701`), `#failWalEntry` flips status and the renderer dispatches `CustomEvent('storage-degraded', { detail: { reason: 'WAL_REPLAY_EXHAUSTED', entryId, operation } })`.
+  2. Immediately on `SAVE_VISUAL_BLOB`.
+  3. On any unknown operation (including `SAVE_BULK_JOB` / `SAVE_BULK_PAIR`).
+- `PENDING → PENDING (replayCount+1)`: `#incrementWalEntry` bumps `replayCount` and `lastAttempt` *before* attempting the replay. If the inner write throws, the entry stays PENDING with the bumped count and is retried on next `applyPendingOperations` (i.e. next renderer start).
+
+`applyPendingOperations` is invoked at boot from
+`src/renderer/application/report-manager.js` —
+`await storage.applyPendingOperations();` — as the first awaited statement
+inside `initializeApp(statusBar)`. `initializeApp` is itself
+called from `src/renderer/app.js:381` (`await initializeApp(_statusBar)`)
+during the renderer's startup sequence, before the report list is hydrated
+and before `detectAndOfferResume` runs.
+
+### 5.2 Circuit breaker
+
+Three-strike breaker over the entire write queue (`#enqueue`,
+`#handleWriteFailure`, `#consecutiveFailures`, `#circuitOpen`).
+
+**State: Closed**
+- **Entered when:** App start (`#consecutiveFailures = 0`, `#circuitOpen = false`).
+- **Effect:** `#enqueue` accepts work; failures bump counter; success resets counter to 0.
+
+**State: Open**
+- **Entered when:** `#consecutiveFailures >= CIRCUIT_BREAKER_LIMIT` (=3).
+- **Effect:** `#enqueue` rejects every subsequent write with `Error("IDB write queue halted after 3 consecutive failures")`. Renderer dispatches `CustomEvent('storage-degraded', { detail: { reason:'CIRCUIT_OPEN', consecutiveFailures, limit, openedAt } })` exactly once on opening. UI installs a fatal `SystemBanner.error` (`app.js:439-442`). **If a bulk job is currently running, the same handler also dispatches `BULK_JOB_STORAGE_DEGRADED` and invokes `cancelBulkJob(jobId)` (`app.js:444-455`).**
+
+**(No half-open state.)** The breaker has no timer or probe to close itself. Recovery requires reloading the renderer process.
+
+`#handleWriteFailure` is invoked from `#enqueue` for both thrown errors and
+returned `{ success:false }` shapes. Reads
+(`loadReports`, `loadComparisonByPair`, `loadBulkJob`, …) are not counted —
+they bypass the queue and call `performanceMonitor.wrap` directly.
+
+---
+
+## 6. Element Capture Pipeline
+
+Every step is anchored to a function. The pipeline runs end-to-end inside
+`runExtraction` (`src/main/playwright-manager.js`) for extraction
+and inside `runComparison` → `captureVisualDiffs` → `executeTabCapture`
+for visual diffing.
+
+### 6.1 Extraction (`runExtraction`)
+
+**1. Acquire / launch browser** (`playwright-manager.js:105-150`)
+`getBrowser(descriptorOrType)` — accepts either a string (`'chromium'`/`'firefox'`/`'webkit'`) or a descriptor `{ browserType, channel, executablePath }`. Cache key is `${browserType}:${channel ?? executablePath ?? 'managed'}`, so a Playwright-managed Chromium and a system Chrome are distinct cached browsers. Launch passes `headless:true`; if `channel` is set it takes precedence (Playwright will resolve a canonical install), else `executablePath` is forwarded. If launch raises a "DevTools remote debugging is disallowed"-shaped error, `getBrowser` rethrows with `code:'BROWSER_POLICY_BLOCKED'` and a friendly message instructing the user to switch to Playwright Chromium. See §13 for descriptor source.
+
+**2. New context + page** — `browser.newContext({ serviceWorkers:'block', bypassCSP: true })`, `context.newPage()`. `bypassCSP` is required to allow `addScriptTag` of the extractor bundle on sites with strict CSP.
+
+**3. Navigate** — `page.goto(url, { waitUntil:'load', timeout:60_000 })`.
+
+**4. Build wait selector** — `buildSelectorFromFilters(filters)` then optional best-class probe — yields a single CSS selector that matches the largest population among the comma-separated filter classes, or null. Bulk pairs assemble `filters` from `filterClass`/`filterId`/`filterTag` row cells.
+
+**5. Readiness gate** — `page.waitForSelector(waitSelector, { timeout:30_000, state:'visible' })` then a custom `waitForFunction` polling descendant counts every 750 ms until they stabilize (timeout 30 s). Without a selector: `waitForLoadState('networkidle', 15_000)` then `>100` elements + `readyState==='complete'` (10 s).
+
+**6. Inject extractor** — `page.addScriptTag({ content: getExtractorBundleSource() })` — sets `window.__uiCompare`. The source is read from the first existing path among `process.resourcesPath/extractor-bundle.js`, `mainDistributionDir/extractor-bundle.js`, `__dirname/extractor-bundle.js`, `process.cwd()/dist/extractor-bundle.js`. Cached in module-level `_extractorBundleSource`.
+
+**7. Run extractor** — `page.evaluate(({ filters, cfg }) => window.__uiCompare.extractWithConfig(filters, cfg), { filters, cfg: configOverrides })` — yields `report` object: `{ elements:[…], totalElements, … }`. Override applied: `extraction.batchHardCapMs:30, maxElements:10000, skipInvisible:true, stabilityWindowMs:500, hardTimeoutMs:20000`.
+
+**8. Stamp + return** — `report.id = crypto.randomUUID(); report.duration = …; report.engine = browserDescriptor.browserType ?? 'chromium'; report.platform = process.platform`. The renderer further stamps `report.bulkJobId` and `report.extractionKey` on bulk-side persistence (in `_persistPairResult`).
+
+**9. Cleanup** — `page.close()`, `context.close()` in `finally`.
+
+**Cancellation polling.** `isCancelled?.()` is checked at lines 1029, 1096,
+1116, 1131 (single-extract path) and inside the bulk-runner's per-pair
+extraction wrappers (which OR three flags: per-side opId, per-pair opId, and
+the master `isMasterCancelled` from `_bulkJobs.has(jobId)`). Each call throws
+`Object.assign(new Error('cancelled'), { code:'CANCELLED', name:'CancelledError' })`
+if any flag is set.
+
+**Engine-specific freeze/screenshot behaviour.** The capture pipeline branches on `attachSession`'s `freezeStrategy` (`playwright-manager.js:168-188`), which is `'cdp'` if the engine's profile (`src/config/browser-capability-profile.js`) declares `cdpAvailable:true` (chromium only) and `'shim'` otherwise (firefox, webkit). On the shim path `freezePage` patches `requestAnimationFrame`, `setInterval`, and `setTimeout` (only `0`/null delays survive), and injects a `<style id="vdiff-freeze-styles">` block setting `animation-play-state:paused !important; transition-duration:0s !important; scroll-behavior:auto !important`. Screenshot mime-type is `image/webp` on chromium (CDP `Page.captureScreenshot` with quality 85) and `image/png` on firefox/webkit (Playwright `page.screenshot`). DPR is overridden to 2 only when `deviceScaleFactorOverride:true` (chromium), else 1. WebKit has `requiresLayoutWarmup:true` in its profile (consumed by the capture pipeline before measurement).
+
+**Screenshot phase fallback.** `runComparison` (`playwright-manager.js:1504-1559`) wraps the screenshot phase in a try/catch. If the descriptor was WebKit and the error message matches `/Page\.snapshotRect|snapshot/i`, the entire screenshot phase is retried with `{ browserType:'chromium', channel:null, executablePath:null }`, and a `{ kind:'screenshot-engine-fallback', from:'webkit', to:'chromium', reason }` entry is appended to **`visualData.devToolsWarnings`** (i.e. the result's `visualDiffs.devToolsWarnings` array — **not** a top-level `result.fallbackWarnings`).
+
+### 6.2 Visual diff capture (`captureVisualDiffs` → `executeTabCapture`)
+
+Steps 1–18 unchanged from previous revisions:
+1. `extractModifiedElements(comparisonResult)`
+2. `buildSelectorPairs(elements, role)`
+3. Open new context+pages, navigate both URLs (parallel, networkidle 15 s)
+4. Per role: `attachSession` (CDP for chromium, shim for firefox/webkit)
+5. Read viewport, detect DevTools (`heightGap > 200 px` triggers
+   `Emulation.setDeviceMetricsOverride` bypass)
+6. Read DPR, lock scrollbar, apply device metrics override
+7. Inject `vdiff-freeze-styles` `<style>` and patch scroll APIs
+8. Hide every `position:fixed`/`sticky` element (except diff set + ancestors/descendants)
+9. Scroll to top and settle
+10. Measure document-relative rects
+11. `groupIntoKeyframes` (`core/comparison/keyframe-grouper.js`)
+12. Per keyframe: `bringToFront`, scroll-and-settle, scroll verify (≤5 px,
+    ≤2 retries × 400 ms), remeasure rects, freeze JS, capture screenshot,
+    unfreeze
+13. Read pseudo-element styles (`::before`/`::after`)
+14. `buildManifestFromRemeasured` (clip below-fold to viewport)
+15. `attachPseudoDataToManifest`
+16. `buildElementRectRecords` (one per element-role)
+17. `safeRestorePage` + `detachSession` (unlock scrollbar, restore fixed,
+    restore animations, scroll 0, clear metrics override)
+18. `buildDiffMap` (baseline + compare manifests + per-element diffs)
+
+**Constants** (top of `playwright-manager.js`):
+
+| Name | Value |
+|---|---|
+| `CAPTURE_SCALE_FACTOR` | `2` |
+| `CAPTURE_QUALITY` | `85` (webp) |
+| `FREEZE_STYLE_ID` | `'vdiff-freeze-styles'` |
+| `SUPPRESS_ATTR` | `'data-vdiff-suppress'` |
+| `SCROLL_SETTLE_TIMEOUT_MS` | `800` |
+| `SCROLL_VERIFY_RETRY_MAX` | `2` |
+| `SCROLL_VERIFY_RETRY_MS` | `400` |
+| `DEVTOOLS_HEIGHT_THRESHOLD_PX` | `200` |
+| `BROWSER_CHROME_HEIGHT_PX` | `88` |
+| `CDP_COMMAND_TIMEOUT_MS` | `5_000` |
+| `getScrollTolerance(...)` | always returns `5` px (kept switch-shaped for future per-engine tuning) |
+
+---
+
+## 7. Element Matching Pipeline
+
+Source: `src/core/comparison/matcher.js`. Entry: `ElementMatcher.matchElements(baseline, compare)` (async generator).
+
+The pipeline is **stateful**: two `Set<index>` instances — `usedBaseline` and
+`usedCompare` — accumulate matched indices across all phases. Every phase
+takes the same `(baseline, compare, usedBaseline, usedCompare, …)` signature
+and reads current state to skip already-matched indices. **Phase N+1 sees the
+same `baseline` and `compare` arrays as phase N, but only operates on indices
+not yet in `usedBaseline`/`usedCompare`** — the "input contract" is the
+residual mask, not a fresh array.
+
+Each phase emits frames `{type:'progress', label, pct}` via `runChunkedPass`,
+and the final frame is `{type:'result', payload}`. `Comparator.compare`
+(`comparator.js`) consumes these.
+
+### Phase ladder (in execution order)
+
+**1. Test-attribute anchoring**
+- For every attribute in `comparison.matching.anchorAttributes` (`data-testid`, `data-test`, `data-qa`, `data-cy`, `data-automation-id`, `data-key`, `data-record-id`, `data-component-id`, `data-row-key-value` — `defaults.js:113-117`), build a multi-map per side and pair indices that share the attribute value 1:1.
+- Confidence `1.00`. If a value appears N×M (N ≠ M), unresolved members fall through.
+
+**2. Sequence alignment**
+- Linear two-pointer walk over `(baseline, compare)`, skipping already-matched indices. At each position, look ahead `lookAheadWindow=5` for an HPID-suffix-equal match (`segmentsEqual` over the last `suffixDepth=5` HPID segments). In-sequence pair → `0.99`; off-by-skip pair → `0.85`.
+
+**3. HPID suffix realignment**
+- Build a suffix index over remaining `compare` elements (key = last `suffixDepth` HPID segments); for each remaining baseline orphan, look up by suffix. Disambiguates near-duplicates by ancestor compatibility via `passesIdentityTriad` (tag, role, classlist intersection). Confidence `0.85`. Ambiguous matches (≥2 candidates within `ambiguityWindow=0.12`) are dropped.
+
+**4. Legacy strategy pool** (residual passing, in this order)
+- For each strategy in `defaults.js:120-126` that is `enabled`: `absolute-hpid` (0.95), `id` (0.90), `css-selector` (0.80), `xpath` (0.78), `position` (0.30). After each strategy, `mutableBaseOrphans = passResult.orphans` and `mutableCmpOrphans` is re-derived from `usedCompare`.
+- The `position` strategy uses `positionTolerance=50` px and `minMatchThreshold=0.70` overlap.
+
+**Scoring formula.** Pairs below `comparison.matching.confidenceThreshold = 0.5` (`defaults.js:136`) are discarded before being added to `allMatches`. There is no probability combination; the strategy whose classifier wins owns the score.
+
+**Final output contract.** The `result` frame payload contains:
+- `matching` — `{ totalMatched, unmatchedBaseline, unmatchedCompare, addedCount, removedCount, modifiedCount, matchRate, totalElements }`.
+- `comparison` — `{ summary, results }` with per-pair `annotatedDifferences` from the `PropertyDiffer`.
+- `unmatchedElements` — `{ baseline:[…], compare:[…] }`.
+
+---
+
+## 8. CSS Diff Engine
+
+Source: `src/core/comparison/differ.js`, `severity-analyzer.js`. Inputs: the
+matched element pairs from §7 plus computed-style maps captured in §6.
+
+### 8.1 Tracked properties
+
+Driven by `extraction.cssProperties` (`defaults.js:54-78`, ~70 properties)
+during capture, and constrained at compare-time by
+`comparison.modes.<mode>.compareProperties`:
+
+- **dynamic mode**: explicit list (`defaults.js:188-204`).
+- **static mode**: `compareProperties: null` → compare all captured properties; `compareTextContent: true`.
+
+### 8.2 Tolerances (mode-specific, sourced verbatim)
+
+| Tolerance | static | dynamic | Top-level fallback |
+|---|---|---|---|
+| `color` | `5` | `8` | `5` |
+| `size` | `3` | `5` | `3` |
+| `opacity` | `0.01` | `0.05` | `0.01` |
+
+The differ resolves the active tolerance set via
+`comparison.modes[mode].tolerances` first, then falls back to
+`comparison.tolerances`.
+
+### 8.3 Diff computation
+
+For each matched pair and each tracked property: read both values, normalize
+via `src/core/normalization/`, compare using the relevant tolerance (per-channel
+ΔRGB for color, absolute pixel delta for length, absolute float for opacity,
+equality otherwise). Emit a `Difference{ property, baselineValue, compareValue, severity }`
+when out of tolerance.
+
+### 8.4 Severity classification
+
+`comparison.severity` (`defaults.js:149-163`):
+
+| Bucket | Properties |
+|---|---|
+| **critical** | `display`, `visibility`, `position`, `z-index` |
+| **high** | `width`, `height`, `max-width`, `max-height`, `min-width`, `min-height`, `color`, `background-color`, `opacity`, `font-size`, `font-family`, `font-weight` |
+| **medium** | `margin-*` (4), `padding-*` (4), `border-*-width` (4), `border-*-color` (4), `line-height`, `text-align`, `font-style` |
+| low (implicit) | everything not listed above |
+
+Severity is assigned by lookup; magnitude does not affect bucket.
+
+### 8.5 Cascade suppression (export-time)
+
+`src/core/export/export-utils/report-transformer.js`. Two property classifiers:
+
+- `INHERITABLE_PROPS`: classic CSS inheritance set (colors, fonts, line-height, letter-spacing, text-align, etc.).
+- `LAYOUT_PROPAGATION_PROPS`: properties whose change on an ancestor mechanically alters layout (display, position, width, height, flex/grid…).
+
+`walkUpToNearestDiffAncestor(absHpid, diffIndex)` walks the absolute-HPID
+path upward and, when an ancestor in the diff index has at least one diff in
+either set, marks the descendant's matching diffs as suppressed. **The walk
+uses `absoluteHpid`, not the relative HPID.** Mixing those breaks suppression
+silently.
+
+### 8.6 Normalization engine (`src/core/normalization/normalizer-engine.js`)
+
+Pipeline (in order for each element's style map):
+
+1. **Shorthand expansion** — `expandShorthands(styles)` splits shorthands
+   (border, margin, padding, background, flex, grid, etc.) into longhands.
+2. **Per-property normalization** — dispatches by property class:
+   - **Color** (11 props): `color`, `background-color`, `border-*-color` (4),
+     `outline-color`, `text-decoration-color`, `caret-color`, `column-rule-color`.
+     Normalizes named colors / hex / rgb / hsl to canonical `rgb(R, G, B)` or
+     `rgba(R, G, B, A)`.
+   - **Size** (25 props): `width`, `height`, `min-*`, `max-*`, positioning
+     (`top`/`right`/`bottom`/`left`), margin (4), padding (4), border widths (4),
+     `border-radius` variants (4), `font-size`, `line-height`, `gap`,
+     `outline-width`, `outline-offset`, `text-indent`. Units standardized,
+     values rounded to `normalization.rounding.decimals = 2`.
+   - **Font family** — dequoted on engines where
+     `requiresFontFamilyDequote = true` (Firefox, WebKit).
+   - **Font weight** — keywords to numeric (`normal`→`400`, `bold`→`700`) when
+     `requiresFontWeightCanonicalize = true` (all engines).
+   - **Box shadow** — component reorder on engines where
+     `requiresBoxShadowReorder = true` (WebKit only).
+
+**Engine-quirks routing:** `contextSnapshot.engineHint` (set during extraction
+from `report.engine`) selects the `BROWSER_NORMALIZATION_PROFILES` entry.
+
+**LRU cache:** Keyed on `(property, value, isContextDependent, context)`.
+`normalization.cache.maxEntries = 1000`, eviction policy `LRU`. Cache stats
+exposed via `getCacheStats()`.
+
+**Error handling:** Any normalization error silently returns the original value
+(no throw propagation).
+
+### 8.7 Selector engine (`src/core/selectors/selector-engine.js`)
+
+Generates CSS and XPath selectors for extracted elements.
+
+**Constants:**
+- `selectors.concurrency = 4` — max parallel element processing via `BoundedQueue`.
+- `selectors.totalTimeout = 600` ms — hard per-element timeout (`Promise.race`).
+- `selectors.css.perStrategyTimeout = 40` ms, `selectors.css.totalTimeout = 250` ms.
+- `selectors.xpath.perStrategyTimeout = 50` ms, `selectors.xpath.totalTimeout = 400` ms.
+
+**Execution model:**
+- If both `xpath.parallelExecution` and `css.parallelExecution` are `true`
+  (default): CSS and XPath generators run in parallel via `Promise.allSettled`.
+- Otherwise: CSS runs after XPath sequentially.
+- Multi-element generation uses `BoundedQueue(concurrency)` with
+  `Promise.all(promises)`. Errors per element yield `NULL_SELECTORS` (no throw).
+
+**Shadow DOM support:**
+- `buildShadowPath(element)` walks `getRootNode({ composed: false })` upward
+  to detect `ShadowRoot` boundaries. Returns array of host selectors (root
+  last) or `null` if no shadow boundaries found.
+- `buildHostSelector(host)` checks test attributes (`data-testid`, `data-test`,
+  `data-qa`, `data-cy`, `data-automation-id`) first, then `#id` (CSS-escaped),
+  then bare tag name.
+
+**`NULL_SELECTORS`:**
+```
+{ xpath:null, css:null, shadowPath:null, xpathConfidence:0, cssConfidence:0, xpathStrategy:null, cssStrategy:null }
+```
+
+---
+
+## 9. Renderer UI Architecture
+
+### 9.1 Token system
+
+`src/renderer/styles/tokens.css` is the single source of design constants.
+Categories (by prefix): `--color-*` (surface, text, border, accent,
+state-success/warning/error/info, severity-critical/high/medium/low,
+match-hi/mid/lo, scrim), `--font-*`, `--space-*`, `--radius-*`, `--shadow-*`,
+`--z-*`, `--motion-*`. Loaded by `src/renderer/index.html:10` and consumed by
+every sibling stylesheet (`base.css`, `shell.css`, `components.css`,
+`navigation.css`, `report-list.css`, `result-panel.css`, **`bulk.css`**).
+
+### 9.2 CSS Grid shell
+
+`src/renderer/index.html` defines four addressable regions inside `#app-root`:
+
+- `#system-banner-slot` — top-of-shell `SystemBanner` warnings/errors.
+- `#left-panel` — sidebar (reports list, search, filters, density cycle, resize handle).
+- `#main-content` — main area. Contains a section-nav (`#main-pane-section-nav`) with three buttons: **Extract**, **Compare**, **Bulk** (`#bulk-tab-btn`, with a status badge `#nav-section-status-bulk`). Underneath: `#section-extract`, `#section-compare`, `#section-bulk` (the latter contains `#bulk-resume-banner-slot`, `#bulk-panel-root`, and the bulk result area `#bulk-result-area` with `#bulk-results-screenshot-section` + `#bulk-result-panel-host`).
+- `#status-bar` — bottom status row.
+
+There is also a global `#toast-container` and `#modal-overlay`. **There is no
+`#command-palette` element.** Keyboard shortcuts: `/` focuses
+`#search-reports`; `e`/`c` activate the Extract/Compare sections (no `b`
+shortcut for Bulk yet — the section is reached via the nav button).
+
+### 9.3 Virtual scroll (`report-list.js` and `bulk-panel.js`)
+
+`src/renderer/components/report-list.js` renders the sidebar list with
+`OVERSCAN = 3` card-heights of buffer above and below the viewport. Recycling
+is full-fragment replacement: `_window.textContent = ''` followed by
+`_window.appendChild(frag)`.
+
+`src/renderer/components/bulk-panel.js` separately implements its own
+**variable-height virtual scroller** for the per-pair list. Row heights vary
+by status: `ROW_HEIGHT_COMPACT = 48` (queued/done/cancelled),
+`ROW_HEIGHT_ACTIVE = 64` (any in-flight phase from `ACTIVE_STATES`),
+`ROW_HEIGHT_FAILED = 72`. A binary search over the prefix-sum of row offsets
+(`_firstVisibleIndex`) finds the top render index; the panel maintains its
+own DOM-recycling loop.
+
+### 9.4 Accordion nav state machine
+
+`#section-extract`, `#section-compare`, `#section-bulk` are driven by
+`AppShell.activateSection(id)` (`src/renderer/components/app-shell.js`),
+which toggles `aria-expanded`, the `nav-section--active` /
+`nav-section--expanded` classes, and scrolls the section into view. State is
+implicit in the DOM.
+
+### 9.5 State machine
+
+`src/renderer/state.js` is a reducer over a flat object with phases
+`'idle' | 'extracting' | 'comparing' | 'cancelling' | 'done' | 'error'`.
+`dispatch(type, payload)` is synchronous and notifies a single Set of
+subscribers. The renderer subscribes once in `app.js:317-379`.
+
+**Browser-detection slice:**
+- `availableBrowsers`, `selectedBrowser`, `browserDetectionState ∈ {'idle','loading','ready','error'}`, `browserDetectionError`.
+- Actions: `BROWSER_DETECTION_STARTED`, `BROWSERS_DETECTED`, `BROWSER_DETECTION_FAILED`, `BROWSER_SELECTED`. `DISMISS_ERROR` preserves all four browser fields.
+
+**Bulk slice (added in v9 of state):**
+- `bulkParsedRows` — array of parsed rows (each carrying `valid`/`validationStatus`/`validationReason`, `resolvedBrowser`, `rowIndex`, …).
+- `bulkDetectionState` ∈ `'idle' | 'parsing' | 'parsed' | 'error'`.
+- `bulkJob` — full `BulkJobState` (see JSDoc at `state.js:3-32`):
+  ```
+  { jobId, filename, status:'running'|'parsed'|'completed'|'partial'|'failed'|'cancelled'|'interrupted',
+    totalPairs, concurrency, hostCooldownMs?, pairs:Array<BulkPairState>,
+    summary:null|{total,succeeded,failed,cancelled,deduped},
+    startedAt, completedAt, activePairIndex, viewer:null|{result,cachedAt,fromCache,compareSummaryStrip},
+    resumeOffer?:{ jobId, completedCount, totalCount },
+    storageDegraded?:boolean }
+  ```
+- `BulkPairState` per pair: `{ pairIndex, baselineUrl, compareUrl, mode, label, browser, includeScreenshots, filterClass, filterId, filterTag, deduped:'none'|'baseline'|'compare'|'both', status:'queued'|'extracting-baseline'|'extracting-compare'|'matching'|'screenshots'|'persisting'|'done'|'failed'|'cancelled', pct, operationId, baselineReportId, compareReportId, comparisonId, error, errorCode, completedAt? }`.
+- Actions: `BULK_PARSED_ROWS_SET`, `BULK_DETECTION_STATE`, `BULK_JOB_STARTED`, `BULK_PROGRESS`, `BULK_PAIR_COMPLETED`, `BULK_JOB_COMPLETE`, `BULK_JOB_CANCELLED`, `BULK_JOB_STORAGE_DEGRADED`, `BULK_JOB_LOADED`, `BULK_JOB_RESET`, `BULK_JOB_RESUMED`, `BULK_JOB_RESUME_ACCEPTED`, `BULK_JOB_RESUME_OFFERED`, `BULK_JOB_RESUME_DECLINED`, `BULK_PAIR_OPEN`, `BULK_PAIR_VIEWER_READY`, `BULK_ACTIVE_PAIR_CLEAR`. `DISMISS_ERROR` preserves the entire bulk slice.
+
+Both bulk dispatches (`BULK_JOB_COMPLETE`) and `BULK_JOB_CANCELLED` flip the
+job to a terminal state (`completed` / `failed` derived from summary;
+`cancelled` flips queued pairs to `'cancelled'`). `RESET_COMPARISON` clears
+any open bulk viewer.
+
+The renderer triggers browser detection once at boot (`app.js:405-423`) and
+**bulk-job resume detection** once at boot via `detectAndOfferResume` (after
+`initializeApp`).
+
+### 9.5a Browser selector component
+
+`src/renderer/components/browser-selector.js` mounts a `<select>` plus a
+"Retry" button into `#browser-selector-slot` (declared inside the Extract
+panel, `index.html:144`). Subscribes to `state` once in `constructor` and
+re-renders on every state change. Idle/loading: "Detecting browsers…".
+Error: "Browser detection failed" + Retry button (with
+`browserDetectionError` as `title`). Ready: lists all browsers; non-launchable
+entries are `disabled` with a tooltip from `UNAVAILABLE_REASON_LABELS`
+(`binary-not-found`, `version-mismatch`, `playwright-requires-patched-build`,
+`unsupported-os`, `devtools-blocked-by-policy`). Disabled entirely while
+`state.phase ∈ {'extracting','comparing','cancelling'}` (the `BUSY_PHASES`
+Set). Non-launchable selections are silently rejected on `change`.
+
+### 9.5b Bulk panel component
+
+`src/renderer/components/bulk-panel.js` is the third major user-facing
+component (alongside the report list and result panel). Mounted into
+`#bulk-panel-root` from `app.js:384-389`. Surfaces:
+
+- **Drop zone / file picker** for an `.xlsx` plan + a "Download template" button (calls `routeBulkDownloadTemplateClick` → `buildBulkTemplateWorkbook`).
+- **Parse summary strip** — total / valid / warning / invalid row counts.
+- **Job-controls row** — concurrency `<input type="number">` (`#bulk-concurrency`, clamped at runtime by RAM and heterogeneity), screenshots toggle (`#bulk-screenshots`), host cooldown ms (`#bulk-host-cooldown`), "Force refresh" (`#bulk-force-refresh`), Start / Cancel / Reset / Export buttons.
+- **Pair list** — variable-height virtual scroll keyed off pair status. Each row exposes a context-menu trigger (calls `electronAPI.showContextMenu({ bulkJobId })`) and an "Open" action that routes through `routeBulkPairOpenClick` to load the persisted comparison into `#bulk-result-panel-host`.
+- **Resume banner** — rendered into `#bulk-resume-banner-slot` by `bulk-workflow.js _renderResumeBanner` when boot detection finds a job stuck in `running`.
+
+The panel reads `bulk.maxConcurrency` from `defaults.js` for the upper bound
+of the concurrency control. Heterogeneous-plan detection uses the
+`_isHeterogeneousPlan(parsedRows, selectedBrowser)` helper and surfaces
+`BULK_CONCURRENCY_HETEROGENEOUS_HINT = 'Mixed browsers detected — concurrency
+limited to 1 on this machine.'` when triggered.
+
+### 9.6 Result panel data flow
+
+`src/renderer/components/result-panel.js` (`createResultPanel(container)`).
+Mounted twice in `app.js:298-308`: once into `#compare-results` (the
+single-compare workflow's panel) and once into `#bulk-result-panel-host`
+(the bulk pair viewer). The single subscriber in `app.js:317-379` decides
+which panel to render based on `state.bulkJob?.activePairIndex` —
+`bulkDetailOpen ⇒ render into the bulk panel; otherwise render into the
+single-compare panel`. The `#main-content` element gains/loses
+`main-content--compare-results-visible` accordingly.
+
+### 9.7 Notification queue
+
+`src/renderer/application/notification-queue.js`:
+
+**Constants:**
+- `MAX_VISIBLE = 3`
+- `NOTIFICATION_SPAM_WINDOW_MS = 800`
+- Auto-dismiss durations (from `notification-timing.js`): info 4 s, warning 10 s, error indefinite
+- `NOTIFICATION_MIN_ALERT_VISIBLE_MS = 5000` — floor for error-tier dismissal
+
+**State machine:** `IDLE | ACTIVE | COALESCING | DRAINING`
+- `IDLE` → `ACTIVE`: first notification enqueued.
+- `ACTIVE` → `COALESCING`: `≥3` enqueues within `NOTIFICATION_SPAM_WINDOW_MS`.
+- `COALESCING` → `DRAINING`: `setTimeout(0)` flushes the coalesced batch.
+- `DRAINING` → `IDLE`: all visible slots emptied.
+
+**Behaviors:**
+- Spam detection: `≥3` enqueues in 800 ms triggers coalesce; deduped by `dedupeKey || id`.
+- Errors (tier `'error'`) `unshift` to head of wait queue (priority).
+- Duplicate dedupeKey while visible: **updates in-place** (increments `repeatCount`, refreshes timer).
+- When `_visible.length >= MAX_VISIBLE`, new arrivals trigger `dispatchEvictOldest`.
+
+### 9.8 State machine (complete action list)
+
+`src/renderer/state.js` — all action types handled by the reducer:
+
+**Single-extract/compare lifecycle:**
+`REPORTS_LOADED`, `REPORT_DELETED`, `EXTRACTION_STARTED`, `EXTRACTION_PROGRESS`,
+`EXTRACT_UI_END`, `COMPARISON_STARTED`, `COMPARISON_PROGRESS`,
+`COMPARISON_COMPLETE`, `COMPARISON_ERROR`, `COMPARE_UI_END`,
+`OPERATION_CANCELLING`, `RESET_COMPARISON`, `DISMISS_ERROR`,
+`BASELINE_SELECTED`, `COMPARE_SELECTED`, `MODE_CHANGED`, `FILTERS_UPDATED`,
+`EXPORT_STARTED`, `EXPORT_COMPLETE`, `EXPORT_ERROR`.
+
+**Browser detection:**
+`BROWSER_DETECTION_STARTED`, `BROWSERS_DETECTED`, `BROWSER_DETECTION_FAILED`,
+`BROWSER_SELECTED`.
+
+**Bulk:**
+`BULK_PARSED_ROWS_SET`, `BULK_DETECTION_STATE`, `BULK_JOB_STARTED`,
+`BULK_PROGRESS`, `BULK_PAIR_COMPLETED`, `BULK_JOB_COMPLETE`,
+`BULK_JOB_CANCELLING`, `BULK_JOB_CANCELLED`, `BULK_JOB_STORAGE_DEGRADED`,
+`BULK_JOB_LOADED`, `BULK_JOB_RESET`, `BULK_JOB_RESUMED`,
+`BULK_JOB_RESUME_ACCEPTED`, `BULK_JOB_RESUME_OFFERED`,
+`BULK_JOB_RESUME_DECLINED`, `BULK_PAIR_OPEN`, `BULK_PAIR_VIEWER_READY`,
+`BULK_ACTIVE_PAIR_CLEAR`.
+
+**Key transitions:**
+- `EXTRACT_UI_END` / `COMPARE_UI_END` are UI lifecycle events that transition
+  `extracting`/`comparing`/`cancelling` back to `idle`/`done`. They are
+  dispatched by the workflow after cleanup (progress hide, button reset) — the
+  operation itself has already completed or been cancelled.
+- `BULK_JOB_CANCELLING` is the user-initiated cancel that keeps `status:'running'`
+  but flips a `cancelling` flag so the panel renders "Cancelling…". The
+  terminal transition happens when `BULK_JOB_COMPLETE` arrives and checks
+  `cancelling` to decide between `cancelled`, `partial`, or `completed`.
+- `BULK_JOB_STARTED` optimistically flips the **first pair** to
+  `'extracting-baseline'` synchronously (UI spec §9.1 "Optimistic Start")
+  so the running view paints within one animation frame.
+
+---
+
+## 10. Persistence Path for a Comparison
+
+A successful `runComparison` returns a `slimResult` to the renderer. From
+there, `compare-workflow.js:handleComparison` (single-compare path) and
+`bulk-workflow.js _persistPairResult` (bulk path) perform the same writes,
+in order. Every `await` corresponds to either a single IDB transaction or a
+single message round-trip; transaction boundaries are explicit.
+
+**1. Save the comparison metadata + diffs + summary**
+`await storage.saveComparison(meta, sr.comparison?.results ?? [])`.
+- **Transaction shape:** `#saveComparisonInner` opens **two** WAL transactions wrapping `#writeComparisonWithEviction` (which holds `[comparisons, comparison_diffs, comparison_summary]` r/w; lookup-by-pair, count `total - bulk` excess, evict oldest non-bulk rows if needed, then write all three).
+- **Atomicity:** The three comparison stores commit atomically together (single tx). The WAL bracket is two separate transactions: a crash between them leaves a PENDING WAL row that `applyPendingOperations` would later replay (`SAVE_COMPARISON` is in the known-replayable set).
+- **Bulk-path note:** `meta.bulkJobId = jobId` is stamped before the call, so `by_bulkJobId.count()` rises and the row is exempt from the 20-comparison cap.
+
+**2. Save each visual blob**
+For each `keyframeId, blobData` in `sr.visualBlobs`, `await storage.saveVisualBlob('${meta.id}:${keyframeId}', blob, meta.id)`.
+- **Transaction shape:** `#saveVisualBlobInner` opens WAL r/w, then `[visual_blobs]` r/w, then WAL r/w to complete.
+- **Atomicity:** Each blob is its own tx triplet. Blobs are written serially (one `await` per blob), so failure on blob N+1 leaves blobs 0..N persisted with their WAL rows COMPLETE. The N+1 entry stays PENDING and **will not be replayed** — it is force-failed by `applyPendingOperations`.
+
+**3. Save visual keyframes in parallel**
+`await Promise.all(sr.visualKeyframes.map(kf => storage.saveVisualKeyframe(kf)))`.
+- **Transaction shape:** Each call: one `[visual_keyframes]` r/w tx. **No WAL.**
+- **Atomicity:** Each keyframe is its own tx. Concurrent — order not guaranteed. A partial failure leaves some keyframes saved and others not. No replay.
+
+**4. Save visual element rects (batched)**
+`await storage.saveVisualElementRects(sr.visualRectRecords)`.
+- **Transaction shape:** One `[visual_element_rects]` r/w tx covering all records. **No WAL.**
+- **Atomicity:** All-or-nothing per call.
+
+**Bulk-only step 5: Save the bulk-pair patch**
+After steps 1–4 succeed, `_persistPairResult` calls `storage.updateBulkPair(pairId, { status:'done', baselineReportId, compareReportId, comparisonId, pct:100, completedAt })`. This is a single `[bulk_pairs]` r/w tx, no WAL bracket on the update path (`#updateBulkPairInner`).
+
+**End-to-end atomicity.** There is no overarching transaction across these
+steps. A renderer reload between steps 1 and 4 leaves the comparison
+metadata visible to the UI but with missing/partial visual data. The
+single-compare path detects this by absence at read time and emits
+`Toast.warning('Some visual screenshots could not be saved …')`. The
+bulk path logs the error and lets `detectAndOfferResume` reconcile on next
+boot.
+
+**Read path** (`tryLoadCachedComparison` / `loadComparisonFromCacheByPairIds`):
+one tx per call — `loadComparisonByPair` (`comparisons` r/o), `loadComparisonDiffs`
+(`comparison_diffs` r/o). Visual blobs/keyframes are fetched lazily by the
+result panel, not eagerly during cache hydration. The bulk pair viewer
+additionally calls `ensureBlobsRegisteredForComparison(comparisonId)` which
+walks `visual_blobs.by_comparisonId` and re-registers each blob with the
+main process via `REGISTER_BLOB` so `app://./blob/...` URLs resolve.
+
+---
+
+## 11. Build Pipeline
+
+| Command | Produces | Depends on (must run before) | Breaks if skipped |
+|---|---|---|---|
+| `npm run build:extractor` | `dist/extractor-bundle.js` (UMD `__uiCompare`, target chrome 108, target `web`). | — | First extraction throws `"Extractor bundle not found"` from `getExtractorBundleSource`. |
+| `npm run build:main` | `dist/index.js`, `dist/preload.js`. Externals: `playwright`, `electron-log`, `electron-updater`, `p-limit` (loaded via dynamic import inside `bulk-runner.js`). Target `electron-main`, target `electron 33`. | — (independent of extractor) | Electron's `main` field cannot be loaded; `electron .` fails. `bail:true` aborts on first error. |
+| `npm run build:renderer` | `dist/renderer/app.js` plus copied `index.html` and `styles/` (via the inline `CopyStaticAssetsPlugin`). Target `web`, target chrome 120. The renderer bundle includes `xlsx` (used by the bulk plan parser and summary exporter) plus the bulk workflow / panel modules. | — (independent) | Renderer cannot load; `app://./index.html` 404s on `app.js`. |
+| `npm run build` | All three above, in order: extractor → main → renderer. Runs `prebuild` (`scripts/check-env.js`) first. | `PLAYWRIGHT_BROWSERS_PATH` set and contains a `chromium*` directory. | `prebuild` exits with code 1 before webpack runs. |
+| `npm run dist[:win/:mac/:linux/:all]` | electron-builder artifacts in `release/`. Re-runs `npm run build` first. `prepackage` re-asserts `PLAYWRIGHT_BROWSERS_PATH`. | `npm run build` outputs in `dist/`. | Without `dist/`, electron-builder ships an empty asar. |
+| `npm run smoke-test` | Runs `electron . --smoke-test`; checks bundle existence and `app.getVersion()`; exits 0 or 1. | A built `dist/` tree. | If extractor bundle is missing, exits 1. |
+| `npm run lint` | ESLint over the whole repo (root config `.eslintrc.json`; ignores `dist/`, `node_modules/`, `out/`). | — | — |
+| `npm run install:browsers` | `playwright install chromium firefox webkit` into `PLAYWRIGHT_BROWSERS_PATH`. | `PLAYWRIGHT_BROWSERS_PATH` set. | Headless launch fails at `getBrowser` with a Playwright-level error. |
+| `npm run postinstall` (auto) | `electron-builder install-app-deps` rebuilds native modules against Electron's ABI. | Run on every `npm install`. | Native binding ABI mismatch when packaged. (Currently no `*.node` is actually required by `src/`; `better-sqlite3` is unused.) |
+
+`electron-builder.yml`:
+
+- `asar: true`. `asarUnpack` keeps `dist/extractor-bundle.js`,
+  `node_modules/playwright/**`, and any `*.node` outside the asar so Playwright can spawn its browser executables and the extractor bundle can be read by `fs.readFileSync` at runtime.
+- `extraResources: .playwright-browsers → browsers`. At runtime
+  `src/main/index.js:10-12` sets
+  `process.env.PLAYWRIGHT_BROWSERS_PATH = path.join(process.resourcesPath, 'browsers')` when packaged.
+- Targets: macOS dmg (universal), Windows nsis x64 (`signAndEditExecutable: false`), Linux AppImage + deb.
+
+---
+
+## 12. Failure Mode Catalog
+
+Each entry gives the trigger as it appears in source, the visible symptom,
+and the recovery code (or "none" when no automatic recovery exists).
+
+### 1. Extractor bundle missing
+- **Trigger:** `playwright-manager.js:100-103` after the four-path probe.
+- **Symptom:** `runExtraction` rejects with `"Extractor bundle not found"`.
+- **Recovery:** None. Run `npm run build:extractor`.
+
+### 2. `PLAYWRIGHT_BROWSERS_PATH` unset / missing chromium
+- **Trigger:** `scripts/check-env.js`.
+- **Symptom:** `prebuild`/`prepackage` exits 1 before webpack/electron-builder runs.
+- **Recovery:** None — manual env var fix.
+
+### 3. Smoke-test missing bundle
+- **Trigger:** `src/main/index.js:113-128`.
+- **Symptom:** `electron . --smoke-test` prints `[smoke-test] FAIL: extractor-bundle.js not found …` and exits 1.
+- **Recovery:** None — fix bundle.
+
+### 4. Boot config invalid
+- **Trigger:** `src/config/validator.js` invoked at `src/main/index.js:144` with `{throwOnError:true}`.
+- **Symptom:** Main process logs error and `app.quit()`s before window creation.
+- **Recovery:** Reset config / fix override.
+
+### 5. `ready-to-show` never fires
+- **Trigger:** `src/main/index.js:331-336`.
+- **Symptom:** After 8 s, `_showFallbackTimer` calls `applyBoundsAndShow` anyway and logs `"ready-to-show did not fire — showing window anyway"`.
+- **Recovery:** Built-in fallback.
+
+### 6. Off-screen saved bounds
+- **Trigger:** `_ensureWindowOnScreen`.
+- **Symptom:** If saved bounds don't intersect any display, `win.center()` is called; if maximized, unmaximize first.
+- **Recovery:** Built-in.
+
+### 7. Renderer bridge missing
+- **Trigger:** `src/renderer/app.js:68-84`.
+- **Symptom:** Body replaced with fatal banner, `throw new Error('window.electronAPI is undefined')`.
+- **Recovery:** None — fix preload path.
+
+### 8. IDB open blocked
+- **Trigger:** `idb-repository.js:326-329`.
+- **Symptom:** `#getDB` rejects with `"IDB open blocked — close other extension tabs and retry"`.
+- **Recovery:** User action.
+
+### 9. IDB write circuit opens
+- **Trigger:** `idb-repository.js:235-256` after `CIRCUIT_BREAKER_LIMIT=3` consecutive failures.
+- **Symptom:** `storage-degraded` event with `reason:'CIRCUIT_OPEN'` → `SystemBanner.error`. **Bulk runs are auto-cancelled** by `app.js:444-455` (dispatches `BULK_JOB_STORAGE_DEGRADED` and invokes `cancelBulkJob`).
+- **Recovery:** None at runtime; must reload.
+
+### 10. WAL replay exhausted
+- **Trigger:** `idb-repository.js:701-712` after `replayCount >= 3`.
+- **Symptom:** `storage-degraded` event with `reason:'WAL_REPLAY_EXHAUSTED'` → `SystemBanner.warning`.
+- **Recovery:** Failed entries retained; no further replay attempted.
+
+### 11. `applyPendingOperations` replay path
+- **Trigger:** Called once per renderer boot from `report-manager.js initializeApp`, awaited from `app.js:381`.
+- **Symptom:** Pending WAL rows are scanned (`idb-repository.js:670-742`); `SAVE_REPORT`/`SAVE_COMPARISON` replayed up to 3 attempts; `SAVE_VISUAL_BLOB` and unknown ops (incl. `SAVE_BULK_JOB`/`SAVE_BULK_PAIR`) force-failed.
+- **Recovery:** Built-in. On exhaustion the WAL row is `FAILED` and a `storage-degraded` event fires.
+
+### 12. `SAVE_VISUAL_BLOB` recovery impossible
+- **Trigger:** `idb-repository.js:687-691`.
+- **Symptom:** Any pending visual blob WAL entry on next start is force-failed.
+- **Recovery:** None — blob must be recaptured.
+
+### 13. `INCOMPATIBLE_URLS` pre-flight (single compare)
+- **Trigger:** `playwright-manager.js` `assessUrlCompatibility`.
+- **Symptom:** `runComparison` throws with `code:'INCOMPATIBLE_URLS'`; renderer shows `Toast.error("Incompatible URLs …")`.
+- **Recovery:** None — user must pick same-path URLs.
+
+### 14. URL `CAUTION` (hash/query mismatch)
+- **Trigger:** same path, `compat.classification === 'CAUTION'`.
+- **Symptom:** Renderer shows `Toast.warning("URL mismatch …")` and proceeds.
+- **Recovery:** Warning only.
+
+### 15. DevTools open during capture
+- **Trigger:** `playwright-manager.js` `heightGap > 200` or `widthGap > 200`.
+- **Symptom:** Synthetic `Emulation.setDeviceMetricsOverride` bypass; if both pages still produce 0 manifests, returns `status:'skipped'`.
+- **Recovery:** Built-in bypass; on total failure, user must close DevTools.
+
+### 16. Debugger conflict / target closed
+- **Trigger:** `playwright-manager.js` matches `'already attached' \| 'Target closed' \| 'Page closed'`.
+- **Symptom:** Returns `null` from `runTabCapture`; the role is silently degraded.
+- **Recovery:** Soft-degrade.
+
+### 17. Frozen Playwright session leftover
+- **Trigger:** `recoverFrozenSessions` (`playwright-manager.js`).
+- **Symptom:** Probes `_browsers` Map for `vdiff-freeze-styles`; closes any match. Called once at boot from `index.js:211`.
+- **Recovery:** **At boot, `_browsers` is empty** — function effectively a no-op.
+
+### 18. `EXPORT_HTML` / `EXPORT_FILE` write errors
+- **Trigger:** `ipc-handlers.js`.
+- **Symptom:** EACCES → `"Permission denied …"`; EBUSY → `"File is in use …"`; otherwise raw `err.message`.
+- **Recovery:** User retries.
+
+### 19. `IMPORT_FILE` read errors
+- **Trigger:** `ipc-handlers.js`.
+- **Symptom:** ENOENT → `"File not found …"`; EACCES → `"Permission denied …"`.
+- **Recovery:** User retries.
+
+### 20. Blob registration with bad ID
+- **Trigger:** `ipc-handlers.js:267-270`.
+- **Symptom:** Returns `{success:false, error:'blobId must be comparisonId:keyframeId'}`.
+- **Recovery:** Caller fixes shape.
+
+### 21. Blob cache pressure
+- **Trigger:** `protocol-handler.js`. `MAX_BLOB_CACHE_BYTES = 512 MiB`.
+- **Symptom:** When over budget, `_evictOldestComparisonGroup` evicts the entire oldest comparisonId group (LRU by insertion order). Single blobs `> 512 MiB` are silently rejected. If only the active comparison is in cache, the eviction loop refuses to self-evict and logs a warning.
+- **Recovery:** Built-in.
+
+### 22. `app://` path traversal
+- **Trigger:** `protocol-handler.js:108-111`.
+- **Symptom:** Returns `Response('Forbidden', {status:403})` and logs.
+- **Recovery:** Built-in.
+
+### 23. `app://` blob cache miss
+- **Trigger:** `protocol-handler.js:91-94`.
+- **Symptom:** Returns `Response('Blob not found', {status:404})`.
+- **Recovery:** Caller must `REGISTER_BLOB` first. The bulk pair viewer's `ensureBlobsRegisteredForComparison` re-registers blobs from IDB after a renderer reload.
+
+### 24. Cancellation during compare/extract
+- **Trigger:** `playwright-manager.js _cancelErr` thrown when `isCancelled?.()` returns true.
+- **Symptom:** Invoke returns `{success:false, cancelled:true}`. Renderer renders the cancel-line.
+- **Recovery:** Soft-recover.
+
+### 25. Visual capture: 0 valid rects
+- **Trigger:** `playwright-manager.js`.
+- **Symptom:** Returns `{manifest: empty Map, …}`; comparison still completes without screenshots.
+- **Recovery:** Soft-degrade.
+
+### 26. Pre-flight: empty element arrays
+- **Trigger:** `playwright-manager.js`.
+- **Symptom:** Throws `"Baseline elements array is empty …"`.
+- **Recovery:** None — caller bug.
+
+### 27. Watch-mode bundle stale
+- **Trigger:** `webpack.*.config.js:bail:true`.
+- **Symptom:** Watch process exits on compile error; Electron keeps running on stale bundle.
+- **Recovery:** Manual restart.
+
+### 28. `dist:all` cross-OS artifacts
+- **Trigger:** `package.json` `dist:all` runs `electron-builder -mwl` from one host.
+- **Symptom:** Foreign artifacts may be malformed.
+- **Recovery:** Use per-OS CI runners.
+
+### 29. Help-menu placeholder URLs
+- **Trigger:** `src/main/index.js:85, 88` open `https://github.com/your-org/ui-comparison/...`.
+- **Symptom:** Real users hit GitHub 404.
+- **Recovery:** Replace before forking.
+
+### 30. macOS traffic-light overlap if class missing
+- **Trigger:** `app.js:271-273` adds `platform-darwin` only when `electronAPI.platform === 'darwin'`.
+- **Symptom:** Without the class, the `#app-root` left inset is 0 and traffic lights overlap content.
+- **Recovery:** Built-in conditional.
+
+### 31. Browser detection failed at boot
+- **Trigger:** `GET_AVAILABLE_BROWSERS` returns `{ success:false, error }`, or the renderer-side promise rejects (`app.js:405-422`).
+- **Symptom:** `browserDetectionState:'error'`. Workflows refuse with `setError(... 'Browser detection still running …')`.
+- **Recovery:** User clicks Retry → `detectBrowsers({ refresh:true })`.
+
+### 32. No launchable browsers detected
+- **Trigger:** `availableBrowsers.length === 0` after a successful `BROWSERS_DETECTED`.
+- **Symptom:** Selector shows "No browsers detected"; workflows refuse with "No browser available — install Playwright browsers (npm run install:browsers)".
+- **Recovery:** User runs `npm run install:browsers`.
+
+### 33. Browser launch blocked by IT policy
+- **Trigger:** `playwright-manager.js:130-146` matches `/DevTools remote debugging is disallowed/i`, `/remote.debugging.*disallowed/i`, or `/Target page.*context.*browser has been closed/i`.
+- **Symptom:** Throws `Error("This browser is blocked by your organisation's IT policy …")` with `code:'BROWSER_POLICY_BLOCKED'`. IPC return is `{ success:false, error }`. Renderer surfaces it via `Toast.error`.
+- **Recovery:** Pre-emptive: Windows Chrome with `RemoteDebuggingAllowed=0` is marked `isLaunchable:false` at detection time. Reactive: switch to Playwright Chromium.
+
+### 34. System Firefox / WebKit selected and attempted
+- **Trigger:** Detection lists them as `isLaunchable:false` with `unavailableReason:'playwright-requires-patched-build'`.
+- **Symptom:** Selector renders disabled; `_onChange` rejects silently.
+- **Recovery:** Use the Playwright-managed descriptor instead.
+
+### 35. WebKit screenshot path → Chromium fallback
+- **Trigger:** `runComparison` (`playwright-manager.js:1524-1550`) catches a screenshot-phase error from a WebKit descriptor whose message matches `/Page\.snapshotRect|snapshot/i`.
+- **Symptom:** Sends a "Retrying screenshots on Chromium…" progress label, re-runs `_runScreenshotPhase` with the Chromium descriptor, and pushes `{ kind:'screenshot-engine-fallback', from:'webkit', to:'chromium', reason }` into `visualData.devToolsWarnings`. Matching unaffected.
+- **Recovery:** Built-in. If the Chromium retry also fails, the original error path applies.
+
+### 36. Bulk plan rejected at parse time
+- **Trigger:** `core/bulk/plan-parser.js parsePlanWorksheet` returns `{ error }` when (a) workbook is empty / lacks `!ref`, (b) duplicate column header (case-insensitive), (c) missing `baseline_url` or `compare_url`, (d) row count exceeds `bulk.maxRows = 500`.
+- **Symptom:** Renderer renders the parse error in the bulk panel; `bulkDetectionState` stays `'error'`. No job is created.
+- **Recovery:** User edits the workbook.
+
+### 37. Bulk row marked `invalid`
+- **Trigger:** `core/bulk/plan-validator.js validateOneRow` returns `status:'invalid'` for any of: non-`http(s)://` URL, unknown `mode`, `assessUrlCompatibility` is `INCOMPATIBLE`, `browser` cell does not resolve to any launchable descriptor.
+- **Symptom:** Row is excluded from `pairs[]` but still appears in the downloaded Excel summary with `status: invalid` and the validation reason.
+- **Recovery:** None at run-time. The job runs as long as at least one valid row remains.
+
+### 38. Bulk reused-side delivery timeout
+- **Trigger:** `bulk-runner.js _awaitProvided(side)` rejects after `10_000 ms` if the renderer never delivers via `BULK_PROVIDE_ELEMENTS`.
+- **Symptom:** Pair `BULK_PAIR_COMPLETED` with `status:'failed'`, `errorCode:'STORAGE_DEGRADED'`, error message `"Timed out waiting for provided elements"`.
+- **Recovery:** Restart the bulk job. Most likely cause is a circuit-breaker open between dedup planning and the post-start element push.
+
+### 39. Bulk runner fatal (uncaught throw)
+- **Trigger:** The `.catch` of the dispatch wrapper inside `_registerBulkHandlers` (`ipc-handlers.js:417-426`).
+- **Symptom:** `BULK_JOB_COMPLETE` is still emitted with `summary: { total:N, succeeded:0, failed:N, cancelled:0, deduped:0 }, error: <message>`. Job entry deleted from `_bulkJobs`.
+- **Recovery:** Renderer reduces the job to `failed`; user can re-run.
+
+### 40. Bulk job interrupted by app close
+- **Trigger:** `detectAndOfferResume` finds a `bulk_jobs` row with `status === 'running'` at boot.
+- **Symptom:** All in-flight pairs (`status ∈ {extracting-baseline, extracting-compare, matching, screenshots, persisting}`) are flipped to `failed` with `errorCode:'INTERRUPTED'` via `storage.updateBulkPair`. Banner offers Resume / View partial / Discard.
+- **Recovery:** **Resume** re-runs only the incomplete pairs (`queued` + `INTERRUPTED`-failed) under a fresh `comparisonId` per pair, with concurrency re-clamped against current host RAM. **View partial** marks the job `partial` and shows what was completed. **Discard** cascade-deletes the job (`storage.deleteBulkJobCascade`).
+
+### 41. Multiple interrupted bulk jobs
+- **Trigger:** `detectAndOfferResume` finds more than one `running` job.
+- **Symptom:** Sorts by `createdAt` desc, picks the newest, marks every older job `failed` (logged as a warning).
+- **Recovery:** Built-in. The older jobs remain in the `bulk_jobs` store and are visible via the export path until cascade-deleted.
+
+### 42. Bulk-job retention overflow
+- **Trigger:** `#saveBulkJobInner` sees `count() >= BULK_MAX_RETAINED_JOBS=10`.
+- **Symptom:** The `count - 10 + 1` oldest jobs (by `by_createdAt` ascending, excluding the job being written) are cascade-deleted, including all derived reports / comparisons / blobs / keyframes / rects / pairs.
+- **Recovery:** Built-in.
+
+---
+
+## 13. Browser Detection & Capability Profiles
+
+Source: `src/main/browser-detector.js` (Node, main process) and
+`src/config/browser-capability-profile.js`.
+
+### 13.1 Detector entry point
+
+`detectBrowsers({ refresh = false })`:
+
+1. **Cache short-circuit.** If `_cache !== null && !refresh`, returns the cached `{ browsers, detectedAt }` immediately.
+2. **Playwright-managed probes.** Always pushes a Chromium descriptor (with `isDefault:true`); pushes Firefox/WebKit descriptors only when the binary exists. Each is built by `_detectPlaywrightManaged` which calls `pw[browserType].executablePath()` and tests `_isExecutable(path)`.
+3. **System probes.** Dispatches to `_detectMacBrowsers` / `_detectWinBrowsers` / `_detectLinuxBrowsers` based on `process.platform`. All probe failures are logged and swallowed — detection never throws to the IPC handler.
+4. Caches and returns `{ browsers, detectedAt: new Date().toISOString() }`.
+
+`_resetCache()` is exported for tests; not used at runtime.
+
+### 13.2 Per-OS strategies
+
+**macOS** (`MAC_CANONICAL_APPS`): canonical apps in `/Applications` and
+`~/Applications`: Google Chrome (channel `chrome`), Microsoft Edge (channel
+`msedge`), Firefox, Brave, Safari. Probes `<root>/<App>.app/Contents/MacOS/<binary>`
+for executability. Version read by `/usr/libexec/PlistBuddy` against
+`Info.plist`'s `CFBundleShortVersionString`, fallback `mdls -name
+kMDItemVersion -raw`. `VERSION_TIMEOUT_MS=3000`.
+
+**Windows** (`WIN_CANONICAL_PATHS`): Chrome (chrome), Edge (msedge), Firefox,
+Brave. Two-stage resolution:
+
+1. Query `HKLM`/`HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\<exe>` via `reg.exe` (`REG_TIMEOUT_MS=3000`); parse `REG_SZ`/`REG_EXPAND_SZ`/`REG_MULTI_SZ` value.
+2. Fallback: walk `ProgramFiles`, `ProgramFiles(x86)`, `LOCALAPPDATA\Programs`, `LOCALAPPDATA` joined with `canonicalSubpaths`.
+
+Version read via `wmic datafile … get Version /value`, fallback `powershell.exe -NoProfile (Get-Item …).VersionInfo.ProductVersion`.
+
+**Linux** (`LINUX_BROWSERS`): Chrome, Chromium, Edge, Firefox, Brave. Tries
+hard-coded canonical absolute paths first (`/usr/bin/*`, `/opt/*`,
+`/snap/bin/*`), then walks `$PATH` for any of the per-browser `binNames`.
+Version read via `<binary> --version` (regex `\d+\.\d+(?:\.\d+){0,3}`).
+
+### 13.3 Descriptor shape
+
+Both `_buildSystemDescriptor` and `_detectPlaywrightManaged` produce:
+
+```
+{
+  id,                  // 'system-chrome' | 'system-edge' | 'system-firefox' |
+                       // 'system-brave' | 'system-chromium' | 'system-safari' |
+                       // 'playwright-chromium' | 'playwright-firefox' | 'playwright-webkit'
+  displayName,         // human label
+  browserType,         // 'chromium' | 'firefox' | 'webkit'
+  source,              // 'playwright-managed' | 'system'
+  channel,             // 'chrome' | 'msedge' | null
+  executablePath,      // string when source==='system' AND not in canonical install root;
+                       //   null when channel resolution applies or source==='playwright-managed'
+  version,             // string or null
+  isAvailable,         // detection saw the binary
+  isLaunchable,        // we'll actually launch it
+  isDefault,           // currently only true for Playwright-managed Chromium
+  unavailableReason,   // null | 'binary-not-found' | 'version-mismatch' |
+                       //   'playwright-requires-patched-build' |
+                       //   'unsupported-os' | 'devtools-blocked-by-policy'
+}
+```
+
+**Channel vs executablePath rule** (`_isCanonicalForChannel`): if the resolved
+binary lives in a canonical install root for its OS, the descriptor uses
+`channel` and `executablePath` is null. Otherwise it uses `executablePath`
+and `channel` is null.
+
+### 13.4 Read-only system installs
+
+`_buildSystemDescriptor` short-circuits for two engines:
+
+- **Firefox (system)**: `isLaunchable:false`, `unavailableReason:'playwright-requires-patched-build'`, `displayName: '<name> (system — read-only)'`.
+- **WebKit / Safari (system)**: same treatment, `displayName: '<name> (read-only)'`.
+
+### 13.5 Chrome DevTools-policy block (Windows only)
+
+`_isChromeBlockedByDevToolsPolicy` probes
+`HKLM/HKCU\SOFTWARE\Policies\Google\Chrome\RemoteDebuggingAllowed`. If `0`,
+the Chrome descriptor is built with `isLaunchable:false`,
+`unavailableReason:'devtools-blocked-by-policy'`. Even if the user side-steps
+the disabled state, `getBrowser` catches the runtime "DevTools remote
+debugging is disallowed" error and rethrows with `code:'BROWSER_POLICY_BLOCKED'`.
+
+### 13.6 Capability profiles
+
+`src/config/browser-capability-profile.js` exports two frozen records:
+
+**`BROWSER_CAPABILITY_PROFILES`** drives the capture pipeline (§6):
+
+| Field | chromium | firefox | webkit |
+|---|---|---|---|
+| `cdpAvailable` | `true` | `false` | `false` |
+| `screenshotMethod` | `'cdp-webp'` | `'playwright-png'` | `'playwright-png'` |
+| `screenshotMimeType` | `'image/webp'` | `'image/png'` | `'image/png'` |
+| `freezeMethod` | `'cdp-script-disable'` | `'js-shim'` | `'js-shim'` |
+| `metricsOverrideAvailable` | `true` | `false` | `false` |
+| `viewportOverrideMethod` | `'cdp-emulation'` | `'playwright-set-viewport'` | `'playwright-set-viewport'` |
+| `deviceScaleFactorOverride` | `true` | `false` | `false` |
+| `bringToFront` | `'cdp'` | `'playwright'` | `'playwright'` |
+| `expectedScrollbarGutterPx` | `15` | `17` | `0` |
+| `subPixelScrollAccurate` | `true` | `true` | `true` |
+| `requiresLayoutWarmup` | `false` | `false` | `true` |
+
+`_effectiveDprFor(browserType)` returns `CAPTURE_SCALE_FACTOR=2` only when
+`deviceScaleFactorOverride` is true (chromium). `attachSession` reads
+`freezeMethod` (via `cdpAvailable`) to decide CDP vs shim path.
+
+**`BROWSER_NORMALIZATION_PROFILES`** is consumed by the normalization layer:
+
+| Field | chromium | firefox | webkit |
+|---|---|---|---|
+| `requiresFontFamilyDequote` | `false` | `true` | `true` |
+| `requiresLineHeightNormalize` | `true` | `true` | `true` |
+| `requiresBoxShadowReorder` | `false` | `false` | `true` |
+| `requiresFontWeightCanonicalize` | `true` | `true` | `true` |
+
+### 13.7 Renderer ↔ main contract
+
+The renderer guarantees:
+
+- `BROWSER_DETECTION_STARTED` is dispatched before any `getAvailableBrowsers()` call.
+- `BROWSER_SELECTED` is only dispatched when the user picks a browser whose `isLaunchable === true`.
+- The `browser` field passed to `START_COMPARISON` / `EXTRACT_ELEMENTS` is exactly `{ browserType, channel, executablePath }` extracted from the selected descriptor.
+- For bulk: each `pairs[i].browser` is the **resolved** descriptor from `plan-validator.js` (which preferred per-row `browser` cells over the job-level `selectedBrowser`).
+
+The main process guarantees:
+
+- `getBrowser` cache key includes the channel/executablePath, so two different system Chromium installs end up as distinct `Browser` instances. The cache is shared across single-extract, single-compare, and bulk-runner code paths.
+- A second call from another concurrent operation reuses an open `Browser` if `isConnected()`.
+- `shutdownPlaywright` (called from `app.before-quit`) closes every cached browser.
+
+---
+
+## 14. Bulk Pipeline
+
+The bulk subsystem spans renderer (parser, validator host, dedup planner,
+workflow coordinator, panel UI, persistence) and main (plan-agnostic runner
+that dispatches per-pair extractions and comparisons under a `p-limit`
+gate). Source files:
+
+- `src/core/bulk/plan-parser.js` — xlsx → row records.
+- `src/core/bulk/plan-validator.js` — row-level validation.
+- `src/core/bulk/extraction-key.js` — SHA-256 dedup key (`url|browserType|channelOrPath|YYYY-MM-DD`).
+- `src/core/export/bulk-summary-exporter.js` — `Bulk Summary` xlsx + plan template builder.
+- `src/core/export/bulk-pair-state-labels.js` — state→label map and `getErrorHint(errorCode)`.
+- `src/main/bulk-runner.js` — main-side orchestrator.
+- `src/main/ipc-handlers.js _registerBulkHandlers` — channels + per-job `_bulkJobs` registry.
+- `src/renderer/application/bulk-workflow.js` — renderer orchestrator (dedup, IPC bridge, persistence, resume).
+- `src/renderer/components/bulk-panel.js` — drop zone, parse summary, controls, virtual pair list, resume banner host.
+
+### 14.1 Plan format
+
+Required headers: `baseline_url`, `compare_url` (case-insensitive matching;
+duplicate headers reject the workbook). Optional headers, in canonical order
+used by the template (`bulk-summary-exporter.js TEMPLATE_HEADERS`):
+`mode` (`dynamic`/`static`, default `dynamic`), `filter_class`, `filter_id`,
+`filter_tag`, `screenshots` (truthy tokens `true|yes|1`, falsy
+`false|no|0`, empty inherits the job-level toggle), `label`, `browser`
+(canonical `chromium`/`firefox`/`webkit` or any displayName from the live
+catalogue, empty inherits job-level).
+
+Hard cap: `bulk.maxRows = 500` (`config/defaults.js:251`). Workbooks above
+that are rejected with the row-count quoted in the error.
+
+### 14.2 Validation
+
+`plan-validator.js validatePlanRows(rows, jobOptions, availableBrowsers)`:
+
+- URL must start with `http://` or `https://`.
+- `mode` must be `dynamic` or `static`.
+- `assessUrlCompatibility(baseline, compare)` must not be `INCOMPATIBLE` (paths must match; `CAUTION` becomes a `warning` row that still runs).
+- `browser` cell resolution: tries canonical `browserType` match (preferring `isDefault`-true descriptors), then `displayName` match. Non-launchable matches fall through to `null`. If the cell has a value but the catalogue is empty (renderer hasn't finished detection), the row keeps the job-level descriptor — i.e. detection-not-ready does not invalidate the row.
+
+Output: `{ valid, warnings, invalid }`. Warning rows are pushed to **both** `valid` and `warnings` (warnings are advisory). Each enriched row carries `validationStatus`, `validationReason`, and `resolvedBrowser` (the descriptor actually selected).
+
+### 14.3 Deduplication
+
+`computeDeduplicationPlan(pairs, { forceRefresh })` (in `bulk-workflow.js`)
+hashes each side's `(url, browserType, channelOrPath, YYYY-MM-DD)` via
+`buildExtractionKey` (SHA-256 over the pipe-joined string, hex-encoded;
+`crypto.subtle.digest` runs in the renderer). It then queries
+`storage.findReportByExtractionKey(extractionKey)` (which uses the v9
+`reports.by_extractionKey` index and picks the newest hit). Hits become
+`pair.dedupedSides.{baseline|compare} = { reportId }`. `forceRefresh:true`
+short-circuits the entire computation. `_persistPairResult` later stamps
+`extractionKey` on the freshly-saved report (`saveReport(...,
+{ extractionKey })`) so subsequent runs will hit the index.
+
+### 14.4 Concurrency clamp
+
+Two layers:
+
+- **Renderer** — `_clampConcurrency(requested, totalMemMB, heterogeneous)` (in `bulk-workflow.js` and again in `bulk-panel.js`). Reads `bulk.maxConcurrency` from `defaults.js` (default `4`). If `totalMemMB < 12 * 1024` the cap halves to `min(2, maxConcurrency)`. If the plan is heterogeneous (per-row `browserType` differs from the job-level descriptor) **and** the host is RAM-constrained, the result is forced to **1**.
+- **Main** — `_registerBulkHandlers` independently clamps to `[1, defaultsConfig.bulk.maxConcurrency]` regardless of what the renderer sent.
+
+Host memory is fetched via `GET_HOST_MEMORY` and memoised once per renderer session.
+
+### 14.5 Bulk runner mechanics (`bulk-runner.js`)
+
+Per-job state held by the main-process IPC handler:
+```
+_bulkJobs.set(jobId, {
+  opIds:                Set<string>,    // every per-pair / per-side opId for cancel propagation
+  startedAt,
+  pLimitInstance:       pLimit(safeConcurrency),
+  filename,
+  providedElements:     Map<'pairIdx:side', element[]>,
+  providedWaiters:      Map<'pairIdx:side', { resolve, reject }>,
+})
+```
+
+`runBulkJob(jobSpec, pushEvent, isMasterCancelled, ctx)`:
+
+1. Dynamically `import('p-limit')` (ESM-only) and instantiate `pLimit(safeConcurrency)`. `ctx.setLimitInstance` records it back into the job entry so `CANCEL_BULK_JOB` can call `clearQueue()`.
+2. Per-pair function `_runPair(pair)`:
+   - Allocates three opIds: pair-level + per-side baseline + per-side compare. Each is registered in the global `_cancelRegistry` and added to the job's `opIds` Set (so cancel can flip them all).
+   - Builds `filters` from `pair.filterClass` / `filterId` / `filterTag` (or `null` if none).
+   - Branches per side:
+     - If `pair.dedupedSides[side]` exists: emits `'Reused recent extraction'` progress and awaits `ctx.awaitProvidedElements(pairIndex, side, 10_000)` for the renderer to deliver the cached elements. Times out → `STORAGE_DEGRADED`.
+     - Else: applies `_hostGate(url)` (per-host cooldown wait based on `bulk.hostCooldownMs`, default 500), then calls `playwrightManager.runExtraction({ url, browser, filters, onProgress, isCancelled })`. `onProgress` maps `0..100` → `0..25` of the pair's outer pct.
+   - Awaits both sides via `Promise.allSettled`. Either rejection → `BULK_PAIR_COMPLETED` with the classified `errorCode` and `status:'failed'`/`'cancelled'`.
+   - Calls `playwrightManager.runComparison({ comparisonId, baselineId, compareId, mode, baselineUrl, compareUrl, baselineElements, compareElements, includeScreenshots, browser, blobCache, isCancelled, onProgress })`. The `onProgress` here maps inner `5..80` → outer `50..80` (matching), inner `80..100` → outer `80..95` (screenshots).
+   - Emits final `BULK_PAIR_COMPLETED` with the slim result, the original report descriptors (so the renderer can persist them), and `deduped` indicator.
+3. Wraps every `_runPair` in `limit(...)` and `Promise.all`s the slot promises. After all settle, emits `BULK_JOB_COMPLETE` with `{ summary, durationMs }` and calls `ctx.cleanupJob(jobId)` (which rejects any orphan `providedWaiters` and removes the job entry).
+
+### 14.5a Progress mapping (per-pair pct)
+
+Each pair's outer `pct` (0–100) is composed from inner sub-operation progress:
+
+| Phase | Inner range | Outer range | Notes |
+|---|---|---|---|
+| Baseline extraction | 0–100 | 0–25 | |
+| Compare extraction | 0–100 | 0–25 | Overlaps baseline; UI shows `max(baseline, compare)` |
+| Matching | 5–80 | 50–80 | Inner offset accounts for comparator startup |
+| Screenshots | 80–100 | 80–95 | |
+| Persisting | — | 95–100 | Renderer-synthesised animation (4 ticks over 900 ms) |
+
+The `persisting` phase is never emitted by main — the renderer animates
+95→97→99→100 via `_runPersistingPhaseAnimation` to give visual feedback
+while IDB writes execute.
+
+### 14.5b Host gate (`_hostGate`)
+
+Per-hostname cooldown enforced between extraction dispatches during bulk runs.
+Extracts hostname via `new URL(url).hostname`, looks up last dispatch time in
+a module-level `hostLastDispatch` Map, and sleeps the remaining cooldown
+(`bulk.hostCooldownMs`, default 500 ms). If `cooldownMs === 0`, the gate is a
+no-op. This prevents overwhelming a single origin with concurrent requests.
+
+### 14.6 Error classification
+
+`_classifyError(err)` in `bulk-runner.js` maps caught errors to a stable
+code via code property check first, then regex pattern matching on message:
+
+| Code | Trigger pattern |
+|---|---|
+| `CANCELLED` | `err.code === 'CANCELLED'` or message contains `cancelled` |
+| `BROWSER_POLICY_BLOCKED` | `err.code === 'BROWSER_POLICY_BLOCKED'` or `/devtools.*disallowed\|policy/i` |
+| `BROWSER_NOT_FOUND` | `/unknown browsertype\|executable not found\|browser not installed/i` |
+| `TIMEOUT` | `/timeout\|timed out/i` |
+| `CSP_BLOCKED` | `/refused to (load\|execute)\|addscripttag\|csp/i` |
+| `INCOMPATIBLE_URLS` | `err.code === 'INCOMPATIBLE_URLS'` |
+| `UNKNOWN` | default fallback |
+
+Error messages are sanitized to 500 characters with whitespace collapsed.
+
+Friendly hints surfaced in the bulk panel are looked up by `getErrorHint`
+in `core/export/bulk-pair-state-labels.js`:
+
+| Code | User-facing hint |
+|---|---|
+| `TIMEOUT` | "The page took too long to respond. Check if the URL is accessible." |
+| `CSP_BLOCKED` | "Script injection was blocked. Try a different browser in the selector." |
+| `BROWSER_NOT_FOUND` | "The selected browser could not launch. Switch to Playwright Chromium." |
+| `BROWSER_POLICY_BLOCKED` | "This browser is blocked by your organisation's IT policy. Switch to Playwright Chromium." |
+| `INCOMPATIBLE_URLS` | "The two URLs have different paths. Update the plan and re-upload." |
+| `STORAGE_DEGRADED` | "Storage stopped accepting writes. Restart the app to recover." |
+| `INTERRUPTED` | "This pair was running when the app was last closed." |
+| (other) | "An unexpected error occurred. Check the URL and try again." |
+
+### 14.7 Persistence (renderer)
+
+`_persistPairResult(payload)` in `bulk-workflow.js` runs after every
+successful `BULK_PAIR_COMPLETED`:
+
+1. For each side that **wasn't** reused: `storage.saveReport({ ...report, bulkJobId, extractionKey })`. Reused sides skip the save and reuse the existing `reportId`.
+2. `storage.saveComparison(meta, slim.comparison.results)` with `meta.bulkJobId = jobId`.
+3. Visual blobs (`saveVisualBlob` per keyframe), keyframes (`Promise.all saveVisualKeyframe`), rect records (`saveVisualElementRects`).
+4. `storage.updateBulkPair(pairId, { status:'done', baselineReportId, compareReportId, comparisonId, pct:100, completedAt })`.
+5. `loadAndRenderReports()` — refresh the sidebar.
+
+The `persisting` state machine in the UI is **renderer-synthesised** by
+`_runPersistingPhaseAnimation`: 95→97→99→100 over 900 ms, then dispatches
+`BULK_PAIR_COMPLETED` to the reducer. Real persistence runs in parallel.
+
+### 14.8 Resume protocol
+
+`detectAndOfferResume()` runs once at boot (`app.js:393`), after
+`initializeApp` (which itself awaits `applyPendingOperations`). It loads
+every `bulk_jobs` row, filters for `status === 'running'` (interrupted
+jobs), keeps the newest by `createdAt` and marks any older interrupted
+jobs `failed`. It then loads the chosen job's pairs, flips any pair whose
+status is in `_IN_FLIGHT_PAIR_STATUSES` (`extracting-baseline`,
+`extracting-compare`, `matching`, `screenshots`, `persisting`) to
+`status:'failed', errorCode:'INTERRUPTED'` (both in IDB and in memory).
+
+If incomplete pairs remain, `dispatch('BULK_JOB_RESUME_OFFERED', …)` and
+`_renderResumeBanner` injects the banner with three buttons:
+- **Resume** → `_handleResumeAccepted` allocates a fresh `comparisonId` per incomplete pair, re-clamps concurrency against current host RAM, marks the job `running` (with `resumedAt`), dispatches `BULK_JOB_RESUME_ACCEPTED`, and invokes `BULK_START_JOB` again with only the incomplete pairs.
+- **View partial results** → marks the job `partial`, completes silently.
+- **Discard** → `storage.deleteBulkJobCascade(jobId)` (removes job + every derived row across nine stores), dispatches `BULK_JOB_RESUME_DECLINED` with `cascade:true`.
+
+### 14.9 Export
+
+`routeBulkExportClick` enriches each pair (in batches of 5) by re-loading its
+saved comparison via `storage.loadComparisonByPair(baselineReportId,
+compareReportId, mode)` and matching its baseline/compare reports from
+`state.reports`. The enriched array, the original job, and any
+parser-level `invalid` rows are passed to `buildBulkSummaryWorkbook` from
+`core/export/bulk-summary-exporter.js`. The workbook contains a single
+`Bulk Summary` sheet with 24 columns (pair index, label, both URLs, mode,
+filters, screenshots flag, browser, status, failure_reason, deduped,
+totals, match-rate, add/remove/modify counts, severity counts, duration_ms,
+comparison_id) — header row uses `export.excel.headerColor`; failed-row
+status cells use `criticalColor`; cancelled/invalid-row status cells use
+`mediumColor`; deduped-not-`none` cells highlight.
+
+The matching `buildBulkTemplateWorkbook` produces a two-sheet template
+(`Plan` + `Instructions`). Both are saved through `EXPORT_FILE`.
+
+---
+
+## 15. CI / Release Pipeline
+
+Source: `.github/workflows/release-build.yml`. Triggered on `workflow_dispatch`
+(manual dispatch only — no automatic release on push/tag).
+
+### 15.1 Jobs
+
+| Job | Runner | Steps | Artifact |
+|---|---|---|---|
+| `build-win` | `windows-latest` | checkout v5 → setup-node v5 (Node 22) → set `PLAYWRIGHT_BROWSERS_PATH=$GITHUB_WORKSPACE/.playwright-browsers` → `npm ci` → `npx playwright install chromium` → `npm run dist:win` (`CSC_IDENTITY_AUTO_DISCOVERY=false`) → upload-artifact v4 | `windows-installer` (`*.exe`, `*.blockmap`, `latest.yml`) |
+| `build-mac` | `macos-latest` | same flow → `npm run dist:mac` (`CSC_IDENTITY_AUTO_DISCOVERY=false`) → upload-artifact v4 | `mac-installer` (`*.dmg`) |
+
+**No Linux job exists.** Add one following the same template if
+AppImage/deb artifacts are needed for distribution.
+
+### 15.2 Notes
+
+- Both jobs install only Chromium (not Firefox/WebKit) because the packaged
+  app bundles from `.playwright-browsers/` and can install the remaining
+  engines at user discretion post-install.
+- Code signing is disabled (`CSC_IDENTITY_AUTO_DISCOVERY=false`) — replace
+  with real signing credentials for production distribution.
+- The workflow does not run tests before packaging (no `npm run lint` or
+  `npm run smoke-test` step). Consider adding a quality gate job.
+
+---
+
+## Verification answer: v5/v8 ordering
+
+The existing `runUpgrade` in `idb-repository.js:217-226` runs the v8 block
+before the v5 block (and now the v9 block last). The exact controlling
+conditions are `if (oldVersion < 8) { upgradeToV8(db); }` followed by
+`if (oldVersion < 5) { upgradeToV5(upgradeTx); }`. For a fresh install going
+0 → 9, every `oldVersion < N` condition is true and every block runs.
+
+What would *actually* break if v8 ran *after* v5 in source order? **Nothing,
+under IDB version-change semantics.** Both `db.createObjectStore(...)` calls
+execute synchronously on the same `versionchange` transaction (`upgradeTx`)
+and become visible in `db.objectStoreNames` immediately. The v5 block's
+`upgradeTx.addEventListener('complete', …)` fires *after* `upgradeTx`
+auto-commits — by which point every `createObjectStore` from this upgrade is
+fully persisted, regardless of internal call order. The fresh
+`db.transaction([STORE_APP_META], 'readwrite')` inside that listener
+will therefore find `app_meta` either way.
+
+Furthermore, the listener is explicitly defensive at line 143:
+
+```js
+if (!db.objectStoreNames.contains(STORE_APP_META)) { return; }
+```
+
+Even if `app_meta` were genuinely missing, the listener would silently no-op
+rather than throw. The current ordering of v8 before v5 is therefore
+**defensive code organization, not a load-bearing functional requirement.**
+The IDB transaction-level guarantee is: every `createObjectStore` invoked
+during a single `versionchange` transaction is visible in
+`db.objectStoreNames` from the moment of invocation through commit, and the
+`complete` event fires only after commit.
+
+The same reasoning applies to v9: it adds two new stores (`bulk_jobs`,
+`bulk_pairs`) and three new indexes on existing stores. All of those
+mutations happen synchronously on `upgradeTx`; their visibility to the
+post-commit `complete` listener is guaranteed regardless of the textual
+ordering relative to the older blocks.

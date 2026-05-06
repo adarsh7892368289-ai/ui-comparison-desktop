@@ -159,7 +159,7 @@ html.platform-darwin #app-root {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--space-2);
+  gap: var(--space-1);
   contain: layout style;
 }
 
@@ -197,26 +197,61 @@ html.platform-darwin #app-root {
   height: 28px;
   min-height: 28px;
   padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: color 150ms ease, background 150ms ease;
+}
+
+#left-panel .sidebar-import-btn:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  background: var(--color-surface-hover);
 }
 
 #left-panel .card--toolbar [data-sidebar-toolbar] .sidebar-import-btn,
 #left-panel .card--toolbar [data-sidebar-toolbar] .sidebar-delete-all-btn {
   width: 28px;
   min-width: 28px;
+  height: 28px;
+  min-height: 28px;
   padding: 0;
 }
 
 #left-panel .sidebar-delete-all-btn {
   flex-shrink: 0;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  margin-left: var(--space-1);
+  position: relative;
+  transition: color 150ms ease, background 150ms ease;
+}
+
+#left-panel .sidebar-delete-all-btn::before {
+  content: '';
+  position: absolute;
+  left: calc(-1 * var(--space-1));
+  top: 4px;
+  bottom: 4px;
+  width: 1px;
+  background: var(--color-border-subtle);
 }
 
 #left-panel .sidebar-delete-all-btn:hover:not(:disabled),
 #left-panel .sidebar-delete-all-btn:focus-visible:not(:disabled) {
-  color: var(--color-destructive);
-  background: var(--color-destructive-subtle);
+  color: var(--color-danger);
+  background: var(--color-danger-subtle);
 }
 
 #left-panel #export-all-btn.split-btn__primary {
@@ -224,7 +259,15 @@ html.platform-darwin #app-root {
   overflow: hidden;
   justify-content: center;
   min-width: 28px;
+  height: 28px;
   padding-inline: var(--space-1);
+  border-radius: var(--radius-sm);
+  transition: color 150ms ease, background 150ms ease;
+}
+
+#left-panel #export-all-btn.split-btn__primary:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  background: var(--color-surface-hover);
 }
 
 #left-panel .search-bar-wrap {
@@ -243,6 +286,7 @@ html.platform-darwin #app-root {
   flex-direction: column;
   overflow-x: hidden;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   min-height: 0;
   background: var(--color-surface-base);
 }
@@ -264,17 +308,17 @@ html.platform-darwin #app-root {
 
 .main-pane-section-nav__btn {
   font-family: var(--font-sans);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-regular);
+  letter-spacing: 0.01em;
   color: var(--color-text-secondary);
   background: transparent;
-  border: 1px solid transparent;
+  border: none;
   border-radius: var(--radius-sm);
   padding: var(--space-2) var(--space-3);
   cursor: pointer;
-  transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
+  transition: background var(--dur-base) var(--ease-standard),
+              color var(--dur-base) var(--ease-standard);
 }
 
 .main-pane-section-nav__btn:hover {
@@ -284,19 +328,16 @@ html.platform-darwin #app-root {
 
 .main-pane-section-nav__btn[aria-current="true"] {
   color: var(--color-text-primary);
+  font-weight: var(--weight-semibold);
   background: var(--color-surface-overlay);
-  border-color: var(--color-border-subtle);
-}
-
-.main-pane-section-nav[data-spy-section="extract"] .main-pane-section-nav__btn[data-main-pane-section="extract"],
-.main-pane-section-nav[data-spy-section="compare"] .main-pane-section-nav__btn[data-main-pane-section="compare"],
-.main-pane-section-nav[data-spy-section="bulk"] .main-pane-section-nav__btn[data-main-pane-section="bulk"] {
-  box-shadow: inset 0 -2px 0 0 var(--color-brand);
 }
 
 #main-controls {
   padding: var(--space-6);
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 
 #main-content > #section-bulk:not([hidden]) {

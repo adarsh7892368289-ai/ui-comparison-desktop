@@ -1,7 +1,10 @@
 .nav-section {
   display: flex;
   flex-direction: column;
-  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.nav-section + .nav-section {
+  border-top: 1px solid var(--color-border-subtle);
 }
 
 .nav-section__header {
@@ -16,15 +19,16 @@
   cursor: pointer;
   user-select: none;
   font-size: var(--text-sm);
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-regular);
   color: var(--color-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   background: transparent;
   border: none;
+  border-left: 3px solid transparent;
   width: 100%;
   text-align: left;
-  transition: color var(--transition-fast), background var(--transition-fast);
+  transition: color 150ms ease, background var(--transition-fast), border-color var(--transition-fast);
 }
 
 .nav-section__header-leading {
@@ -43,7 +47,8 @@
   height: 12px;
   flex-shrink: 0;
   transform: rotate(0deg);
-  transition: transform var(--transition-fast);
+  transition: transform 200ms cubic-bezier(0.4, 0, 0.2, 1), color 150ms ease;
+  color: var(--color-text-tertiary);
 }
 
 .nav-section--expanded .nav-section__chevron {
@@ -58,12 +63,13 @@
 
 .nav-section--active > .nav-section__header {
   color: var(--color-text-primary);
-  border-left: 2px solid var(--color-brand);
+  font-weight: var(--weight-semibold);
+  border-left: 3px solid var(--color-brand);
+  background: var(--color-surface-raised);
 }
 
-.nav-section--active.nav-section--expanded > .nav-section__body {
-  background: var(--color-brand-subtle);
-  border-radius: 0 0 var(--radius-md) var(--radius-md);
+.nav-section--active .nav-section__chevron {
+  color: var(--color-text-secondary);
 }
 
 .panel-toggle-btn {
@@ -100,8 +106,10 @@
 
 .panel-toggle-btn:hover {
   color: var(--color-text-primary);
-  background: var(--color-surface-overlay);
+  background: var(--color-surface-hover);
   border-color: var(--color-border-default);
+  transform: translateX(-1px);
+  transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast), transform 150ms ease;
 }
 
 .panel-toggle-btn svg {
@@ -137,6 +145,10 @@
 
 @media (prefers-reduced-motion: reduce) {
   .nav-section__body {
+    transition: none;
+  }
+
+  .nav-section__chevron {
     transition: none;
   }
 
