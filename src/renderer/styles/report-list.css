@@ -531,7 +531,8 @@
 }
 
 .report-card:not(.report-card--baseline):not(.report-card--compare):active {
-  background: var(--color-surface-raised);
+  background: var(--color-surface-hover);
+  transition: none;
 }
 
 .report-card--baseline {
@@ -748,4 +749,143 @@
 .report-card:focus-visible {
   outline: 2px solid var(--color-brand);
   outline-offset: -2px;
+}
+
+/* Multi-select mode */
+.report-card--multi-selected {
+  background: var(--color-brand-subtle);
+  box-shadow: inset 3px 0 0 var(--color-brand-ring);
+}
+.report-card--multi-selected:hover {
+  background: var(--color-brand-subtle-hover);
+}
+
+.multi-select-active .report-card-actions {
+  display: none;
+}
+
+.multi-select-active .report-card-body {
+  opacity: 0.85;
+}
+.multi-select-active .report-card--multi-selected .report-card-body {
+  opacity: 1;
+}
+
+.report-card-leading {
+  width: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.report-card-leading .report-card-index--lead {
+  transition: opacity 80ms ease;
+}
+
+.report-card-leading .report-card-checkbox {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 80ms ease;
+}
+
+.report-card:hover .report-card-checkbox,
+.report-card:focus-within .report-card-checkbox {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.report-card:hover .report-card-index--lead,
+.report-card:focus-within .report-card-index--lead {
+  opacity: 0;
+}
+
+.multi-select-active .report-card-checkbox {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.multi-select-active .report-card-index--lead {
+  opacity: 0;
+}
+
+.report-card-checkbox {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-xs);
+  color: var(--color-border-default);
+  cursor: pointer;
+}
+
+.report-card-checkbox:hover {
+  color: var(--color-text-secondary);
+}
+
+.report-card-checkbox--checked {
+  color: var(--color-brand);
+}
+
+.report-card-checkbox svg {
+  display: block;
+}
+
+/* Multi-select toolbar */
+#multi-select-toolbar-slot {
+  position: sticky;
+  bottom: 0;
+  z-index: var(--z-dropdown);
+  flex-shrink: 0;
+}
+
+.multi-select-toolbar {
+  display: flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 var(--space-3);
+  background: var(--color-surface-raised);
+  border-top: 1px solid var(--color-border-subtle);
+  box-shadow: var(--shadow-up-md);
+  transform: translateY(100%);
+  opacity: 0;
+  transition: transform var(--dur-base) var(--ease-decelerate),
+              opacity var(--dur-fast) var(--ease-standard);
+}
+
+.multi-select-toolbar--visible {
+  transform: translateY(0);
+  opacity: 1;
+}
+
+.multi-select-toolbar__count {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  margin-right: auto;
+}
+
+.multi-select-toolbar__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.multi-select-toolbar__actions .btn-destructive {
+  color: var(--color-destructive);
+  background: transparent;
+  border: none;
+}
+
+.multi-select-toolbar__actions .btn-destructive:hover {
+  background: var(--color-destructive-subtle);
+}
+
+.multi-select-toolbar__close {
+  margin-left: var(--space-2);
 }

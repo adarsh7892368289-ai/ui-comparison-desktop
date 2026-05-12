@@ -51,6 +51,11 @@ const initialState = {
   bulkJob:                null,
   bulkParsedRows:         [],
   bulkDetectionState:     'idle',
+  multiSelect: {
+    active:      false,
+    selectedIds: new Set(),
+    anchorId:    null,
+  },
 };
 
 let _state       = { ...initialState };
@@ -213,6 +218,7 @@ function reduce(state, type, payload) {
         bulkJob:               state.bulkJob,
         bulkParsedRows:        state.bulkParsedRows,
         bulkDetectionState:    state.bulkDetectionState,
+        multiSelect:           state.multiSelect,
       };
 
     case 'BULK_PARSED_ROWS_SET':
@@ -529,6 +535,93 @@ function reduce(state, type, payload) {
         ...state,
         selectedBrowser: payload.browser ?? null,
       };
+
+    case 'MULTI_SELECT_ENTER': {
+      const ids = new Set(state.multiSelect.selectedIds);
+      if (payload.id) { ids.add(payload.id); }
+      return {
+        ...state,
+        multiSelect: { active: true, selectedIds: ids, anchorId: payload.id ?? null },
+      };
+    }
+
+    case 'MULTI_SELECT_EXIT':
+      return {
+        ...state,
+        multiSelect: { active: false, selectedIds: new Set(), anchorId: null },
+      };
+
+    case 'MULTI_SELECT_TOGGLE': {
+      const ids = new Set(state.multiSelect.selectedIds);
+      if (ids.has(payload.id)) { ids.delete(payload.id); } else { ids.add(payload.id); }
+      if (ids.size === 0) {
+        return {
+          ...state,
+          multiSelect: { active: false, selectedIds: new Set(), anchorId: null },
+        };
+      }
+      return {
+        ...state,
+        multiSelect: { ...state.multiSelect, selectedIds: ids, anchorId: payload.id },
+      };
+    }
+
+    case 'MULTI_SELECT_RANGE': {
+      const ids = new Set(state.multiSelect.selectedIds);
+      for (const id of (payload.ids ?? [])) { ids.add(id); }
+      const last = payload.ids?.[payload.ids.length - 1] ?? state.multiSelect.anchorId;
+      return {
+        ...state,
+        multiSelect: { ...state.multiSelect, selectedIds: ids, anchorId: last },
+      };
+    }
+
+    case 'MULTI_SELECT_ALL':
+      return {
+        ...state,
+        multiSelect: { ...state.multiSelect, selectedIds: new Set(payload.ids ?? []) },
+      };
+
+    case 'MULTI_SELECT_CLEAR':
+      return {
+        ...state,
+        multiSelect: { active: false, selectedIds: new Set(), anchorId: null },
+      };
+
+    case 'MULTI_SELECT_AFTER_DELETE': {
+      const deletedSet = new Set(payload.deletedIds ?? []);
+      const ids = new Set(state.multiSelect.selectedIds);
+      for (const id of deletedSet) { ids.delete(id); }
+      const selectedBaseline = deletedSet.has(state.selectedBaseline) ? null : state.selectedBaseline;
+      const selectedCompare  = deletedSet.has(state.selectedCompare)  ? null : state.selectedCompare;
+      return {
+        ...state,
+        selectedBaseline,
+        selectedCompare,
+        multiSelect: {
+          active:      ids.size > 0,
+          selectedIds: ids,
+          anchorId:    ids.size > 0 ? state.multiSelect.anchorId : null,
+        },
+      };
+    }
+
+    case 'REPORTS_REMOVE_BY_IDS': {
+      const removeSet = new Set(payload.ids ?? []);
+      return {
+        ...state,
+        reports: state.reports.filter(r => !removeSet.has(r.id)),
+      };
+    }
+
+    case 'REPORTS_RESTORE': {
+      const existingIds = new Set(state.reports.map(r => r.id));
+      const toRestore = (payload.reports ?? []).filter(r => !existingIds.has(r.id));
+      return {
+        ...state,
+        reports: [...state.reports, ...toRestore],
+      };
+    }
 
     case 'FILTERS_UPDATED':
       return { ...state, filters: { ...state.filters, ...payload.filters } };

@@ -177,6 +177,11 @@ app.on('ready', () => {
         template = [
           { label: 'Delete this bulk run', click: () => send({ action: 'deleteBulkJob', bulkJobId }) },
         ];
+      } else if (payload.multiSelect === true && typeof payload.count === 'number') {
+        const count = payload.count;
+        template = [
+          { label: `Delete ${count} report${count !== 1 ? 's' : ''}`, click: () => send({ action: 'deleteSelected' }) },
+        ];
       } else if (typeof payload.reportId === 'string') {
         const { reportId } = payload;
         template = [

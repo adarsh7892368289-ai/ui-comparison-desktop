@@ -733,6 +733,14 @@ export async function routeBulkPairOpenClick(pairIndex) {
 
   const { baselineReportId, compareReportId, comparisonId, mode } = pair;
 
+  // [BUG FIX] Guard against deleted reports from partial bulk-job delete
+  const allReports = await storage.loadReports();
+  const reportIds = new Set(allReports.map(r => r.id));
+  if (!reportIds.has(baselineReportId) || !reportIds.has(compareReportId)) {
+    Toast.show('This pair\'s report was deleted — re-run the pair to view it.', 'error');
+    return;
+  }
+
   const rowEl = document.querySelector(`.bulk-row[data-pair-index="${pairIndex}"]`);
   if (rowEl) rowEl.classList.add('bulk-row--loading');
 

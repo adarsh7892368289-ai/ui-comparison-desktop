@@ -8,7 +8,21 @@
       "WebFetch(domain:web.dev)",
       "WebFetch(domain:chromium.googlesource.com)",
       "Bash(npx eslint *)",
-      "WebFetch(domain:m3.material.io)"
+      "WebFetch(domain:m3.material.io)",
+      "WebFetch(domain:ant.design)",
+      "WebFetch(domain:polaris.shopify.com)",
+      "WebFetch(domain:polaris-react.shopify.com)",
+      "WebFetch(domain:www.figma.com)",
+      "WebFetch(domain:www.lukew.com)",
+      "WebFetch(domain:cloudscape.design)",
+      "WebFetch(domain:gestalt.pinterest.systems)",
+      "WebFetch(domain:www.uxmatters.com)",
+      "WebFetch(domain:www.youtube.com)",
+      "WebFetch(domain:help.figma.com)",
+      "WebFetch(domain:support.microsoft.com)",
+      "WebFetch(domain:shopify.dev)",
+      "WebFetch(domain:dribbble.com)",
+      "WebFetch(domain:www.sarasoueidan.com)"
     ]
   }
 }

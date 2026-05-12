@@ -11,6 +11,7 @@ import { tryLoadCachedComparison } from './compare-workflow.js';
 import { relativeTime } from '../utils/time.js';
 import { hostFromUrl, lastPathSegment, envTag } from '../utils/report-metadata.js';
 import { createReportList } from '../components/report-list.js';
+import { createMultiSelectToolbar } from '../components/multi-select-toolbar.js';
 import { attachTooltip } from '../components/tooltip/tooltip.js';
 import {
   wireReportSelect,
@@ -30,6 +31,12 @@ import {
 
 let _reportList = null;
 let _statusBar = null;
+let _multiSelectToolbar = null;
+
+let _undoBuffer = null;
+let _undoTimer = null;
+let _undoActive = false;
+let _deferredLoads = [];
 
 let _emptyClearSearchButton = null;
 let _sortMenuDocDown = null;
@@ -246,6 +253,9 @@ function _rebuildGroupMenu() {
       _persistListViewConfig();
       _syncGroupControl();
       _closeGroupMenu();
+      if (getState().multiSelect.active) {
+        dispatch('MULTI_SELECT_CLEAR');
+      }
     });
     li.appendChild(row);
     menu.appendChild(li);
@@ -535,12 +545,166 @@ function renderReportList(reports, searchQuery) {
 }
 
 async function loadAndRenderReports() {
+  if (_undoActive) {
+    _deferredLoads.push(() => loadAndRenderReports());
+    return;
+  }
   const reports = await storage.loadReports();
   dispatch('REPORTS_LOADED', { reports });
 
   const query = document.getElementById('search-reports')?.value ?? '';
   renderReportList(reports, query);
   populateReportSelectors(reports);
+}
+
+function _drainDeferredLoads() {
+  const pending = _deferredLoads.splice(0);
+  if (pending.length > 0) {
+    pending[pending.length - 1]();
+  }
+}
+
+async function handleDeleteSelectedReports() {
+  const state = getState();
+  const ms = state.multiSelect;
+  if (!ms.active || ms.selectedIds.size === 0) return;
+
+  const ids = [...ms.selectedIds];
+  const count = ids.length;
+
+  const confirmed = await Modal.confirm(
+    'Delete selected reports',
+    `Delete ${count} report${count !== 1 ? 's' : ''}? You will have 5 seconds to undo.`,
+    { confirmText: 'Delete', destructive: true }
+  );
+  if (!confirmed) return;
+
+  _undoBuffer = state.reports.filter(r => ids.includes(r.id));
+
+  dispatch('MULTI_SELECT_AFTER_DELETE', { deletedIds: ids });
+  dispatch('REPORTS_REMOVE_BY_IDS', { ids });
+
+  const query = document.getElementById('search-reports')?.value ?? '';
+  renderReportList(getState().reports, query);
+  populateReportSelectors(getState().reports);
+
+  _undoActive = true;
+
+  const deletedBaseline = _undoBuffer.some(r => r.id === state.selectedBaseline);
+  const deletedCompare = _undoBuffer.some(r => r.id === state.selectedCompare);
+  if (deletedBaseline && deletedCompare) {
+    Toast.info('Baseline and compare reports were deleted — select new ones');
+  } else if (deletedBaseline) {
+    Toast.info('Baseline report was deleted — select a new one');
+  } else if (deletedCompare) {
+    Toast.info('Compare report was deleted — select a new one');
+  }
+
+  _showUndoToast(count);
+  _undoTimer = setTimeout(() => _commitDelete(ids), 5000);
+}
+
+async function _commitDelete(ids) {
+  if (!_undoActive) return;
+  clearTimeout(_undoTimer);
+  _undoTimer = null;
+  const savedBuffer = _undoBuffer;
+  _undoBuffer = null;
+  _undoActive = false;
+
+  _dismissUndoToast();
+
+  try {
+    await storage.deleteReportsBatch(ids);
+  } catch (err) {
+    // [BUG FIX] On failure, restore reports from buffer and re-render
+    if (savedBuffer && savedBuffer.length > 0) {
+      dispatch('REPORTS_RESTORE', { reports: savedBuffer });
+      const query = document.getElementById('search-reports')?.value ?? '';
+      renderReportList(getState().reports, query);
+      populateReportSelectors(getState().reports);
+    }
+    Toast.error('Delete failed — reports restored');
+  }
+
+  _drainDeferredLoads();
+}
+
+function _handleUndo() {
+  if (!_undoActive) return;
+  clearTimeout(_undoTimer);
+  _undoTimer = null;
+  _undoActive = false;
+
+  _dismissUndoToast();
+
+  if (_undoBuffer) {
+    dispatch('REPORTS_RESTORE', { reports: _undoBuffer });
+    const query = document.getElementById('search-reports')?.value ?? '';
+    renderReportList(getState().reports, query);
+    populateReportSelectors(getState().reports);
+    Toast.info(`${_undoBuffer.length} report${_undoBuffer.length !== 1 ? 's' : ''} restored`);
+  }
+  _undoBuffer = null;
+
+  _drainDeferredLoads();
+}
+
+let _undoToastEl = null;
+
+function _showUndoToast(count) {
+  _dismissUndoToast();
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+
+  const toast = document.createElement('div');
+  toast.className = 'toast toast--info toast--has-progress';
+  toast.setAttribute('role', 'status');
+  toast.setAttribute('aria-live', 'polite');
+
+  const main = document.createElement('div');
+  main.className = 'toast-main';
+
+  const copy = document.createElement('div');
+  copy.className = 'toast-copy';
+  const title = document.createElement('div');
+  title.className = 'toast-title';
+  title.textContent = `${count} report${count !== 1 ? 's' : ''} deleted`;
+  copy.appendChild(title);
+  main.appendChild(copy);
+
+  const undoBtn = document.createElement('button');
+  undoBtn.type = 'button';
+  undoBtn.className = 'btn-ghost btn-sm toast-undo-btn';
+  undoBtn.textContent = 'Undo';
+  undoBtn.style.marginLeft = 'auto';
+  undoBtn.style.fontWeight = '600';
+  undoBtn.addEventListener('click', () => _handleUndo());
+  main.appendChild(undoBtn);
+
+  toast.appendChild(main);
+
+  const bar = document.createElement('div');
+  bar.className = 'toast-progress';
+  toast.appendChild(bar);
+
+  container.appendChild(toast);
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      toast.classList.add('toast--visible');
+      bar.style.transition = 'transform 5000ms linear';
+      requestAnimationFrame(() => { bar.style.transform = 'scaleX(0)'; });
+    });
+  });
+
+  _undoToastEl = toast;
+}
+
+function _dismissUndoToast() {
+  if (!_undoToastEl) return;
+  _undoToastEl.remove();
+  _undoToastEl = null;
 }
 
 function populateReportSelectors(reports) {
@@ -666,7 +830,22 @@ async function initializeApp(statusBar) {
       },
       onDelete: (report) => handleDeleteReport(report),
       onBaseline: (report) => selectBaselineFromReport(report),
-      onCompare: (report) => selectCompareFromReport(report)
+      onCompare: (report) => selectCompareFromReport(report),
+      onMultiSelectEnter: (id) => {
+        dispatch('MULTI_SELECT_ENTER', { id });
+      },
+      onMultiSelectToggle: (id) => {
+        dispatch('MULTI_SELECT_TOGGLE', { id });
+      },
+      onMultiSelectAll: (ids) => {
+        dispatch('MULTI_SELECT_ALL', { ids });
+      },
+      onMultiSelectExit: () => {
+        dispatch('MULTI_SELECT_EXIT');
+      },
+      onMultiSelectDelete: () => {
+        handleDeleteSelectedReports();
+      },
     });
   }
 
@@ -683,6 +862,10 @@ async function initializeApp(statusBar) {
   if (typeof api?.onContextAction === 'function') {
     api.onContextAction((payload) => {
       if (!payload) { return; }
+      if (payload.action === 'deleteSelected') {
+        handleDeleteSelectedReports();
+        return;
+      }
       if (payload.action === 'deleteBulkJob' && typeof payload.bulkJobId === 'string') {
         void _handleDeleteBulkJob(payload.bulkJobId);
         return;
@@ -712,9 +895,32 @@ async function initializeApp(statusBar) {
     });
   }
 
+  const toolbarSlot = document.getElementById('multi-select-toolbar-slot');
+  if (toolbarSlot) {
+    _multiSelectToolbar = createMultiSelectToolbar(toolbarSlot);
+
+    toolbarSlot.addEventListener('multi-select-action', (e) => {
+      const action = e.detail?.action;
+      if (action === 'select-all') {
+        const ids = _reportList?.getVisibleReportIds() ?? [];
+        dispatch('MULTI_SELECT_ALL', { ids });
+      } else if (action === 'deselect') {
+        dispatch('MULTI_SELECT_CLEAR');
+      } else if (action === 'delete') {
+        handleDeleteSelectedReports();
+      } else if (action === 'close') {
+        dispatch('MULTI_SELECT_EXIT');
+      }
+    });
+  }
+
   subscribe((state) => {
     _reportList?.setBaseline(state.selectedBaseline ?? null);
     _reportList?.setCompare(state.selectedCompare ?? null);
+    _reportList?.setMultiSelectMode(state.multiSelect.active);
+    _reportList?.setSelectedIds(state.multiSelect.selectedIds);
+    _reportList?.setAnchorId(state.multiSelect.anchorId);
+    _multiSelectToolbar?.render(state);
     _syncJobMeta(state);
   });
 
@@ -794,4 +1000,5 @@ export {
   populateReportSelectors,
   handleDeleteReport,
   handleDeleteAllReports,
+  handleDeleteSelectedReports,
   initializeApp };

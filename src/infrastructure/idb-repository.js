@@ -493,6 +493,129 @@ class IDBRepository {
     }
   }
 
+  deleteReportsBatch(ids) {
+    return this.#enqueue(performanceMonitor.wrap('idb.deleteReportsBatch', () => this.#deleteReportsBatchInner(ids)));
+  }
+
+  async #deleteReportsBatchInner(ids) {
+    if (!ids?.length) { return { success: true, deletedCount: 0 }; }
+    try {
+      const db = await this.#getDB();
+      const idSet = new Set(ids);
+
+      const stores = [
+        STORE_REPORTS, STORE_ELEMENTS,
+        STORE_COMPARISONS, STORE_COMP_DIFFS, STORE_COMP_SUMMARY,
+        STORE_VISUAL_BLOBS, STORE_VISUAL_KEYFRAMES, STORE_VISUAL_ELEMENT_RECTS,
+        STORE_BULK_JOBS, STORE_BULK_PAIRS,
+      ];
+      const tx = db.transaction(stores, 'readwrite');
+
+      const compStore = tx.objectStore(STORE_COMPARISONS);
+      const compIds = new Set();
+      const bulkJobCounts = new Map();
+
+      const collectCompAndBulk = () => new Promise((resolve) => {
+        const reportStore = tx.objectStore(STORE_REPORTS);
+        let pending = idSet.size;
+        if (pending === 0) { resolve(); return; }
+
+        for (const reportId of idSet) {
+          const req = reportStore.get(reportId);
+          req.onsuccess = () => {
+            const report = req.result;
+            if (report?.bulkJobId) {
+              bulkJobCounts.set(report.bulkJobId, (bulkJobCounts.get(report.bulkJobId) ?? 0) + 1);
+            }
+            pending--;
+            if (pending === 0) { resolve(); }
+          };
+          req.onerror = () => { pending--; if (pending === 0) { resolve(); } };
+        }
+      });
+
+      const collectCompIds = () => new Promise((resolve) => {
+        let pending = idSet.size * 2;
+        if (pending === 0) { resolve(); return; }
+
+        for (const reportId of idSet) {
+          const range = IDBKeyRange.only(reportId);
+          const blReq = compStore.index('by_baseline').getAllKeys(range);
+          blReq.onsuccess = () => {
+            for (const k of (blReq.result ?? [])) { compIds.add(k); }
+            pending--;
+            if (pending === 0) { resolve(); }
+          };
+          blReq.onerror = () => { pending--; if (pending === 0) { resolve(); } };
+
+          const cpReq = compStore.index('by_compare').getAllKeys(range);
+          cpReq.onsuccess = () => {
+            for (const k of (cpReq.result ?? [])) { compIds.add(k); }
+            pending--;
+            if (pending === 0) { resolve(); }
+          };
+          cpReq.onerror = () => { pending--; if (pending === 0) { resolve(); } };
+        }
+      });
+
+      await Promise.all([collectCompAndBulk(), collectCompIds()]);
+
+      for (const reportId of idSet) {
+        tx.objectStore(STORE_REPORTS).delete(reportId);
+        tx.objectStore(STORE_ELEMENTS).delete(reportId);
+      }
+
+      for (const compId of compIds) {
+        compStore.delete(compId);
+        tx.objectStore(STORE_COMP_DIFFS).delete(compId);
+        tx.objectStore(STORE_COMP_SUMMARY).delete(compId);
+
+        const blobStore = tx.objectStore(STORE_VISUAL_BLOBS);
+        const blobReq = blobStore.index('by_comparisonId').openKeyCursor(IDBKeyRange.only(compId));
+        blobReq.onsuccess = () => {
+          const cursor = blobReq.result;
+          if (cursor) { blobStore.delete(cursor.primaryKey); cursor.continue(); }
+        };
+
+        const kfStore = tx.objectStore(STORE_VISUAL_KEYFRAMES);
+        const kfReq = kfStore.index('by_session').openKeyCursor(IDBKeyRange.only(compId));
+        kfReq.onsuccess = () => {
+          const cursor = kfReq.result;
+          if (cursor) { kfStore.delete(cursor.primaryKey); cursor.continue(); }
+        };
+
+        const rectStore = tx.objectStore(STORE_VISUAL_ELEMENT_RECTS);
+        const rectReq = rectStore.index('by_session').openKeyCursor(IDBKeyRange.only(compId));
+        rectReq.onsuccess = () => {
+          const cursor = rectReq.result;
+          if (cursor) { rectStore.delete(cursor.primaryKey); cursor.continue(); }
+        };
+      }
+
+      // Cascade bulk jobs where ALL reports from the job are being deleted
+      for (const [bulkJobId] of bulkJobCounts) {
+        const allReportsReq = tx.objectStore(STORE_REPORTS).index('by_bulkJobId').getAllKeys(IDBKeyRange.only(bulkJobId));
+        allReportsReq.onsuccess = () => {
+          const remaining = (allReportsReq.result ?? []).filter(k => !idSet.has(k));
+          if (remaining.length === 0) {
+            tx.objectStore(STORE_BULK_JOBS).delete(bulkJobId);
+            const pairReq = tx.objectStore(STORE_BULK_PAIRS).index('by_jobId').openKeyCursor(IDBKeyRange.only(bulkJobId));
+            pairReq.onsuccess = () => {
+              const cursor = pairReq.result;
+              if (cursor) { tx.objectStore(STORE_BULK_PAIRS).delete(cursor.primaryKey); cursor.continue(); }
+            };
+          }
+        };
+      }
+
+      await transactionToPromise(tx);
+      return { success: true, deletedCount: idSet.size };
+    } catch (deleteError) {
+      trackError(ERROR_CODES.STORAGE_WRITE_FAILED, deleteError.message, { ids });
+      return { success: false, error: deleteError.message };
+    }
+  }
+
   async #getComparisonIdsByReportId(db, reportId) {
     try {
       const tx     = db.transaction(STORE_COMPARISONS, 'readonly');

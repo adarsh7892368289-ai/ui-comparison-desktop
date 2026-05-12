@@ -1,7 +1,7 @@
 import { sanitize } from '../utils/sanitize.js';
 import { STAGE_RE, hostFromUrl, lastPathSegment, envTag } from '../utils/report-metadata.js';
 import { relativeTime, absoluteCalendarDate } from '../utils/time.js';
-import { iconArrowUp, iconArrowUpDown, iconFileDown, iconTarget, iconTrash2 } from '../utils/icons.js';
+import { iconArrowUp, iconArrowUpDown, iconFileDown, iconTarget, iconTrash2, iconSquare, iconCheckSquare } from '../utils/icons.js';
 import { SINGLE_EXTRACTED_REPORT_EXPORT_MENU } from '@core/export/extraction-exporters/extracted-report-export-catalog.js';
 import { handleExportReport } from '../application/export-workflow.js';
 import { Modal } from './modal.js';
@@ -50,6 +50,9 @@ export class ReportList {
     this._focusedLogicalIndex = -1;
     this._lastKnownHeight = 0;
     this._jobMeta = new Map();
+    this._multiSelectActive = false;
+    this._selectedIds = new Set();
+    this._anchorId = null;
 
     this._viewport = _el('div', 'vscroll-viewport');
     this._spacer = _el('div', 'vscroll-spacer');
@@ -146,6 +149,30 @@ export class ReportList {
     if (!reportIdxs.includes(this._focusedLogicalIndex)) {
       this._focusedLogicalIndex = reportIdxs[0];
     }
+  }
+
+  setMultiSelectMode(active) {
+    const changed = this._multiSelectActive !== active;
+    this._multiSelectActive = active;
+    if (changed) {
+      this._container.classList.toggle('multi-select-active', active);
+      this._render();
+    }
+  }
+
+  setSelectedIds(selectedIds) {
+    this._selectedIds = selectedIds;
+    this._render();
+  }
+
+  setAnchorId(anchorId) {
+    this._anchorId = anchorId;
+  }
+
+  getVisibleReportIds() {
+    return this._rowItems
+      .filter(item => item.type === 'report')
+      .map(item => item.report.id);
   }
 
   setSelected() {
@@ -471,21 +498,49 @@ export class ReportList {
     card.addEventListener('contextmenu', (e) => {
       if (!window.electronAPI?.showContextMenu) { return; }
       e.preventDefault();
-      window.electronAPI.showContextMenu({
-        reportId: report.id,
-        isBaseline,
-      });
+      if (this._multiSelectActive) {
+        if (!this._selectedIds.has(report.id)) {
+          this._cb.onMultiSelectToggle?.(report.id);
+        }
+        const count = this._selectedIds.has(report.id)
+          ? this._selectedIds.size
+          : this._selectedIds.size + 1;
+        window.electronAPI.showContextMenu({
+          reportId: report.id,
+          multiSelect: true,
+          count,
+        });
+      } else {
+        window.electronAPI.showContextMenu({
+          reportId: report.id,
+          isBaseline,
+        });
+      }
     });
 
     const body = _el('div', 'report-card-body');
     body.style.cursor = 'pointer';
     body.title = report.url || '';
 
+    const isMultiSelected = this._multiSelectActive && this._selectedIds.has(report.id);
+    if (this._multiSelectActive) {
+      card.setAttribute('aria-selected', String(isMultiSelected));
+    }
+    if (isMultiSelected) {
+      card.classList.add('report-card--multi-selected');
+    }
+
+    const cardLabel = report.title || report.name || host || report.url || '';
+
+    const leading = _el('div', 'report-card-leading');
+    const indexSpan = _el('span', 'report-card-index report-card-index--lead', `R${displayIndex}`);
+    indexSpan.title = report.url || '';
+    leading.appendChild(indexSpan);
+    leading.appendChild(this._renderCheckbox(report.id, cardLabel));
+    card.appendChild(leading);
+
     if (density === 'compact') {
       const row = _el('div', 'report-card-line report-card-line--compact');
-      const indexSpan = _el('span', 'report-card-index report-card-index--lead', `R${displayIndex}`);
-      indexSpan.title = report.url || '';
-      row.appendChild(indexSpan);
       this._appendEnvBadge(row, showEnvBadge, env, report);
       const hostSpan = _el('span', 'report-card-host report-card-host--secondary', host);
       hostSpan.title = report.url || '';
@@ -494,9 +549,6 @@ export class ReportList {
     } else {
       const line1 = _el('div', 'report-card-line report-card-line--primary');
       line1.title = report.url || '';
-      const indexSpan = _el('span', 'report-card-index report-card-index--lead', `R${displayIndex}`);
-      indexSpan.title = report.url || '';
-      line1.appendChild(indexSpan);
       this._appendEnvBadge(line1, showEnvBadge, env, report);
       const hostSpan = _el('span', 'report-card-host', host);
       hostSpan.title = report.url || '';
@@ -551,7 +603,7 @@ export class ReportList {
       }
     }
 
-    body.addEventListener('click', () => this._cb.onSelect?.(report));
+    body.addEventListener('click', (e) => this._handleCardClick(e, report));
     card.appendChild(body);
 
     const actions = _el('div', 'report-card-actions');
@@ -619,6 +671,25 @@ export class ReportList {
     return card;
   }
 
+  _renderCheckbox(reportId, reportLabel) {
+    const checked = this._selectedIds.has(reportId);
+    const container = _el('div', 'report-card-checkbox');
+    container.innerHTML = checked ? iconCheckSquare(16) : iconSquare(16);
+    if (checked) container.classList.add('report-card-checkbox--checked');
+    container.setAttribute('role', 'checkbox');
+    container.setAttribute('aria-checked', String(checked));
+    container.setAttribute('aria-label', `Select ${reportLabel || 'report'}`);
+    container.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!this._multiSelectActive) {
+        this._cb.onMultiSelectEnter?.(reportId);
+      } else {
+        this._cb.onMultiSelectToggle?.(reportId);
+      }
+    });
+    return container;
+  }
+
   _reportRowIndices() {
     const indices = [];
     for (let i = 0; i < this._rowItems.length; i++) {
@@ -649,6 +720,49 @@ export class ReportList {
     });
   }
 
+  _handleCardClick(e, report) {
+    const isMac = navigator.platform.toUpperCase().includes('MAC');
+    const modKey = isMac ? e.metaKey : e.ctrlKey;
+
+    if (e.shiftKey && this._multiSelectActive) {
+      e.preventDefault();
+      const visibleIds = this.getVisibleReportIds();
+      const anchorId = this._anchorId;
+      if (!anchorId) {
+        this._cb.onMultiSelectAll?.([report.id]);
+        return;
+      }
+      const anchorIdx = visibleIds.indexOf(anchorId);
+      const targetIdx = visibleIds.indexOf(report.id);
+      if (anchorIdx < 0 || targetIdx < 0) {
+        this._cb.onMultiSelectAll?.([report.id]);
+        return;
+      }
+      const start = Math.min(anchorIdx, targetIdx);
+      const end = Math.max(anchorIdx, targetIdx);
+      const rangeIds = visibleIds.slice(start, end + 1);
+      this._cb.onMultiSelectAll?.(rangeIds);
+      return;
+    }
+
+    if (modKey) {
+      e.preventDefault();
+      if (!this._multiSelectActive) {
+        this._cb.onMultiSelectEnter?.(report.id);
+      } else {
+        this._cb.onMultiSelectToggle?.(report.id);
+      }
+      return;
+    }
+
+    if (this._multiSelectActive) {
+      this._cb.onMultiSelectToggle?.(report.id);
+      return;
+    }
+
+    this._cb.onSelect?.(report);
+  }
+
   _handleKeydown(e) {
     const reportIndices = this._reportRowIndices();
     if (reportIndices.length === 0) return;
@@ -663,6 +777,48 @@ export class ReportList {
           item => item.type === 'report' && item.report.id === focusedId
         );
         if (logIdx >= 0) this._focusedLogicalIndex = logIdx;
+      }
+    }
+
+    if (this._multiSelectActive) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        this._cb.onMultiSelectExit?.();
+        return;
+      }
+
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        const tag = e.target?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+        if (this._selectedIds.size > 0) {
+          e.preventDefault();
+          this._cb.onMultiSelectDelete?.();
+          return;
+        }
+      }
+
+      const isMac = navigator.platform.toUpperCase().includes('MAC');
+      if ((e.key === 'a' || e.key === 'A') && (isMac ? e.metaKey : e.ctrlKey)) {
+        e.preventDefault();
+        const visibleIds = this.getVisibleReportIds();
+        this._cb.onMultiSelectAll?.(visibleIds);
+        return;
+      }
+
+      if (e.key === ' ') {
+        const id = focusedId
+          ?? (this._rowItems[this._focusedLogicalIndex]?.type === 'report'
+            ? this._rowItems[this._focusedLogicalIndex].report.id
+            : null);
+        if (id) {
+          e.preventDefault();
+          this._cb.onMultiSelectToggle?.(id);
+          return;
+        }
+      }
+
+      if (e.key === 'b' || e.key === 'B' || e.key === 'c' || e.key === 'C' || e.key === 'Enter') {
+        return;
       }
     }
 
