@@ -201,7 +201,6 @@ async function handleImportReport(file, slot) {
     const actionKey = slot === 'baseline' ? 'BASELINE_SELECTED' : 'COMPARE_SELECTED';
     dispatch(actionKey, { id: imported.id });
     syncCompareButton();
-    tryLoadCachedComparison();
 
     Toast.success(`Report imported — ${imported.totalElements ?? 0} elements`);
   } catch (err) {

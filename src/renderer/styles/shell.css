@@ -44,8 +44,7 @@ html.platform-darwin #app-root {
   max-width: none;
   background: var(--color-surface-sidebar);
   border-right: 1px solid var(--color-border-subtle);
-  overflow-x: visible;
-  overflow-y: auto;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 0;
@@ -57,9 +56,6 @@ html.platform-darwin #app-root {
   flex-direction: row;
   align-items: stretch;
   flex-shrink: 0;
-  position: sticky;
-  top: 0;
-  z-index: 13;
   min-width: 0;
   background: var(--color-surface-sidebar);
   border-bottom: 1px solid var(--color-border-subtle);
@@ -175,8 +171,7 @@ html.platform-darwin #app-root {
   max-width: none;
 }
 
-#left-panel .card--toolbar [data-sidebar-toolbar] .sidebar-import-btn,
-#left-panel .card--toolbar [data-sidebar-toolbar] .sidebar-delete-all-btn {
+#left-panel .card--toolbar [data-sidebar-toolbar] .sidebar-import-btn {
   flex-shrink: 0;
 }
 
@@ -212,8 +207,7 @@ html.platform-darwin #app-root {
   background: var(--color-surface-hover);
 }
 
-#left-panel .card--toolbar [data-sidebar-toolbar] .sidebar-import-btn,
-#left-panel .card--toolbar [data-sidebar-toolbar] .sidebar-delete-all-btn {
+#left-panel .card--toolbar [data-sidebar-toolbar] .sidebar-import-btn {
   width: 28px;
   min-width: 28px;
   height: 28px;
@@ -221,38 +215,6 @@ html.platform-darwin #app-root {
   padding: 0;
 }
 
-#left-panel .sidebar-delete-all-btn {
-  flex-shrink: 0;
-  width: 28px;
-  min-width: 28px;
-  height: 28px;
-  min-height: 28px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  margin-left: var(--space-1);
-  position: relative;
-  transition: color 150ms ease, background 150ms ease;
-}
-
-#left-panel .sidebar-delete-all-btn::before {
-  content: '';
-  position: absolute;
-  left: calc(-1 * var(--space-1));
-  top: 4px;
-  bottom: 4px;
-  width: 1px;
-  background: var(--color-border-subtle);
-}
-
-#left-panel .sidebar-delete-all-btn:hover:not(:disabled),
-#left-panel .sidebar-delete-all-btn:focus-visible:not(:disabled) {
-  color: var(--color-danger);
-  background: var(--color-danger-subtle);
-}
 
 #left-panel #export-all-btn.split-btn__primary {
   position: relative;
@@ -276,7 +238,8 @@ html.platform-darwin #app-root {
 }
 
 #left-panel .reports-list {
-  flex: 1;
+  flex: 1 1 0;
+  min-height: 0;
   padding: 0 var(--space-2);
 }
 
@@ -286,9 +249,42 @@ html.platform-darwin #app-root {
   flex-direction: column;
   overflow-x: hidden;
   overflow-y: auto;
-  scrollbar-gutter: stable;
   min-height: 0;
   background: var(--color-surface-base);
+}
+
+#main-content::-webkit-scrollbar {
+  width: 12px;
+}
+
+#main-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+#main-content::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.0);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background 0.25s;
+}
+
+#main-content.is-scrolling::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.35);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+#main-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(128, 128, 128, 0.55);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+#main-content::-webkit-scrollbar-thumb:active {
+  background: rgba(128, 128, 128, 0.7);
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
 .main-pane-section-nav {
@@ -332,18 +328,12 @@ html.platform-darwin #app-root {
   background: var(--color-surface-overlay);
 }
 
-#main-controls {
+.tab-panel {
   padding: var(--space-6);
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-}
-
-#main-content > #section-bulk:not([hidden]) {
-  padding: var(--space-6);
-  box-sizing: border-box;
-  flex-shrink: 0;
 }
 
 #section-extract,
@@ -377,10 +367,6 @@ html.platform-darwin #app-root {
   display: none;
 }
 
-#main-content[data-active-section="extract"]:not(.main-content--compare-results-visible)
-  .compare-results-stack {
-  display: none;
-}
 
 .system-banner {
   grid-column: 1 / -1;
@@ -515,8 +501,8 @@ html.platform-darwin #app-root {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -12px;
-  right: 0;
+  left: -2px;
+  right: -6px;
   cursor: ew-resize;
   z-index: 21;
   pointer-events: auto;

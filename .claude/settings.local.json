@@ -22,7 +22,25 @@
       "WebFetch(domain:support.microsoft.com)",
       "WebFetch(domain:shopify.dev)",
       "WebFetch(domain:dribbble.com)",
-      "WebFetch(domain:www.sarasoueidan.com)"
+      "WebFetch(domain:www.sarasoueidan.com)",
+      "Bash(npx webpack *)",
+      "WebFetch(domain:docs.saucelabs.com)",
+      "WebFetch(domain:playwright.dev)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:saucelabs.com)",
+      "Bash(gh search *)",
+      "Bash(gh api *)",
+      "Bash(npm search *)",
+      "WebFetch(domain:stackoverflow.com)",
+      "Bash(npm view *)",
+      "WebFetch(domain:www.browserstack.com)",
+      "WebFetch(domain:wiki.saucelabs.com)",
+      "Bash(python -c \"import sys,json; [print\\(f['name']\\) for f in json.loads\\(sys.stdin.read\\(\\)\\)]\")",
+      "WebFetch(domain:api.github.com)",
+      "Bash(mkdir -p c:/Projects/ui-comparison-desktop/docs)"
+    ],
+    "additionalDirectories": [
+      "c:\\Projects\\ui-comparison-desktop"
     ]
   }
 }

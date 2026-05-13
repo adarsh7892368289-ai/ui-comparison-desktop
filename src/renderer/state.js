@@ -172,11 +172,15 @@ function reduce(state, type, payload) {
       }
       return state;
 
-    case 'BASELINE_SELECTED':
-      return { ...state, selectedBaseline: payload.id || null };
+    case 'BASELINE_SELECTED': {
+      const id = payload.id || null;
+      return { ...state, selectedBaseline: id === state.selectedBaseline ? null : id };
+    }
 
-    case 'COMPARE_SELECTED':
-      return { ...state, selectedCompare: payload.id || null };
+    case 'COMPARE_SELECTED': {
+      const id = payload.id || null;
+      return { ...state, selectedCompare: id === state.selectedCompare ? null : id };
+    }
 
     case 'MODE_CHANGED':
       return { ...state, compareMode: payload.mode };

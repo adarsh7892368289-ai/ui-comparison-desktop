@@ -7,7 +7,6 @@ import {
 '../ui.js';
 import { SINGLE_EXTRACTED_REPORT_EXPORT_FORMATS } from '@core/export/extraction-exporters/extracted-report-export-catalog.js';
 import { handleExportReport } from './export-workflow.js';
-import { tryLoadCachedComparison } from './compare-workflow.js';
 import { relativeTime } from '../utils/time.js';
 import { hostFromUrl, lastPathSegment, envTag } from '../utils/report-metadata.js';
 import { createReportList } from '../components/report-list.js';
@@ -463,29 +462,39 @@ function announceReportList(message) {
 }
 
 function selectBaselineFromReport(report) {
+  const wasBaseline = getState().selectedBaseline === report.id;
   dispatch('BASELINE_SELECTED', { id: report.id });
   const sel = document.getElementById('baseline-report');
   if (sel) {
-    sel.value = report.id;
+    sel.value = getState().selectedBaseline ?? '';
     syncReportSelectTrigger(sel);
   }
   syncCompareButton();
-  tryLoadCachedComparison();
-  Toast.success('Set as baseline');
-  announceReportList(`Set as baseline — ${hostFromUrl(report.url)}`);
+  if (wasBaseline) {
+    Toast.info('Baseline cleared');
+    announceReportList('Baseline cleared');
+  } else {
+    Toast.success('Set as baseline');
+    announceReportList(`Set as baseline — ${hostFromUrl(report.url)}`);
+  }
 }
 
 function selectCompareFromReport(report) {
+  const wasCompare = getState().selectedCompare === report.id;
   dispatch('COMPARE_SELECTED', { id: report.id });
   const sel = document.getElementById('compare-report');
   if (sel) {
-    sel.value = report.id;
+    sel.value = getState().selectedCompare ?? '';
     syncReportSelectTrigger(sel);
   }
   syncCompareButton();
-  tryLoadCachedComparison();
-  Toast.success('Set as compare');
-  announceReportList(`Set as compare — ${hostFromUrl(report.url)}`);
+  if (wasCompare) {
+    Toast.info('Compare cleared');
+    announceReportList('Compare cleared');
+  } else {
+    Toast.success('Set as compare');
+    announceReportList(`Set as compare — ${hostFromUrl(report.url)}`);
+  }
 }
 
 function insertReportListSkeletonOverlay() {
@@ -747,9 +756,6 @@ function populateReportSelectors(reports) {
     dispatch('COMPARE_SELECTED', { id: cv });
   }
   syncCompareButton();
-  if (bv && cv && bv !== cv) {
-    void tryLoadCachedComparison();
-  }
 }
 
 async function handleDeleteReport(report) {

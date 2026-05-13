@@ -1,10 +1,10 @@
 #left-panel {
-  overflow-x: visible;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 #left-panel .reports-list {
   padding: 0;
+  min-height: 0;
 }
 
 #left-panel .filter-rail {
@@ -361,7 +361,8 @@
 }
 
 #reports-list {
-  flex: 1;
+  flex: 1 1 0;
+  min-height: 0;
   overflow: hidden;
   position: relative;
 }
@@ -413,6 +414,40 @@
   inset: 0;
   overflow-x: hidden;
   overflow-y: auto;
+}
+
+.vscroll-viewport::-webkit-scrollbar {
+  width: 12px;
+}
+
+.vscroll-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.vscroll-viewport::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.0);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background 0.25s;
+}
+
+.vscroll-viewport.is-scrolling::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.35);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.vscroll-viewport::-webkit-scrollbar-thumb:hover {
+  background: rgba(128, 128, 128, 0.55);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.vscroll-viewport::-webkit-scrollbar-thumb:active {
+  background: rgba(128, 128, 128, 0.7);
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
 .vscroll-spacer {
@@ -679,6 +714,14 @@
   border: 1px solid var(--color-brand-border);
 }
 
+.report-role-badge--clickable {
+  cursor: pointer;
+}
+
+.report-role-badge--clickable:hover {
+  opacity: 0.75;
+}
+
 .report-card-actions svg {
   display: block;
 }
@@ -740,8 +783,21 @@
 }
 
 .report-card:hover .report-card-actions,
-.report-card:focus-within .report-card-actions {
+.report-card:focus-within .report-card-actions,
+.report-card:hover .report-card-checkbox,
+.report-card:focus-within .report-card-checkbox {
   opacity: 1;
+}
+
+.report-card:hover .report-card-checkbox,
+.report-card:focus-within .report-card-checkbox {
+  pointer-events: auto;
+  color: var(--color-text-secondary);
+}
+
+.report-card-actions button,
+.report-card-actions summary,
+.report-card-actions a {
   pointer-events: auto;
 }
 
@@ -790,15 +846,6 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 80ms ease;
-}
-
-.report-card:hover .report-card-checkbox,
-.report-card:focus-within .report-card-checkbox {
-  opacity: 1;
-  pointer-events: auto;
 }
 
 .report-card:hover .report-card-index--lead,
@@ -820,6 +867,9 @@
   height: 20px;
   border-radius: var(--radius-xs);
   color: var(--color-border-default);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 80ms ease;
   cursor: pointer;
 }
 
@@ -837,8 +887,6 @@
 
 /* Multi-select toolbar */
 #multi-select-toolbar-slot {
-  position: sticky;
-  bottom: 0;
   z-index: var(--z-dropdown);
   flex-shrink: 0;
 }

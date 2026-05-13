@@ -59,3 +59,4 @@ project-structure.txt
 
 # Local AI assistant settings
 .claude/
+.cursor/

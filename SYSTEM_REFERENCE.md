@@ -345,7 +345,10 @@ All channel constants live in `src/main/ipc-channels.js` and are imported as
 
 - **Runtime string:** `show-context-menu`
 - **Direction / method:** renderer → main, `send`
-- **Renderer payload:** `{ reportId }` **or** `{ bulkJobId }` (the listener in `index.js:163-198` branches on which key is present; `bulkJobId` produces a single "Delete this bulk run" item that pushes `CONTEXT_ACTION` with `{ action:'deleteBulkJob', bulkJobId }`; `reportId` produces the standard 7-item report menu).
+- **Renderer payload:** One of three shapes — the listener in `index.js:163-198` branches in this priority order:
+  1. `{ bulkJobId:string }` — produces a single "Delete this bulk run" item → `CONTEXT_ACTION { action:'deleteBulkJob', bulkJobId }`.
+  2. `{ multiSelect:true, count:number }` — produces a single "Delete N report(s)" item → `CONTEXT_ACTION { action:'deleteSelected' }`.
+  3. `{ reportId:string }` — produces the standard 7-item report menu (Set as Baseline, Set as Compare, separator, Export as JSON/Excel/CSV, separator, Delete).
 - **Main behavior:** Builds a native `Menu` from the appropriate template and `popup()`s. Item clicks call `event.sender.send(CH.CONTEXT_ACTION, payload)`.
 - **Handler:** `index.js`
 - **Producer:** —
@@ -354,7 +357,7 @@ All channel constants live in `src/main/ipc-channels.js` and are imported as
 
 - **Runtime string:** `context-action`
 - **Direction / method:** main → renderer, `webContents.send`
-- **Payload:** `{ action: 'setBaseline'|'compare'|'export'|'delete'|'deleteBulkJob', format?:'json'|'excel'|'csv', reportId?, bulkJobId? }`
+- **Payload:** `{ action: 'setBaseline'|'compare'|'export'|'delete'|'deleteSelected'|'deleteBulkJob', format?:'json'|'excel'|'csv', reportId?, bulkJobId? }`
 - **Main behavior:** Pushed when context menu item clicked.
 - **Handler:** —
 - **Producer:** `index.js` (per item click)
@@ -640,6 +643,19 @@ inside `initializeApp(statusBar)`. `initializeApp` is itself
 called from `src/renderer/app.js:381` (`await initializeApp(_statusBar)`)
 during the renderer's startup sequence, before the report list is hydrated
 and before `detectAndOfferResume` runs.
+
+**Relationship to bulk-job resume.** The WAL replay and the bulk-job resume
+are two independent recovery mechanisms that address different failure
+scopes. The WAL recovers individual *IDB writes* that were interrupted
+mid-transaction (e.g. a `saveReport` that crashed between writing the WAL
+row and completing the actual store put). The bulk-job resume recovers
+*bulk orchestration state* — it scans the `bulk_jobs` store for rows
+whose `status` was never flipped from `'running'`, meaning the app was
+killed while the main-process bulk runner was still dispatching pairs.
+Boot order is: (1) WAL replay, (2) report list hydration, (3) bulk resume
+detection. This order guarantees that any partial report writes from an
+interrupted bulk pair are replayed (or force-failed) before the resume
+banner checks which pairs completed.
 
 ### 5.2 Circuit breaker
 
@@ -1061,12 +1077,33 @@ single-compare panel`. The `#main-content` element gains/loses
 - Duplicate dedupeKey while visible: **updates in-place** (increments `repeatCount`, refreshes timer).
 - When `_visible.length >= MAX_VISIBLE`, new arrivals trigger `dispatchEvictOldest`.
 
-### 9.8 State machine (complete action list)
+### 9.8 Multi-select & undo (`report-manager.js`, `multi-select-toolbar.js`)
+
+**State slice:** `state.multiSelect = { active:boolean, selectedIds:Set<string>, anchorId:string|null }`.
+
+**Activation:** `report-list.js` dispatches `MULTI_SELECT_ENTER` on long-press / ctrl-click / right-click of a report card. Subsequent clicks toggle via `MULTI_SELECT_TOGGLE`. Shift-click dispatches `MULTI_SELECT_RANGE` with all ids between the anchor and the clicked card (computed from the current sorted/filtered row list). `MULTI_SELECT_ALL` replaces the set with every visible report id.
+
+**Toolbar:** `createMultiSelectToolbar(slotEl)` (`src/renderer/components/multi-select-toolbar.js`) mounts a fixed-position `div[role=toolbar]` in `#multi-select-toolbar-slot`. Actions are emitted as `CustomEvent('multi-select-action')` with `detail.action ∈ { 'select-all', 'deselect', 'delete', 'close' }`. `report-manager.js` listens on the slot and routes accordingly.
+
+**Native context menu:** When `multiSelect.active`, the report list sends `showContextMenu({ multiSelect:true, count })` → main builds a single-item "Delete N reports" menu → `CONTEXT_ACTION { action:'deleteSelected' }` → renderer routes to `handleDeleteSelectedReports`.
+
+**Delete with undo:** `handleDeleteSelectedReports` (in `report-manager.js`):
+1. Confirms via `Modal.confirm` with a destructive intent.
+2. Stores the deleted reports in `_undoBuffer`.
+3. Dispatches `MULTI_SELECT_AFTER_DELETE` (prunes selection set) and `REPORTS_REMOVE_BY_IDS` (optimistic UI removal).
+4. Shows a `Toast` with a 5 s auto-dismiss and an "Undo" button.
+5. On undo: dispatches `REPORTS_RESTORE` (re-inserts the buffered reports into state) and clears `_undoBuffer` — **no IDB writes were committed yet**, so no storage rollback is needed.
+6. On timeout (no undo): commits the deletes to IDB via `storage.deleteReportsBatch(ids)` (single batch operation), then flushes any deferred loads.
+
+`_deferredLoads` prevents `loadAndRenderReports` from re-reading IDB during the undo window, which would overwrite the optimistic state with stale data.
+
+### 9.9 State machine (complete action list)
 
 `src/renderer/state.js` — all action types handled by the reducer:
 
 **Single-extract/compare lifecycle:**
-`REPORTS_LOADED`, `REPORT_DELETED`, `EXTRACTION_STARTED`, `EXTRACTION_PROGRESS`,
+`REPORTS_LOADED`, `REPORT_DELETED`, `REPORTS_REMOVE_BY_IDS`,
+`REPORTS_RESTORE`, `EXTRACTION_STARTED`, `EXTRACTION_PROGRESS`,
 `EXTRACT_UI_END`, `COMPARISON_STARTED`, `COMPARISON_PROGRESS`,
 `COMPARISON_COMPLETE`, `COMPARISON_ERROR`, `COMPARE_UI_END`,
 `OPERATION_CANCELLING`, `RESET_COMPARISON`, `DISMISS_ERROR`,
@@ -1076,6 +1113,11 @@ single-compare panel`. The `#main-content` element gains/loses
 **Browser detection:**
 `BROWSER_DETECTION_STARTED`, `BROWSERS_DETECTED`, `BROWSER_DETECTION_FAILED`,
 `BROWSER_SELECTED`.
+
+**Multi-select (report management):**
+`MULTI_SELECT_ENTER`, `MULTI_SELECT_EXIT`, `MULTI_SELECT_TOGGLE`,
+`MULTI_SELECT_RANGE`, `MULTI_SELECT_ALL`, `MULTI_SELECT_CLEAR`,
+`MULTI_SELECT_AFTER_DELETE`.
 
 **Bulk:**
 `BULK_PARSED_ROWS_SET`, `BULK_DETECTION_STATE`, `BULK_JOB_STARTED`,
@@ -1098,6 +1140,12 @@ single-compare panel`. The `#main-content` element gains/loses
 - `BULK_JOB_STARTED` optimistically flips the **first pair** to
   `'extracting-baseline'` synchronously (UI spec §9.1 "Optimistic Start")
   so the running view paints within one animation frame.
+- `MULTI_SELECT_TOGGLE` exits multi-select mode (resets `active:false`) when
+  the toggled-off id causes the set to become empty.
+- `MULTI_SELECT_AFTER_DELETE` nulls out `selectedBaseline` / `selectedCompare`
+  if the deleted id set contains either. Exits mode if no ids remain.
+- `BASELINE_SELECTED` / `COMPARE_SELECTED` are **toggles**: re-dispatching with
+  the same id that's already selected sets the value back to `null`.
 
 ---
 
@@ -1575,7 +1623,7 @@ Output: `{ valid, warnings, invalid }`. Warning rows are pushed to **both** `val
 hashes each side's `(url, browserType, channelOrPath, YYYY-MM-DD)` via
 `buildExtractionKey` (SHA-256 over the pipe-joined string, hex-encoded;
 `crypto.subtle.digest` runs in the renderer). It then queries
-`storage.findReportByExtractionKey(extractionKey)` (which uses the v9
+`storage.loadReportByExtractionKey(extractionKey)` (which uses the v9
 `reports.by_extractionKey` index and picks the newest hit). Hits become
 `pair.dedupedSides.{baseline|compare} = { reportId }`. `forceRefresh:true`
 short-circuits the entire computation. `_persistPairResult` later stamps

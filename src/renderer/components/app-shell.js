@@ -46,17 +46,11 @@ export class AppShell {
     this._toggleQueued = 0;
     this._toggleFlushRaf = null;
     this._sidebarTransitionEnd = null;
-    this._mainPaneIO = null;
     this._mainPaneResizeObserver = null;
-    this._mainPaneIoRatios = new Map();
-    this._mainPaneIoObserved = [];
     this._applyInitialSidebarFromStorage();
-    this._buildSectionsMap();
-    this._wireSectionHeaders();
     this._syncPanelToggleButton();
-    this._hydrateAccordionFromDom();
     this._initResizeHandle();
-    this._initMainPaneSectionNav();
+    this._initTabNav();
   }
 
   _railWidthPx() {
@@ -94,164 +88,9 @@ export class AppShell {
     }
   }
 
-  _buildSectionsMap() {
-    this._sections = new Map();
-    for (const id of this._sectionIds) {
-      const el = document.getElementById(`section-${id}`);
-      if (!el) { continue; }
-      const headerBtn = el.querySelector('.nav-section__header');
-      const body = document.getElementById(`body-${id}`);
-      const firstFocusable = body?.querySelector(
-        'input:not([disabled]), button:not([disabled]), select:not([disabled]), [tabindex="0"]'
-      ) ?? null;
-      this._sections.set(id, { el, headerBtn, firstFocusable });
-    }
-  }
-
-  _wireSectionHeaders() {
-    this._sections.forEach((section, id) => {
-      section.headerBtn?.addEventListener('click', () => this.toggleSection(id));
-    });
-  }
-
-  toggleSection(sectionId) {
-    const section = this._sections.get(sectionId);
-    if (!section) { return; }
-    const isOpen = section.el.classList.contains('nav-section--expanded');
-    if (isOpen) {
-      this._closeSectionBody(section.el);
-      section.el.classList.remove('nav-section--expanded');
-      section.headerBtn?.setAttribute('aria-expanded', 'false');
-    } else {
-      this._openSectionBody(section.el);
-      section.el.classList.add('nav-section--expanded');
-      section.headerBtn?.setAttribute('aria-expanded', 'true');
-      this._applyWorkflowFocus(sectionId);
-    }
-    this._persistSectionStates();
-  }
-
-  activateSection(sectionId) {
-    const section = this._sections.get(sectionId);
-    if (!section) { return; }
-    if (!section.el.classList.contains('nav-section--expanded')) {
-      this._openSectionBody(section.el);
-      section.el.classList.add('nav-section--expanded');
-      section.headerBtn?.setAttribute('aria-expanded', 'true');
-      this._persistSectionStates();
-    }
-    this._applyWorkflowFocus(sectionId);
-    section.firstFocusable?.focus();
-  }
-
-  _applyWorkflowFocus(sectionId) {
-    this._sections.forEach(({ el }, id) => {
-      el.classList.toggle('nav-section--active', id === sectionId);
-    });
-    this._activeSection = sectionId;
-    const mainContent = document.getElementById('main-content');
-    if (mainContent) { mainContent.dataset.activeSection = sectionId; }
-    this._syncMainPaneSectionNavButtons(sectionId);
-    this._syncShellSectionPanes(sectionId);
-    if (sectionId === 'extract' || sectionId === 'compare') {
-      dispatch('BULK_ACTIVE_PAIR_CLEAR', {});
-    }
-  }
-
-  _syncShellSectionPanes(sectionId) {
-    const mainControls = document.getElementById('main-controls');
-    const sectionBulk = document.getElementById('section-bulk');
-    const compareStack = document.getElementById('compare-results-stack');
-    if (!mainControls || !sectionBulk) { return; }
-    if (sectionId === 'bulk') {
-      sectionBulk.hidden = false;
-      mainControls.hidden = true;
-      if (compareStack) { compareStack.hidden = true; }
-    } else {
-      sectionBulk.hidden = true;
-      mainControls.hidden = false;
-      if (compareStack) { compareStack.hidden = false; }
-    }
-  }
-
-  _syncMainPaneSectionNavButtons(sectionId) {
+  _initTabNav() {
     const nav = document.getElementById('main-pane-section-nav');
     if (!nav) { return; }
-    nav.querySelectorAll('[data-main-pane-section]').forEach((btn) => {
-      const sid = btn.getAttribute('data-main-pane-section');
-      btn.setAttribute('aria-current', String(sid === sectionId));
-    });
-  }
-
-  _mainPaneIoPickWinner() {
-    const rank = (el) => {
-      if (el.id === 'section-bulk') { return 2; }
-      if (el.id === 'section-compare') { return 1; }
-      return 0;
-    };
-    let bestEl = null;
-    let bestR = -1;
-    for (const el of this._mainPaneIoObserved) {
-      const r = this._mainPaneIoRatios.get(el) ?? 0;
-      if (r <= 0) { continue; }
-      if (
-        bestEl == null
-        || r > bestR
-        || (r === bestR && rank(el) > rank(bestEl))
-      ) {
-        bestR = r;
-        bestEl = el;
-      }
-    }
-    if (bestEl == null) { return null; }
-    if (bestEl.id === 'section-bulk') { return 'bulk'; }
-    if (bestEl.id === 'section-compare') { return 'compare'; }
-    return 'extract';
-  }
-
-  _mainPaneIoFlushSpy() {
-    const nav = document.getElementById('main-pane-section-nav');
-    if (!nav) { return; }
-    const spy = this._mainPaneIoPickWinner();
-    if (spy == null) {
-      nav.removeAttribute('data-spy-section');
-      return;
-    }
-    nav.dataset.spySection = spy;
-  }
-
-  _initMainPaneSectionNav() {
-    const main = document.getElementById('main-content');
-    const nav = document.getElementById('main-pane-section-nav');
-    if (!main || !nav) { return; }
-
-    const prefersReduce = typeof window !== 'undefined'
-      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-    const scrollTo = (el, block) => {
-      if (!el) { return; }
-      el.scrollIntoView(prefersReduce ? { behavior: 'auto', block } : { behavior: 'smooth', block });
-    };
-
-    nav.addEventListener('click', (e) => {
-      const btn = e.target.closest('[data-main-pane-section]');
-      if (!btn || !nav.contains(btn)) { return; }
-      const id = btn.getAttribute('data-main-pane-section');
-      if (id === 'extract') {
-        this.activateSection('extract');
-        scrollTo(document.getElementById('section-extract'), 'start');
-        return;
-      }
-      if (id === 'compare') {
-        this.activateSection('compare');
-        scrollTo(document.getElementById('section-compare'), 'start');
-        return;
-      }
-      if (id === 'bulk') {
-        this.activateSection('bulk');
-        return;
-      }
-    });
 
     const setOffset = () => {
       const h = nav.offsetHeight;
@@ -266,160 +105,51 @@ export class AppShell {
     this._mainPaneResizeObserver = new ResizeObserver(setOffset);
     this._mainPaneResizeObserver.observe(nav);
 
-    const observed = [
-      document.getElementById('section-extract'),
-      document.getElementById('section-compare'),
-      document.getElementById('section-bulk'),
-    ].filter(Boolean);
-    this._mainPaneIoObserved = observed;
-    for (const el of observed) {
-      this._mainPaneIoRatios.set(el, 0);
-    }
-
-    const thresholds = [0, 0.25, 0.5, 1];
-    this._mainPaneIO = new IntersectionObserver(
-      (entries) => {
-        for (const en of entries) {
-          this._mainPaneIoRatios.set(
-            en.target,
-            en.isIntersecting ? en.intersectionRatio : 0
-          );
-        }
-        this._mainPaneIoFlushSpy();
-      },
-      { root: main, rootMargin: '0px', threshold: thresholds }
-    );
-    for (const el of observed) {
-      this._mainPaneIO.observe(el);
-    }
-  }
-
-  _persistSectionStates() {
-    const states = {};
-    this._sections.forEach((section, id) => {
-      states[id] = section.el.classList.contains('nav-section--expanded');
+    nav.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-main-pane-section]');
+      if (!btn || !nav.contains(btn)) { return; }
+      const id = btn.getAttribute('data-main-pane-section');
+      this.activateSection(id);
     });
-    try { localStorage.setItem('section-states', JSON.stringify(states)); } catch { void 0; }
   }
 
-  _hydrateAccordionFromDom() {
-    let saved = null;
-    try { saved = JSON.parse(localStorage.getItem('section-states')); } catch { void 0; }
-    this._sections.forEach((section, id) => {
-      const shouldBeOpen = saved ? (saved[id] ?? false) : (id === 'extract');
-      const body = section.el.querySelector('.nav-section__body');
-      if (!body) { return; }
-      body.style.transition = 'none';
-      if (shouldBeOpen) {
-        section.el.classList.add('nav-section--expanded');
-        body.style.height = 'auto';
-        body.style.overflow = '';
-        section.headerBtn?.setAttribute('aria-expanded', 'true');
+  activateSection(sectionId) {
+    if (!this._sectionIds.includes(sectionId)) { return; }
+    this._activeSection = sectionId;
+
+    for (const id of this._sectionIds) {
+      const panel = document.getElementById(`section-${id}`);
+      if (!panel) { continue; }
+      if (id === sectionId) {
+        panel.hidden = false;
       } else {
-        section.el.classList.remove('nav-section--expanded');
-        body.style.height = '0';
-        body.style.overflow = 'hidden';
-        section.headerBtn?.setAttribute('aria-expanded', 'false');
+        panel.hidden = true;
       }
-      body.offsetHeight;
-      body.style.transition = '';
+    }
+
+    const mainContent = document.getElementById('main-content');
+    if (mainContent) { mainContent.dataset.activeSection = sectionId; }
+
+    this._syncTabButtons(sectionId);
+
+    if (sectionId === 'extract' || sectionId === 'compare') {
+      dispatch('BULK_ACTIVE_PAIR_CLEAR', {});
+    }
+  }
+
+  _syncTabButtons(sectionId) {
+    const nav = document.getElementById('main-pane-section-nav');
+    if (!nav) { return; }
+    nav.querySelectorAll('[data-main-pane-section]').forEach((btn) => {
+      const sid = btn.getAttribute('data-main-pane-section');
+      const isActive = sid === sectionId;
+      btn.setAttribute('aria-current', String(isActive));
+      btn.setAttribute('aria-selected', String(isActive));
     });
   }
 
-  _clearBodyTransitionEnd(body) {
-    if (body._accordionOpenFallback != null) {
-      clearTimeout(body._accordionOpenFallback);
-      body._accordionOpenFallback = null;
-    }
-    if (body._accordionTransitionEnd) {
-      body.removeEventListener('transitionend', body._accordionTransitionEnd);
-      body._accordionTransitionEnd = null;
-    }
-  }
-
-  _openSectionBody(sectionEl) {
-    const body = sectionEl.querySelector('.nav-section__body');
-    if (!body) { return; }
-
-    const reduce = typeof window !== 'undefined'
-      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (reduce) {
-      this._clearBodyTransitionEnd(body);
-      body.style.height = 'auto';
-      body.style.overflow = '';
-      return;
-    }
-
-    this._clearBodyTransitionEnd(body);
-
-    const rectH = body.getBoundingClientRect().height;
-    const fullH = body.scrollHeight;
-    if (fullH > 0 && Math.abs(rectH - fullH) < 2) {
-      body.style.height = 'auto';
-      body.style.overflow = '';
-      return;
-    }
-    body.style.height = '0';
-    body.style.overflow = 'hidden';
-    body.style.display = 'block';
-    body.offsetHeight;
-    const targetH = body.scrollHeight;
-    body.style.height = `${targetH}px`;
-    const OPEN_FALLBACK_MS = 320;
-    let openSettled = false;
-    const finishOpen = () => {
-      if (openSettled) { return; }
-      openSettled = true;
-      this._clearBodyTransitionEnd(body);
-      body.style.height = 'auto';
-      body.style.overflow = '';
-    };
-    const onEnd = (ev) => {
-      if (ev.propertyName !== 'height' || ev.target !== body) { return; }
-      finishOpen();
-    };
-    body._accordionTransitionEnd = onEnd;
-    body.addEventListener('transitionend', onEnd);
-    body._accordionOpenFallback = setTimeout(finishOpen, OPEN_FALLBACK_MS);
-  }
-
-  _closeSectionBody(sectionEl) {
-    const body = sectionEl.querySelector('.nav-section__body');
-    if (!body) { return; }
-
-    const reduce = typeof window !== 'undefined'
-      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (reduce) {
-      this._clearBodyTransitionEnd(body);
-      body.style.height = '0';
-      body.style.overflow = 'hidden';
-      return;
-    }
-
-    this._clearBodyTransitionEnd(body);
-    const startH = Math.max(body.getBoundingClientRect().height, 1);
-    body.style.height = `${startH}px`;
-    body.offsetHeight;
-    body.style.overflow = 'hidden';
-    body.style.height = '0';
-  }
-
-  _measureAndSetHeight(sectionEl) {
-    const body = sectionEl?.querySelector('.nav-section__body');
-    if (!body || !sectionEl.classList.contains('nav-section--expanded')) { return; }
-    body.style.height = 'auto';
-    body.style.overflow = '';
-  }
-
-  _sidebarExpandedWidthPx() {
-    const def = DEFAULT_SIDEBAR_EXPANDED_PX;
-    try {
-      const saved = parseInt(localStorage.getItem('sidebar-width'), 10);
-      if (!Number.isNaN(saved) && saved >= SIDEBAR_MIN_W && saved <= SIDEBAR_MAX_W) {
-        return clampSidebarWidth(saved);
-      }
-    } catch { void 0; }
-    return clampSidebarWidth(def);
+  toggleSection(sectionId) {
+    this.activateSection(sectionId);
   }
 
   _syncPanelToggleButton() {
@@ -523,6 +253,17 @@ export class AppShell {
       this._clearSidebarTransitionEnd(root);
       if (this._collapsed && refocusToggle) { btn.focus(); }
     }, SIDEBAR_MOTION_MS);
+  }
+
+  _sidebarExpandedWidthPx() {
+    const def = DEFAULT_SIDEBAR_EXPANDED_PX;
+    try {
+      const saved = parseInt(localStorage.getItem('sidebar-width'), 10);
+      if (!Number.isNaN(saved) && saved >= SIDEBAR_MIN_W && saved <= SIDEBAR_MAX_W) {
+        return clampSidebarWidth(saved);
+      }
+    } catch { void 0; }
+    return clampSidebarWidth(def);
   }
 
   _initResizeHandle() {
@@ -643,16 +384,10 @@ export class AppShell {
   destroy() {
     const root = document.getElementById('app-root');
     this._clearSidebarTransitionEnd(root);
-    if (this._mainPaneIO) {
-      this._mainPaneIO.disconnect();
-      this._mainPaneIO = null;
-    }
     if (this._mainPaneResizeObserver) {
       this._mainPaneResizeObserver.disconnect();
       this._mainPaneResizeObserver = null;
     }
-    this._mainPaneIoRatios.clear();
-    this._mainPaneIoObserved = [];
   }
 }
 

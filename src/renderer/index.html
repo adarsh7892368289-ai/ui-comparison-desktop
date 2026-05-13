@@ -51,10 +51,6 @@
                 <span class="btn-label" id="import-label">Import</span>
               </button>
               <input type="file" id="import-report-input" accept=".json,.csv,.xlsx,.xls" hidden>
-              <button type="button" class="btn-icon-ghost sidebar-import-btn sidebar-delete-all-btn" id="delete-all-btn"
-                      aria-label="Delete all reports">
-                <span class="btn-label delete-all-btn__label">Delete All</span>
-              </button>
             </div>
           </div>
         </div>
@@ -117,216 +113,182 @@
 
     <div id="main-content" role="main">
 
-      <nav id="main-pane-section-nav" class="main-pane-section-nav" aria-label="Main pane sections">
-        <button type="button" class="main-pane-section-nav__btn" data-main-pane-section="extract">Extract</button>
-        <button type="button" class="main-pane-section-nav__btn" data-main-pane-section="compare">Compare</button>
-        <button type="button" class="main-pane-section-nav__btn" data-main-pane-section="bulk" id="bulk-tab-btn">Bulk<span class="nav-section-status" id="nav-section-status-bulk" aria-hidden="true"></span></button>
+      <nav id="main-pane-section-nav" class="main-pane-section-nav" aria-label="Main pane sections" role="tablist">
+        <button type="button" class="main-pane-section-nav__btn" data-main-pane-section="extract" role="tab" aria-selected="true" aria-controls="section-extract">Extract</button>
+        <button type="button" class="main-pane-section-nav__btn" data-main-pane-section="compare" role="tab" aria-selected="false" aria-controls="section-compare">Compare</button>
+        <button type="button" class="main-pane-section-nav__btn" data-main-pane-section="bulk" role="tab" aria-selected="false" aria-controls="section-bulk" id="bulk-tab-btn">Bulk<span class="nav-section-status" id="nav-section-status-bulk" aria-hidden="true"></span></button>
       </nav>
 
-      <div id="main-controls">
+      <div class="tab-panel" id="section-extract" role="tabpanel" aria-labelledby="tab-extract">
 
-      <div class="nav-section nav-section--expanded nav-section--active" id="section-extract">
-        <button class="nav-section__header" id="header-extract" aria-expanded="true" aria-controls="body-extract">
-          <span class="nav-section__header-leading">
-            <span>Extract</span>
-          </span>
-          <svg class="nav-section__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
-            <path d="M9 18l6-6-6-6"/>
-          </svg>
-        </button>
-        <div class="nav-section__body" id="body-extract" role="region" aria-labelledby="header-extract">
+        <section id="panel-extract" class="panel active">
 
-          <section id="panel-extract" class="panel active">
-
-            <div class="card">
+          <div class="card">
+            <div class="form-field">
+              <label class="label" for="url-input">Page URL</label>
+              <input class="input" id="url-input" type="url" placeholder="https://example.com" autocomplete="off">
+            </div>
+            <div id="browser-selector-slot"></div>
+            <div class="card-header">
+              <h2 class="card-title">Filters</h2>
+              <span class="badge-optional">optional</span>
+            </div>
+            <div class="filter-grid">
               <div class="form-field">
-                <label class="label" for="url-input">Page URL</label>
-                <input class="input" id="url-input" type="url" placeholder="https://example.com" autocomplete="off">
+                <label class="label" for="filter-class">Class</label>
+                <input class="input" id="filter-class" type="text" placeholder="e.g. btn">
               </div>
-              <div id="browser-selector-slot"></div>
-              <div class="card-header">
-                <h2 class="card-title">Filters</h2>
-                <span class="badge-optional">optional</span>
+              <div class="form-field">
+                <label class="label" for="filter-id">ID</label>
+                <input class="input" id="filter-id" type="text" placeholder="e.g. header">
               </div>
-              <div class="filter-grid">
-                <div class="form-field">
-                  <label class="label" for="filter-class">Class</label>
-                  <input class="input" id="filter-class" type="text" placeholder="e.g. btn">
-                </div>
-                <div class="form-field">
-                  <label class="label" for="filter-id">ID</label>
-                  <input class="input" id="filter-id" type="text" placeholder="e.g. header">
-                </div>
-                <div class="form-field">
-                  <label class="label" for="filter-tag">Tag</label>
-                  <input class="input" id="filter-tag" type="text" placeholder="e.g. button">
-                </div>
+              <div class="form-field">
+                <label class="label" for="filter-tag">Tag</label>
+                <input class="input" id="filter-tag" type="text" placeholder="e.g. button">
               </div>
             </div>
-
-            <button class="btn-primary" id="extract-btn">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" aria-hidden="true">
-                <path d="M4 8V4h4M20 8V4h-4M4 16v4h4M20 16v4h-4"/>
-              </svg>
-              Extract Elements
-            </button>
-
-            <div class="progress-container">
-              <div id="extract-progress" class="progress-wrap" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="0% — Ready" aria-label="Extraction progress">
-                <div class="progress-track"><div class="progress-fill" id="extract-progress-bar"></div></div>
-                <div class="progress-label-row">
-                  <span class="progress-label" id="extract-progress-label">Scanning…</span>
-                </div>
-              </div>
-            </div>
-
-            <div id="extract-summary" class="operation-summary-slot" aria-live="polite" hidden></div>
-
-            <div id="extract-error" class="error-msg"></div>
-
-          </section>
-
-        </div>
-      </div>
-
-      <div class="nav-section" id="section-compare">
-        <button class="nav-section__header" id="header-compare" aria-expanded="false" aria-controls="body-compare">
-          <span class="nav-section__header-leading">
-            <span>Compare</span>
-          </span>
-          <svg class="nav-section__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
-            <path d="M9 18l6-6-6-6"/>
-          </svg>
-        </button>
-        <div class="nav-section__body" id="body-compare" role="region" aria-labelledby="header-compare">
-
-          <section id="panel-compare" class="panel active">
-
-            <div class="card">
-
-              <div class="form-field">
-                <label class="label" id="label-baseline-report" for="baseline-report-trigger">Baseline</label>
-                <div class="report-select">
-                  <button type="button" class="report-select__trigger" id="baseline-report-trigger" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="label-baseline-report baseline-report-value" aria-controls="baseline-report-listbox">
-                    <span class="report-select__value" id="baseline-report-value">Select report…</span>
-                  </button>
-                  <div class="report-select__dropdown" id="baseline-report-dropdown" hidden>
-                    <ul class="report-select__list" role="listbox" id="baseline-report-listbox" aria-labelledby="label-baseline-report"></ul>
-                  </div>
-                  <select id="baseline-report" class="report-select__native" hidden aria-hidden="true" tabindex="-1" aria-label="Baseline report">
-                    <option value="">Select report…</option>
-                  </select>
-                </div>
-              </div>
-
-              <div class="vs-divider"><span class="vs-label">VS</span></div>
-
-              <div class="form-field">
-                <label class="label" id="label-compare-report" for="compare-report-trigger">Compare</label>
-                <div class="report-select">
-                  <button type="button" class="report-select__trigger" id="compare-report-trigger" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="label-compare-report compare-report-value" aria-controls="compare-report-listbox">
-                    <span class="report-select__value" id="compare-report-value">Select report…</span>
-                  </button>
-                  <div class="report-select__dropdown" id="compare-report-dropdown" hidden>
-                    <ul class="report-select__list" role="listbox" id="compare-report-listbox" aria-labelledby="label-compare-report"></ul>
-                  </div>
-                  <select id="compare-report" class="report-select__native" hidden aria-hidden="true" tabindex="-1" aria-label="Compare report">
-                    <option value="">Select report…</option>
-                  </select>
-                </div>
-              </div>
-
-              <hr class="card-sep">
-
-              <div class="form-field">
-                <label class="label" id="compare-mode-label" for="compare-mode-dynamic">Mode</label>
-                <div class="segmented-control" role="group" aria-labelledby="compare-mode-label">
-                  <label class="seg-option">
-                    <input type="radio" name="compare-mode" id="compare-mode-dynamic" value="dynamic" checked aria-label="Dynamic mode">
-                    <span class="seg-label">
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
-                        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
-                      </svg>
-                      Dynamic
-                    </span>
-                  </label>
-                  <label class="seg-option">
-                    <input type="radio" name="compare-mode" id="compare-mode-static" value="static" aria-label="Static mode">
-                    <span class="seg-label">
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
-                        <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>
-                      </svg>
-                      Static
-                    </span>
-                  </label>
-                </div>
-                <p class="field-hint" id="mode-hint-dynamic">Compares key styles only — skips text and minor size differences.</p>
-                <p class="field-hint" id="mode-hint-static">Compares everything — all styles, text content, and attributes.</p>
-              </div>
-
-              <label class="toggle-row" for="visual-diff-toggle">
-                <div class="toggle-row__text">
-                  <span class="toggle-row__label">Visual Diff</span>
-                  <span class="toggle-row__hint">Side-by-side screenshot diff</span>
-                </div>
-                <div class="visual-toggle__track">
-                  <input type="checkbox" id="visual-diff-toggle" checked>
-                  <span class="visual-toggle__thumb" aria-hidden="true"></span>
-                </div>
-              </label>
-
-            </div>
-
-            <button class="btn-primary" id="compare-btn" disabled>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" aria-hidden="true">
-                <path d="M8 6l4-4 4 4M16 18l-4 4-4-4M12 2v20"/>
-              </svg>
-              Compare Reports
-            </button>
-
-            <div class="progress-container">
-              <div id="compare-progress" class="progress-wrap" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="0% — Ready" aria-label="Comparison progress">
-                <div class="progress-track"><div class="progress-fill" id="compare-progress-bar"></div></div>
-                <div class="progress-label-row">
-                  <span class="progress-label" id="compare-progress-label">Matching elements…</span>
-                </div>
-              </div>
-            </div>
-
-            <div id="compare-summary" aria-live="polite" hidden></div>
-
-            <div id="compare-error" class="error-msg"></div>
-
-          </section>
-
-          <div id="compare-results-stack" class="compare-results-stack">
-            <div id="compare-results-screenshot-section" class="result-panel__screenshot-section" aria-live="polite"></div>
-            <div id="compare-results"></div>
           </div>
 
-        </div>
-      </div>
+          <button class="btn-primary" id="extract-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" aria-hidden="true">
+              <path d="M4 8V4h4M20 8V4h-4M4 16v4h4M20 16v4h-4"/>
+            </svg>
+            Extract Elements
+          </button>
 
-      </div>
-
-      <div class="nav-section" id="section-bulk" hidden>
-        <button class="nav-section__header" id="header-bulk" aria-expanded="false" aria-controls="body-bulk">
-          <span class="nav-section__header-leading">
-            <span>Bulk</span>
-          </span>
-          <svg class="nav-section__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
-            <path d="M9 18l6-6-6-6"/>
-          </svg>
-        </button>
-        <div class="nav-section__body" id="body-bulk" role="region" aria-labelledby="header-bulk">
-          <section id="panel-bulk" class="panel active">
-            <div id="bulk-resume-banner-slot"></div>
-            <div id="bulk-panel-root"></div>
-          </section>
-          <div id="bulk-result-area" hidden>
-            <div id="bulk-results-screenshot-section" class="result-panel__screenshot-section" aria-live="polite"></div>
-            <div id="bulk-result-panel-host"></div>
+          <div class="progress-container">
+            <div id="extract-progress" class="progress-wrap" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="0% — Ready" aria-label="Extraction progress">
+              <div class="progress-track"><div class="progress-fill" id="extract-progress-bar"></div></div>
+              <div class="progress-label-row">
+                <span class="progress-label" id="extract-progress-label">Scanning…</span>
+              </div>
+            </div>
           </div>
+
+          <div id="extract-summary" class="operation-summary-slot" aria-live="polite" hidden></div>
+
+          <div id="extract-error" class="error-msg"></div>
+
+        </section>
+
+      </div>
+
+      <div class="tab-panel" id="section-compare" role="tabpanel" aria-labelledby="tab-compare" hidden>
+
+        <section id="panel-compare" class="panel active">
+
+          <div class="card">
+
+            <div class="form-field">
+              <label class="label" id="label-baseline-report" for="baseline-report-trigger">Baseline</label>
+              <div class="report-select">
+                <button type="button" class="report-select__trigger" id="baseline-report-trigger" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="label-baseline-report baseline-report-value" aria-controls="baseline-report-listbox">
+                  <span class="report-select__value" id="baseline-report-value">Select report…</span>
+                </button>
+                <div class="report-select__dropdown" id="baseline-report-dropdown" hidden>
+                  <ul class="report-select__list" role="listbox" id="baseline-report-listbox" aria-labelledby="label-baseline-report"></ul>
+                </div>
+                <select id="baseline-report" class="report-select__native" hidden aria-hidden="true" tabindex="-1" aria-label="Baseline report">
+                  <option value="">Select report…</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="vs-divider"><span class="vs-label">VS</span></div>
+
+            <div class="form-field">
+              <label class="label" id="label-compare-report" for="compare-report-trigger">Compare</label>
+              <div class="report-select">
+                <button type="button" class="report-select__trigger" id="compare-report-trigger" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="label-compare-report compare-report-value" aria-controls="compare-report-listbox">
+                  <span class="report-select__value" id="compare-report-value">Select report…</span>
+                </button>
+                <div class="report-select__dropdown" id="compare-report-dropdown" hidden>
+                  <ul class="report-select__list" role="listbox" id="compare-report-listbox" aria-labelledby="label-compare-report"></ul>
+                </div>
+                <select id="compare-report" class="report-select__native" hidden aria-hidden="true" tabindex="-1" aria-label="Compare report">
+                  <option value="">Select report…</option>
+                </select>
+              </div>
+            </div>
+
+            <hr class="card-sep">
+
+            <div class="form-field">
+              <label class="label" id="compare-mode-label" for="compare-mode-dynamic">Mode</label>
+              <div class="segmented-control" role="group" aria-labelledby="compare-mode-label">
+                <label class="seg-option">
+                  <input type="radio" name="compare-mode" id="compare-mode-dynamic" value="dynamic" checked aria-label="Dynamic mode">
+                  <span class="seg-label">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+                      <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+                    </svg>
+                    Dynamic
+                  </span>
+                </label>
+                <label class="seg-option">
+                  <input type="radio" name="compare-mode" id="compare-mode-static" value="static" aria-label="Static mode">
+                  <span class="seg-label">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+                      <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>
+                    </svg>
+                    Static
+                  </span>
+                </label>
+              </div>
+              <p class="field-hint" id="mode-hint-dynamic">Compares key styles only — skips text and minor size differences.</p>
+              <p class="field-hint" id="mode-hint-static">Compares everything — all styles, text content, and attributes.</p>
+            </div>
+
+            <label class="toggle-row" for="visual-diff-toggle">
+              <div class="toggle-row__text">
+                <span class="toggle-row__label">Visual Diff</span>
+                <span class="toggle-row__hint">Side-by-side screenshot diff</span>
+              </div>
+              <div class="visual-toggle__track">
+                <input type="checkbox" id="visual-diff-toggle" checked>
+                <span class="visual-toggle__thumb" aria-hidden="true"></span>
+              </div>
+            </label>
+
+          </div>
+
+          <button class="btn-primary" id="compare-btn" disabled>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" aria-hidden="true">
+              <path d="M8 6l4-4 4 4M16 18l-4 4-4-4M12 2v20"/>
+            </svg>
+            Compare Reports
+          </button>
+
+          <div class="progress-container">
+            <div id="compare-progress" class="progress-wrap" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="0% — Ready" aria-label="Comparison progress">
+              <div class="progress-track"><div class="progress-fill" id="compare-progress-bar"></div></div>
+              <div class="progress-label-row">
+                <span class="progress-label" id="compare-progress-label">Matching elements…</span>
+              </div>
+            </div>
+          </div>
+
+          <div id="compare-summary" aria-live="polite" hidden></div>
+
+          <div id="compare-error" class="error-msg"></div>
+
+        </section>
+
+        <div id="compare-results-stack" class="compare-results-stack">
+          <div id="compare-results-screenshot-section" class="result-panel__screenshot-section" aria-live="polite"></div>
+          <div id="compare-results"></div>
+        </div>
+
+      </div>
+
+      <div class="tab-panel" id="section-bulk" role="tabpanel" aria-labelledby="tab-bulk" hidden>
+        <section id="panel-bulk" class="panel active">
+          <div id="bulk-resume-banner-slot"></div>
+          <div id="bulk-panel-root"></div>
+        </section>
+        <div id="bulk-result-area" hidden>
+          <div id="bulk-results-screenshot-section" class="result-panel__screenshot-section" aria-live="polite"></div>
+          <div id="bulk-result-panel-host"></div>
         </div>
       </div>
 

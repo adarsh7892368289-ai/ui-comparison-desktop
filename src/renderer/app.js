@@ -24,7 +24,7 @@ import {
   initializeApp,
   insertReportListSkeletonOverlay,
   filteredReportCount,
-  handleDeleteAllReports } from
+} from
 './application/report-manager.js';
 import { routeExtractBtnClick } from './application/extract-workflow.js';
 import {
@@ -60,8 +60,7 @@ import {
   iconAlertCircle,
   iconArrowUp,
   iconChevronDown,
-  iconFileDown,
-  iconTrash2 } from
+  iconFileDown } from
 './utils/icons.js';
 
 const api = window.electronAPI;
@@ -146,12 +145,6 @@ function wireToolbarDiscoveryTooltips() {
   if (importBtn) {
     _toolbarDiscoveryTooltipDisposers.push(
       attachTooltip(importBtn, () => 'Import report from file')
-    );
-  }
-  const deleteBtn = document.getElementById('delete-all-btn');
-  if (deleteBtn) {
-    _toolbarDiscoveryTooltipDisposers.push(
-      attachTooltip(deleteBtn, () => 'Delete all reports')
     );
   }
   const exportPrimary = document.getElementById('export-all-btn');
@@ -273,6 +266,51 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.documentElement.classList.add('platform-darwin');
   }
 
+  // Auto-show scrollbar thumb while scrolling, hide after idle
+  function initScrollReveal(el) {
+    if (!el) return;
+    let timer;
+    let dragging = false;
+    el.addEventListener('scroll', () => {
+      el.classList.add('is-scrolling');
+      clearTimeout(timer);
+      if (!dragging) {
+        timer = setTimeout(() => el.classList.remove('is-scrolling'), 1200);
+      }
+    }, { passive: true });
+    el.addEventListener('mousedown', (e) => {
+      const rect = el.getBoundingClientRect();
+      const scrollbarX = rect.right - 12;
+      if (e.clientX >= scrollbarX) {
+        dragging = true;
+        el.classList.add('is-scrolling');
+        clearTimeout(timer);
+      }
+    });
+    window.addEventListener('mouseup', () => {
+      if (dragging) {
+        dragging = false;
+        clearTimeout(timer);
+        timer = setTimeout(() => el.classList.remove('is-scrolling'), 1200);
+      }
+    });
+  }
+  initScrollReveal(document.getElementById('main-content'));
+  const vscrollEl = document.querySelector('.vscroll-viewport');
+  if (vscrollEl) initScrollReveal(vscrollEl);
+  // observe dynamically created vscroll-viewport
+  const reportsListEl = document.getElementById('reports-list');
+  if (reportsListEl) {
+    const obs = new MutationObserver(() => {
+      const vp = reportsListEl.querySelector('.vscroll-viewport');
+      if (vp && !vp.dataset.scrollReveal) {
+        vp.dataset.scrollReveal = '1';
+        initScrollReveal(vp);
+      }
+    });
+    obs.observe(reportsListEl, { childList: true, subtree: true });
+  }
+
   const exportAllPrimary = document.getElementById('export-all-btn');
   if (exportAllPrimary && !exportAllPrimary.querySelector('svg')) {
     exportAllPrimary.insertAdjacentHTML('afterbegin', iconFileDown(14));
@@ -285,10 +323,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   const importToolbarBtn = document.getElementById('import-report-btn');
   if (importToolbarBtn && !importToolbarBtn.querySelector('svg')) {
     importToolbarBtn.insertAdjacentHTML('afterbegin', iconArrowUp(13));
-  }
-  const deleteAllToolbarBtn = document.getElementById('delete-all-btn');
-  if (deleteAllToolbarBtn && !deleteAllToolbarBtn.querySelector('svg')) {
-    deleteAllToolbarBtn.insertAdjacentHTML('afterbegin', iconTrash2(14));
   }
 
   insertReportListSkeletonOverlay();
@@ -331,11 +365,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       document.getElementById('bulk-results-screenshot-section')?.replaceChildren();
     }
 
-    document.getElementById('main-content')?.classList.toggle(
-      'main-content--compare-results-visible',
-      Boolean(state.comparison && state.phase === 'done' && !bulkDetailOpen)
-    );
-
     if (state.phase === 'comparing' && !bulkDetailOpen) {
       _resultPanel?.showComparing?.();
       _bulkResultPanel?.clear?.();
@@ -373,18 +402,33 @@ document.addEventListener('DOMContentLoaded', async () => {
         state.comparisonFromCache ?? false
       );
     } else if (state.phase === 'idle') {
+      renderCompareSummaryFromStrip(null);
       _resultPanel?.clear();
       _bulkResultPanel?.clear();
+    }
+  });
+
+  let _prevBaseline = null;
+  let _prevCompare = null;
+  subscribe((state) => {
+    const b = state.selectedBaseline ?? null;
+    const c = state.selectedCompare ?? null;
+    if (b === _prevBaseline && c === _prevCompare) { return; }
+    _prevBaseline = b;
+    _prevCompare = c;
+
+    if (b && c && b !== c) {
+      if (_appShell) { _appShell.activateSection('compare'); }
+      tryLoadCachedComparison();
+    } else {
+      dispatch('RESET_COMPARISON');
     }
   });
 
   await initializeApp(_statusBar);
 
   const _bulkListenersCleanup = initBulkListeners();
-  const _bulkPanelHost =
-    document.getElementById('bulk-panel-root')
-    || document.getElementById('panel-bulk')
-    || document.getElementById('section-bulk');
+  const _bulkPanelHost = document.getElementById('bulk-panel-root');
   if (_bulkPanelHost) {
     createBulkPanel(_bulkPanelHost, api, storage);
   }
@@ -539,9 +583,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   document.getElementById('extract-btn')?.addEventListener('click', () => void routeExtractBtnClick());
 
-  document.getElementById('delete-all-btn')?.addEventListener('click', async () => {
-    await handleDeleteAllReports();
-  });
 
   document.getElementById('import-report-btn')?.addEventListener('click', () => {
     document.getElementById('import-report-input')?.click();
@@ -559,7 +600,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     baselineSel.addEventListener('change', (e) => {
       dispatch('BASELINE_SELECTED', { id: e.target.value });
       syncCompareButton();
-      tryLoadCachedComparison();
     });
   }
 
@@ -567,7 +607,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     compareSel.addEventListener('change', (e) => {
       dispatch('COMPARE_SELECTED', { id: e.target.value });
       syncCompareButton();
-      tryLoadCachedComparison();
     });
   }
 

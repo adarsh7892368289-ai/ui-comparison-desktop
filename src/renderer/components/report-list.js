@@ -658,13 +658,15 @@ export class ReportList {
 
     const badge = _el('span', 'report-role-badge');
     if (isBaseline) {
-      badge.classList.add('report-role-badge--baseline', 'report-role-badge--visible');
+      badge.classList.add('report-role-badge--baseline', 'report-role-badge--visible', 'report-role-badge--clickable');
       badge.textContent = 'B';
-      badge.title = 'Baseline report';
+      badge.title = 'Click to clear baseline';
+      badge.addEventListener('click', (e) => { e.stopPropagation(); this._cb.onBaseline?.(report); });
     } else if (isCompare) {
-      badge.classList.add('report-role-badge--compare', 'report-role-badge--visible');
+      badge.classList.add('report-role-badge--compare', 'report-role-badge--visible', 'report-role-badge--clickable');
       badge.textContent = 'C';
-      badge.title = 'Compare report';
+      badge.title = 'Click to clear compare';
+      badge.addEventListener('click', (e) => { e.stopPropagation(); this._cb.onCompare?.(report); });
     }
     card.appendChild(badge);
 
