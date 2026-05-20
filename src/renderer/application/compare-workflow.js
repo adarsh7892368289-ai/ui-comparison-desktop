@@ -10,8 +10,8 @@ import {
   showProgress,
   hideProgress,
   updateProgress,
-  syncCompareButton,
-} from '../ui.js';
+  syncCompareButton } from
+'../ui.js';
 
 const api = window.electronAPI;
 
@@ -54,7 +54,7 @@ function _buildCompareSummaryStrip(result, fromCache, cachedAtIso) {
     totalElements,
     durationMs,
     fromCache: Boolean(fromCache),
-    cachedAtIso: cachedAtIso ?? null,
+    cachedAtIso: cachedAtIso ?? null
   };
 }
 
@@ -78,9 +78,9 @@ export function renderCompareSummaryFromStrip(strip) {
   pack.className = 'compare-result-stats-pack';
   const stateLbl = document.createElement('div');
   stateLbl.className = 'compare-result-stats__state-label';
-  stateLbl.textContent = strip.fromCache && strip.cachedAtIso
-    ? `LOADED FROM CACHE · ${relativeTime(strip.cachedAtIso)}`
-    : 'COMPARISON COMPLETE';
+  stateLbl.textContent = strip.fromCache && strip.cachedAtIso ?
+  `LOADED FROM CACHE · ${relativeTime(strip.cachedAtIso)}` :
+  'COMPARISON COMPLETE';
   pack.appendChild(stateLbl);
 
   const row = document.createElement('div');
@@ -148,7 +148,7 @@ function _enqueueOptionalLoadCachedAfterCancel(baselineId, compareId, mode) {
     let cached = null;
     try {
       cached = await storage.loadComparisonByPair(baselineId, compareId, mode);
-    } catch { return; }
+    } catch {return;}
     if (!cached) return;
     const slot = document.getElementById('compare-summary');
     if (!slot || slot.hidden) return;
@@ -190,9 +190,9 @@ function _renderCompareCancelledLine(baselineId, compareId, mode) {
 
 function scrollCompareResultsIntoView() {
   const main = document.getElementById('main-content');
-  if (main?.dataset.activeSection === 'bulk') { return; }
+  if (main?.dataset.activeSection === 'bulk') {return;}
   const el = document.getElementById('compare-results');
-  if (!el) { return; }
+  if (!el) {return;}
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       el.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -202,25 +202,25 @@ function scrollCompareResultsIntoView() {
 
 function _firstNonEmptyString(...candidates) {
   for (const v of candidates) {
-    if (v == null) { continue; }
+    if (v == null) {continue;}
     const s = String(v).trim();
-    if (s !== '') { return s; }
+    if (s !== '') {return s;}
   }
   return '';
 }
 
-/**
- * Builds consistent `baseline` / `compare` side objects (each with at least `id`
- * and `url`) and canonical flat `baselineUrl` / `compareUrl` strings from whatever
- * shape the raw result carries.
- *
- * Source priority for URLs (first non-empty wins):
- *   1. flat `result.baselineUrl` / `result.compareUrl`   (set by renderer before normalize)
- *   2. nested `result.baseline.url` / `result.compare.url` (already-normalized re-pass)
- *   3. `result.urlCompatibility.baselineUrl/compareUrl`   (echoed from main process)
- *
- * Idempotent: safe to call on an already-normalized object.
- */
+
+
+
+
+
+
+
+
+
+
+
+
 function _synthesizeReportSides(result) {
   const compat = result.urlCompatibility;
 
@@ -235,39 +235,39 @@ function _synthesizeReportSides(result) {
     compat?.compareUrl
   );
 
-  const baselineExisting = result.baseline && typeof result.baseline === 'object'
-    ? result.baseline
-    : {};
-  const compareExisting = result.compare && typeof result.compare === 'object'
-    ? result.compare
-    : {};
+  const baselineExisting = result.baseline && typeof result.baseline === 'object' ?
+  result.baseline :
+  {};
+  const compareExisting = result.compare && typeof result.compare === 'object' ?
+  result.compare :
+  {};
 
   const baseline = {
     ...baselineExisting,
-    id:  baselineExisting.id  ?? result.baselineId ?? null,
-    url: baselineUrl,
+    id: baselineExisting.id ?? result.baselineId ?? null,
+    url: baselineUrl
   };
   const compare = {
     ...compareExisting,
-    id:  compareExisting.id   ?? result.compareId  ?? null,
-    url: compareUrl,
+    id: compareExisting.id ?? result.compareId ?? null,
+    url: compareUrl
   };
 
   return { baselineUrl, compareUrl, baseline, compare };
 }
 
 function normalizeComparisonResult(result) {
-  if (!result || typeof result !== 'object') { return null; }
+  if (!result || typeof result !== 'object') {return null;}
 
-  const visualDiffs = result.visualDiffs instanceof Map
-    ? result.visualDiffs
-    : new Map(
-        Object.entries(result.visualDiffs ?? {}).map(([k, v]) => [String(k), v])
-      );
+  const visualDiffs = result.visualDiffs instanceof Map ?
+  result.visualDiffs :
+  new Map(
+    Object.entries(result.visualDiffs ?? {}).map(([k, v]) => [String(k), v])
+  );
 
-  const comparison = result.comparison && typeof result.comparison === 'object'
-    ? result.comparison
-    : {};
+  const comparison = result.comparison && typeof result.comparison === 'object' ?
+  result.comparison :
+  {};
 
   const sides = _synthesizeReportSides(result);
 
@@ -278,22 +278,22 @@ function normalizeComparisonResult(result) {
     comparison: {
       ...comparison,
       results: Array.isArray(comparison.results) ? comparison.results : [],
-      summary: comparison.summary && typeof comparison.summary === 'object'
-        ? comparison.summary
-        : {},
-    },
+      summary: comparison.summary && typeof comparison.summary === 'object' ?
+      comparison.summary :
+      {}
+    }
   };
 }
 
 async function _rebuildVisualDiffsFromSession(sessionId, diffRows) {
-  if (!sessionId) { return new Map(); }
+  if (!sessionId) {return new Map();}
   let keyframesById;
   let rectsByElementKey;
   try {
     [keyframesById, rectsByElementKey] = await Promise.all([
-      storage.loadKeyframesBySession(sessionId),
-      storage.loadElementRectsBySession(sessionId),
-    ]);
+    storage.loadKeyframesBySession(sessionId),
+    storage.loadElementRectsBySession(sessionId)]
+    );
   } catch (err) {
     console.error('[visual] rebuild failed', err);
     return new Map();
@@ -302,44 +302,44 @@ async function _rebuildVisualDiffsFromSession(sessionId, diffRows) {
   const diffsByHpid = new Map();
   for (const row of diffRows ?? []) {
     const hpid = row?.baselineElement?.hpid ?? row?.hpid ?? null;
-    if (!hpid) { continue; }
+    if (!hpid) {continue;}
     const annotated = row.annotatedDifferences ?? [];
-    if (annotated.length === 0) { continue; }
+    if (annotated.length === 0) {continue;}
     diffsByHpid.set(hpid, annotated);
   }
 
   const toEntry = (record) => {
-    if (!record) { return null; }
+    if (!record) {return null;}
     const kf = record.keyframeId ? keyframesById.get(record.keyframeId) ?? null : null;
     const effectiveDpr = kf?.captureScaleFactor ?? kf?.devicePixelRatio ?? record.actualDPR ?? 1;
     return {
-      keyframeId:         record.keyframeId ?? null,
-      viewportRect:       record.rect ?? null,
-      rawViewportRect:    record.rawRect ?? null,
-      actualDPR:          record.actualDPR ?? 1,
-      dpr:                effectiveDpr,
-      documentY:          record.documentY ?? null,
+      keyframeId: record.keyframeId ?? null,
+      viewportRect: record.rect ?? null,
+      rawViewportRect: record.rawRect ?? null,
+      actualDPR: record.actualDPR ?? 1,
+      dpr: effectiveDpr,
+      documentY: record.documentY ?? null,
       totalDocumentHeight: record.totalDocumentHeight ?? null,
-      kfScrollY:          kf?.scrollY ?? null,
-      pseudoBefore:       record.pseudoBefore ?? null,
-      pseudoAfter:        record.pseudoAfter ?? null,
-      misaligned:         record.misaligned ?? false,
-      misalignReason:     record.misalignReason ?? null,
-      selectorAmbiguous:  record.selectorAmbiguous ?? false,
+      kfScrollY: kf?.scrollY ?? null,
+      pseudoBefore: record.pseudoBefore ?? null,
+      pseudoAfter: record.pseudoAfter ?? null,
+      misaligned: record.misaligned ?? false,
+      misalignReason: record.misalignReason ?? null,
+      selectorAmbiguous: record.selectorAmbiguous ?? false,
       selectorMatchCount: record.selectorMatchCount ?? null,
-      rectClipped:        record.rectClipped ?? false,
+      rectClipped: record.rectClipped ?? false
     };
   };
 
   const diffs = new Map();
   for (const [elementKey, sides] of rectsByElementKey) {
     const baseline = toEntry(sides?.baseline);
-    const compare  = toEntry(sides?.compare);
-    if (!baseline && !compare) { continue; }
+    const compare = toEntry(sides?.compare);
+    if (!baseline && !compare) {continue;}
     diffs.set(elementKey, {
       baseline,
       compare,
-      diffs: diffsByHpid.get(elementKey) ?? [],
+      diffs: diffsByHpid.get(elementKey) ?? []
     });
   }
   return diffs;
@@ -361,30 +361,30 @@ export async function loadComparisonFromCacheByPairIds(baselineId, compareId, mo
     const diffs = await storage.loadComparisonDiffs(cached.id).catch(() => []);
     const visualDiffs = await _rebuildVisualDiffsFromSession(
       cached.visualSessionId ?? null,
-      diffs,
+      diffs
     );
     const stLatest = getState();
-    const baselineRep = stLatest.reports?.find(r => r.id === cached.baselineId);
-    const compareRep  = stLatest.reports?.find(r => r.id === cached.compareId);
+    const baselineRep = stLatest.reports?.find((r) => r.id === cached.baselineId);
+    const compareRep = stLatest.reports?.find((r) => r.id === cached.compareId);
     const normalized = normalizeComparisonResult({
-      baselineId:        cached.baselineId,
-      compareId:         cached.compareId,
-      mode:              cached.mode,
-      matching:          cached.matching,
-      comparison:        { summary: cached.summary, results: diffs },
+      baselineId: cached.baselineId,
+      compareId: cached.compareId,
+      mode: cached.mode,
+      matching: cached.matching,
+      comparison: { summary: cached.summary, results: diffs },
       visualDiffs,
-      visualDiffStatus:  cached.visualDiffStatus ?? null,
+      visualDiffStatus: cached.visualDiffStatus ?? null,
       unmatchedElements: cached.unmatchedElements,
-      duration:          cached.duration ?? 0,
-      baselineUrl:       baselineRep?.url ?? '',
-      compareUrl:        compareRep?.url ?? '',
+      duration: cached.duration ?? 0,
+      baselineUrl: baselineRep?.url ?? '',
+      compareUrl: compareRep?.url ?? ''
     });
     const compareSummaryStrip = _buildCompareSummaryStrip(normalized, true, cached.timestamp);
     return {
       result: { ...normalized, id: cached.id },
       cachedAt: cached.timestamp,
       fromCache: true,
-      compareSummaryStrip,
+      compareSummaryStrip
     };
   } catch {
     return null;
@@ -416,7 +416,7 @@ async function tryLoadCachedComparison() {
         result: loaded.result,
         cachedAt: loaded.cachedAt,
         fromCache: loaded.fromCache,
-        compareSummaryStrip: loaded.compareSummaryStrip,
+        compareSummaryStrip: loaded.compareSummaryStrip
       });
       scrollCompareResultsIntoView();
     } else {
@@ -446,11 +446,11 @@ async function handleComparison() {
   if (_compareBusy) {
     return;
   }
-  const state   = getState();
+  const state = getState();
   const reports = state.reports ?? [];
 
-  const baselineReport = reports.find(r => r.id === state.selectedBaseline);
-  const compareReport  = reports.find(r => r.id === state.selectedCompare);
+  const baselineReport = reports.find((r) => r.id === state.selectedBaseline);
+  const compareReport = reports.find((r) => r.id === state.selectedCompare);
 
   if (!baselineReport || !compareReport) {
     setError('compare', 'Select both baseline and compare reports');
@@ -468,13 +468,13 @@ async function handleComparison() {
     return;
   }
   const selectedBrowser = state.selectedBrowser;
-  const browserPayload = selectedBrowser
-    ? {
-        browserType:    selectedBrowser.browserType,
-        channel:        selectedBrowser.channel,
-        executablePath: selectedBrowser.executablePath,
-      }
-    : { browserType: 'chromium', channel: null, executablePath: null };
+  const browserPayload = selectedBrowser ?
+  {
+    browserType: selectedBrowser.browserType,
+    channel: selectedBrowser.channel,
+    executablePath: selectedBrowser.executablePath
+  } :
+  { browserType: 'chromium', channel: null, executablePath: null };
 
   setError('compare', '');
   _clearCompareCancelLine();
@@ -483,9 +483,9 @@ async function handleComparison() {
     const compat = assessUrlCompatibility(baselineReport.url, compareReport.url);
     if (compat.classification === 'INCOMPATIBLE') {
       const delta = compat.mismatchDelta;
-      const msg = delta?.pathname
-        ? `Incompatible URLs — paths differ: "${delta.pathname.baseline}" vs "${delta.pathname.compare}"`
-        : 'Incompatible URLs — check that both reports are from the same page path';
+      const msg = delta?.pathname ?
+      `Incompatible URLs — paths differ: "${delta.pathname.baseline}" vs "${delta.pathname.compare}"` :
+      'Incompatible URLs — check that both reports are from the same page path';
       Toast.error(msg);
       dispatch('RESET_COMPARISON', {});
       return;
@@ -493,8 +493,8 @@ async function handleComparison() {
     if (compat.classification === 'CAUTION') {
       const delta = compat.mismatchDelta;
       const parts = [];
-      if (delta?.hash) { parts.push(`hash differs (${delta.hash.baseline || 'none'} → ${delta.hash.compare || 'none'})`); }
-      if (delta?.queryParams?.length) { parts.push(`query params differ: ${delta.queryParams.map(p => p.key).join(', ')}`); }
+      if (delta?.hash) {parts.push(`hash differs (${delta.hash.baseline || 'none'} → ${delta.hash.compare || 'none'})`);}
+      if (delta?.queryParams?.length) {parts.push(`query params differ: ${delta.queryParams.map((p) => p.key).join(', ')}`);}
       Toast.warning(`URL mismatch — ${parts.join('; ') || 'check page state'} — results may include false positives`);
     }
   } catch (compatErr) {
@@ -521,14 +521,14 @@ async function handleComparison() {
       _compareCancelAck.add(activeOpId);
       dispatch('OPERATION_CANCELLING', {});
       const lbl = document.getElementById('compare-progress-label');
-      if (lbl) { lbl.textContent = 'Cancelling…'; }
+      if (lbl) {lbl.textContent = 'Cancelling…';}
       compareBtn.disabled = true;
     }
   };
 
   dispatch('COMPARISON_STARTED', {});
 
-  const mode               = document.querySelector('[name="compare-mode"]:checked')?.value ?? 'dynamic';
+  const mode = document.querySelector('[name="compare-mode"]:checked')?.value ?? 'dynamic';
   const includeScreenshots = document.getElementById('visual-diff-toggle')?.checked ?? true;
 
   const off = api.onComparisonProgress((data) => {
@@ -541,9 +541,9 @@ async function handleComparison() {
 
   try {
     const [baselineElements, compareElements] = await Promise.all([
-      storage.loadReportElements(baselineReport.id),
-      storage.loadReportElements(compareReport.id),
-    ]);
+    storage.loadReportElements(baselineReport.id),
+    storage.loadReportElements(compareReport.id)]
+    );
 
     if (!baselineElements.length) {
       throw new Error(`No elements found for baseline report — re-extract the page`);
@@ -553,17 +553,17 @@ async function handleComparison() {
     }
 
     const result = await api.startComparison({
-      baselineId:       baselineReport.id,
-      compareId:        compareReport.id,
+      baselineId: baselineReport.id,
+      compareId: compareReport.id,
       mode,
-      baselineUrl:      baselineReport.url,
-      compareUrl:       compareReport.url,
+      baselineUrl: baselineReport.url,
+      compareUrl: compareReport.url,
       baselineElements,
       compareElements,
       includeScreenshots,
-      browser:          browserPayload,
+      browser: browserPayload,
       operationId,
-      comparisonId,
+      comparisonId
     });
 
     if (_compareCancelAck.has(operationId) || result.cancelled) {
@@ -592,26 +592,26 @@ async function handleComparison() {
 
     hideProgress('compare');
 
-    const sr         = result.result;
+    const sr = result.result;
     const normalized = normalizeComparisonResult({
       ...sr,
       baselineUrl: baselineReport.url,
-      compareUrl:  compareReport.url,
+      compareUrl: compareReport.url
     });
 
     const meta = {
-      id:                comparisonId,
-      pairKey:           buildPairKey(sr.baselineId, sr.compareId, sr.mode),
-      baselineId:        sr.baselineId,
-      compareId:         sr.compareId,
-      mode:              sr.mode,
-      matching:          sr.matching,
-      summary:           sr.comparison?.summary,
+      id: comparisonId,
+      pairKey: buildPairKey(sr.baselineId, sr.compareId, sr.mode),
+      baselineId: sr.baselineId,
+      compareId: sr.compareId,
+      mode: sr.mode,
+      matching: sr.matching,
+      summary: sr.comparison?.summary,
       unmatchedElements: sr.unmatchedElements,
-      duration:          sr.duration,
-      timestamp:         sr.completedAt ?? new Date().toISOString(),
-      visualSessionId:   sr.sessionId ?? null,
-      visualDiffStatus:  sr.visualDiffStatus ?? null,
+      duration: sr.duration,
+      timestamp: sr.completedAt ?? new Date().toISOString(),
+      visualSessionId: sr.sessionId ?? null,
+      visualDiffStatus: sr.visualDiffStatus ?? null
     };
 
     await storage.saveComparison(meta, sr.comparison?.results ?? []);
@@ -620,9 +620,9 @@ async function handleComparison() {
       if (sr.visualBlobs && typeof sr.visualBlobs === 'object') {
         for (const [keyframeId, blobData] of Object.entries(sr.visualBlobs)) {
           if (blobData && blobData.buffer) {
-            const uint8Array = blobData.buffer instanceof Uint8Array
-              ? blobData.buffer
-              : new Uint8Array(blobData.buffer);
+            const uint8Array = blobData.buffer instanceof Uint8Array ?
+            blobData.buffer :
+            new Uint8Array(blobData.buffer);
             const blob = new Blob([uint8Array], { type: blobData.mimeType || 'image/webp' });
             await storage.saveVisualBlob(`${meta.id}:${keyframeId}`, blob, meta.id);
           }
@@ -630,7 +630,7 @@ async function handleComparison() {
       }
 
       if (Array.isArray(sr.visualKeyframes) && sr.visualKeyframes.length > 0) {
-        await Promise.all(sr.visualKeyframes.map(kf => storage.saveVisualKeyframe(kf)));
+        await Promise.all(sr.visualKeyframes.map((kf) => storage.saveVisualKeyframe(kf)));
       }
 
       if (Array.isArray(sr.visualRectRecords) && sr.visualRectRecords.length > 0) {
@@ -644,12 +644,12 @@ async function handleComparison() {
     const compareSummaryStrip = _buildCompareSummaryStrip(
       { ...normalized, duration: sr.duration },
       false,
-      null,
+      null
     );
     dispatch('COMPARISON_COMPLETE', {
       result: { ...normalized, id: meta.id },
       fromCache: false,
-      compareSummaryStrip,
+      compareSummaryStrip
     });
     scrollCompareResultsIntoView();
 

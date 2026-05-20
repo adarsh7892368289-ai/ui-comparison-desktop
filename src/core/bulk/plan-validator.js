@@ -5,12 +5,12 @@ const { assessUrlCompatibility } = require('../comparison/url-compatibility.js')
 const VALID_MODES = new Set(['dynamic', 'static']);
 
 function isHttpUrl(value) {
-  if (typeof value !== 'string' || value.length === 0) { return false; }
+  if (typeof value !== 'string' || value.length === 0) {return false;}
   return value.startsWith('http://') || value.startsWith('https://');
 }
 
 function describeMismatch(delta) {
-  if (!delta) { return 'paths or query parameters differ'; }
+  if (!delta) {return 'paths or query parameters differ';}
   if (delta.pathname) {
     return `paths differ (${delta.pathname.baseline} vs ${delta.pathname.compare})`;
   }
@@ -26,43 +26,43 @@ function describeMismatch(delta) {
 const CANONICAL_BROWSER_TYPES = new Set(['chromium', 'firefox', 'webkit']);
 
 function _toDescriptorForJobLevel(descriptor) {
-  if (!descriptor || typeof descriptor !== 'object') { return null; }
+  if (!descriptor || typeof descriptor !== 'object') {return null;}
   const browserType = descriptor.browserType ?? null;
-  if (!browserType) { return null; }
+  if (!browserType) {return null;}
   return {
     browserType,
-    channel:        descriptor.channel        ?? null,
+    channel: descriptor.channel ?? null,
     executablePath: descriptor.executablePath ?? null,
-    displayName:    descriptor.displayName    ?? null,
-    isDefault:      Boolean(descriptor.isDefault),
-    isLaunchable:   descriptor.isLaunchable   !== false,
+    displayName: descriptor.displayName ?? null,
+    isDefault: Boolean(descriptor.isDefault),
+    isLaunchable: descriptor.isLaunchable !== false
   };
 }
 
 function _resolveByBrowserType(availableBrowsers, browserType) {
   let firstLaunchable = null;
   for (const descriptor of availableBrowsers) {
-    if (descriptor?.browserType !== browserType) { continue; }
-    if (descriptor.isLaunchable === false) { continue; }
-    if (descriptor.isDefault === true) { return descriptor; }
-    if (!firstLaunchable) { firstLaunchable = descriptor; }
+    if (descriptor?.browserType !== browserType) {continue;}
+    if (descriptor.isLaunchable === false) {continue;}
+    if (descriptor.isDefault === true) {return descriptor;}
+    if (!firstLaunchable) {firstLaunchable = descriptor;}
   }
   return firstLaunchable;
 }
 
 function _resolveByDisplayName(availableBrowsers, lowerToken) {
   for (const descriptor of availableBrowsers) {
-    const display = typeof descriptor?.displayName === 'string'
-      ? descriptor.displayName.trim().toLowerCase()
-      : null;
-    if (display && display === lowerToken) { return descriptor; }
+    const display = typeof descriptor?.displayName === 'string' ?
+    descriptor.displayName.trim().toLowerCase() :
+    null;
+    if (display && display === lowerToken) {return descriptor;}
   }
   return null;
 }
 
 function _resolveBrowserCell(rawCell, availableBrowsers) {
   const lowerToken = String(rawCell).trim().toLowerCase();
-  if (!lowerToken) { return { match: null }; }
+  if (!lowerToken) {return { match: null };}
   if (!Array.isArray(availableBrowsers) || availableBrowsers.length === 0) {
     return { match: null };
   }
@@ -95,13 +95,13 @@ function validateOneRow(row, jobOptions, availableBrowsers) {
   if (compatibility.classification === 'INCOMPATIBLE') {
     return {
       status: 'invalid',
-      reason: `URLs are incompatible: ${describeMismatch(compatibility.mismatchDelta)}`,
+      reason: `URLs are incompatible: ${describeMismatch(compatibility.mismatchDelta)}`
     };
   }
 
   const jobLevelDescriptor = _toDescriptorForJobLevel(jobOptions?.selectedBrowser);
   let resolvedBrowser = jobLevelDescriptor;
-  const cellHasValue  = row.browser !== null && row.browser !== undefined && String(row.browser).trim().length > 0;
+  const cellHasValue = row.browser !== null && row.browser !== undefined && String(row.browser).trim().length > 0;
 
   if (cellHasValue) {
     const { match } = _resolveBrowserCell(row.browser, availableBrowsers);
@@ -119,9 +119,9 @@ function validateOneRow(row, jobOptions, availableBrowsers) {
 }
 
 function validatePlanRows(rows, jobOptions = {}, availableBrowsers = []) {
-  const valid    = [];
+  const valid = [];
   const warnings = [];
-  const invalid  = [];
+  const invalid = [];
 
   if (!Array.isArray(rows)) {
     return { valid, warnings, invalid };
@@ -132,7 +132,7 @@ function validatePlanRows(rows, jobOptions = {}, availableBrowsers = []) {
     const enriched = {
       ...row,
       validationStatus: outcome.status,
-      validationReason: outcome.reason,
+      validationReason: outcome.reason
     };
     if (outcome.resolvedBrowser) {
       enriched.resolvedBrowser = outcome.resolvedBrowser;

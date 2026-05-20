@@ -40,7 +40,7 @@ function snapNearestResize(width) {
 
 export class AppShell {
   constructor() {
-    this._sectionIds = ['extract', 'compare', 'bulk'];
+    this._sectionIds = ['extract', 'compare', 'bulk', 'saucelabs'];
     this._activeSection = null;
     this._collapsed = false;
     this._toggleQueued = 0;

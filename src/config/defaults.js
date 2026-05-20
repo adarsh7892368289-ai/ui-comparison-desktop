@@ -296,6 +296,14 @@ const rawConfig = {
     ]
   },
 
+  saucelabs: {
+    compatibleSaucectlRange: '>=0.200.0 <1.0.0',
+    versionCheckTimeoutMs: 5000,
+    maxScreenshotsPerSession: 200,
+    pollTimeoutMs: 90 * 60 * 1000,
+    maxRetainedJobs: 20,
+  },
+
   export: {
     defaultFilename: 'comparison-report',
     excel: {

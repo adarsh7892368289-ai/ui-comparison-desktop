@@ -60,3 +60,9 @@ project-structure.txt
 # Local AI assistant settings
 .claude/
 .cursor/
+
+# saucectl binaries (directory scaffold with .gitkeep is tracked; binaries are not)
+.saucectl-bin/**
+!.saucectl-bin/README.md
+!.saucectl-bin/**/
+!.saucectl-bin/**/.gitkeep

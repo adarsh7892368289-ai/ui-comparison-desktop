@@ -16,6 +16,8 @@
     "prepackage": "node -e \"if(!process.env.PLAYWRIGHT_BROWSERS_PATH){console.error('PLAYWRIGHT_BROWSERS_PATH not set');process.exit(1)}\"",
     "build": "npm run build:extractor && npm run build:main && npm run build:renderer",
     "smoke-test": "electron . --smoke-test",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "lint": "eslint .",
     "format": "prettier --write .",
     "dist": "npm run build && electron-builder --publish never",
@@ -46,6 +48,7 @@
     "fake-indexeddb": "^6.2.5",
     "madge": "^8.0.0",
     "prettier": "^3.2.5",
+    "vitest": "^4.1.6",
     "webpack": "^5.96.0",
     "webpack-cli": "^5.1.4"
   }

@@ -34,10 +34,10 @@ function _effectiveDprFor(browserTypeName) {
 
 function getScrollTolerance(browserType) {
   switch (browserType) {
-    case 'firefox':  return 5;
-    case 'webkit':   return 5;
-    case 'chromium': return 5;
-    default:         return 5;
+    case 'firefox':return 5;
+    case 'webkit':return 5;
+    case 'chromium':return 5;
+    default:return 5;
   }
 }
 
@@ -103,9 +103,9 @@ function getExtractorBundleSource() {
 }
 
 async function getBrowser(descriptorOrType = 'chromium') {
-  const descriptor = typeof descriptorOrType === 'string'
-    ? { browserType: descriptorOrType, channel: null, executablePath: null }
-    : (descriptorOrType ?? { browserType: 'chromium', channel: null, executablePath: null });
+  const descriptor = typeof descriptorOrType === 'string' ?
+  { browserType: descriptorOrType, channel: null, executablePath: null } :
+  descriptorOrType ?? { browserType: 'chromium', channel: null, executablePath: null };
 
   const browserType = descriptor.browserType ?? 'chromium';
   const channel = descriptor.channel ?? null;
@@ -132,9 +132,9 @@ async function getBrowser(descriptorOrType = 'chromium') {
   } catch (err) {
     const msg = err?.message ?? String(err);
     const policyBlocked =
-      /DevTools remote debugging is disallowed/i.test(msg) ||
-      /remote.debugging.*disallowed/i.test(msg) ||
-      /Target page.*context.*browser has been closed/i.test(msg);
+    /DevTools remote debugging is disallowed/i.test(msg) ||
+    /remote.debugging.*disallowed/i.test(msg) ||
+    /Target page.*context.*browser has been closed/i.test(msg);
     if (policyBlocked) {
       log.warn('[PM] Browser launch blocked by IT policy', { browserType, channel, executablePath });
       const friendly = new Error(
@@ -1022,15 +1022,15 @@ async function executeTabCapture(sessionHandle, selectorPairs, sessionId, role, 
         null,
         { timeout: 5000 }
       );
-    } catch (_e) { /* readyState may already be complete or timeout — proceed */ }
+    } catch (_e) {}
     log.info(`VDIFF [${role}] WARMUP layout DONE`, {
       elapsed: ms(tWarm),
       browserTypeName: sessionHandle.browserTypeName,
       preDocHeight: viewport.documentHeight,
       postDocHeight: postWarmupDocHeight,
-      growthRatio: viewport.documentHeight > 0
-        ? (postWarmupDocHeight / viewport.documentHeight).toFixed(2)
-        : 'n/a',
+      growthRatio: viewport.documentHeight > 0 ?
+      (postWarmupDocHeight / viewport.documentHeight).toFixed(2) :
+      'n/a',
       pageGrewDuringWarmup: warmupResult?.pageGrewDuringWarmup,
       steps: warmupResult?.steps,
       hitHardCap: warmupResult?.hitHardCap,
@@ -1348,9 +1348,9 @@ async function runExtraction({ url, browser: browserDescriptor, browserType, fil
 
     report.id = crypto.randomUUID();
     report.duration = Math.round(Date.now() - totalStart);
-    report.engine = (typeof browserDescriptor === 'object' && browserDescriptor)
-      ? (browserDescriptor.browserType ?? 'chromium')
-      : (browserType ?? 'chromium');
+    report.engine = typeof browserDescriptor === 'object' && browserDescriptor ?
+    browserDescriptor.browserType ?? 'chromium' :
+    browserType ?? 'chromium';
     report.platform = process.platform;
 
     onProgress?.('Extraction complete', 100);
@@ -1424,9 +1424,9 @@ async function _runScreenshotPhase({
       diffs: Object.fromEntries(visualResult.diffs),
       keyframes: visualResult.keyframes,
       rectRecords: visualResult.rectRecords,
-      devToolsWarnings: Array.isArray(visualResult.devToolsWarnings)
-        ? [...visualResult.devToolsWarnings]
-        : [],
+      devToolsWarnings: Array.isArray(visualResult.devToolsWarnings) ?
+      [...visualResult.devToolsWarnings] :
+      [],
       blobs
     };
   } finally {

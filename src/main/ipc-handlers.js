@@ -10,6 +10,8 @@ const log = require('electron-log');
 const CH = require('./ipc-channels');
 const playwrightManager = require('./playwright-manager');
 const bulkRunner = require('./bulk-runner');
+const sauceBinaryManager = require('./saucelabs-binary-manager');
+const sauceManager = require('./saucelabs-manager');
 const { config: defaultsConfig } = require('../config/defaults.js');
 
 let _mainWindow = null;
@@ -21,10 +23,10 @@ const _cancelRegistry = new Map();
 
 const _bulkJobs = new Map();
 
-// Defense-in-depth: EXPORT_FILE_TO_DIRECTORY only writes into directories
-// the user has explicitly chosen this session via PICK_DIRECTORY. The
-// renderer cannot synthesise a path that bypasses this set because the
-// dialog that populates it runs in main.
+
+
+
+
 const _approvedDirs = new Set();
 
 function _registerOp(operationId, kind) {
@@ -53,6 +55,7 @@ function registerIpcHandlers(mainWindow) {
   _registerMetaHandlers();
   _registerBrowserHandlers();
   _registerBulkHandlers();
+  _registerSauceHandlers();
 }
 
 function _registerCancelHandlers() {
@@ -252,15 +255,15 @@ function _registerFileHandlers() {
       } else {
         return { success: false, error: 'Unsupported content type' };
       }
-      const writeEncoding = typeof body === 'string' ? (encoding ?? 'utf8') : undefined;
+      const writeEncoding = typeof body === 'string' ? encoding ?? 'utf8' : undefined;
       await fs.promises.writeFile(filePath, body, writeEncoding);
       return { success: true, filePath };
     } catch (err) {
       log.error('EXPORT_FILE_TO_DIRECTORY write failed', { error: err.message, code: err.code, filePath });
       const reason = err.code === 'EACCES' ? 'Permission denied — choose a different folder' :
-        err.code === 'EBUSY'  ? 'File is in use by another process' :
-        err.code === 'ENOENT' ? 'Folder no longer exists' :
-        err.message;
+      err.code === 'EBUSY' ? 'File is in use by another process' :
+      err.code === 'ENOENT' ? 'Folder no longer exists' :
+      err.message;
       return { success: false, error: reason };
     }
   });
@@ -414,7 +417,7 @@ function _registerBulkHandlers() {
       const pushEvent = (channel, evtPayload) => _pushToWindow(channel, evtPayload);
 
       entry.providedElements = new Map();
-      entry.providedWaiters  = new Map();
+      entry.providedWaiters = new Map();
 
       const ctx = {
         cancelRegistry: _cancelRegistry,
@@ -440,7 +443,7 @@ function _registerBulkHandlers() {
           const e = _bulkJobs.get(jId);
           if (e?.providedWaiters) {
             for (const w of e.providedWaiters.values()) {
-              try { w.reject(new Error('Bulk job cleaned up')); } catch { void 0; }
+              try {w.reject(new Error('Bulk job cleaned up'));} catch {void 0;}
             }
             e.providedWaiters.clear();
           }
@@ -448,7 +451,7 @@ function _registerBulkHandlers() {
         },
         awaitProvidedElements: (pairIndex, side, timeoutMs = 10_000) => {
           const e = _bulkJobs.get(jobId);
-          if (!e) { return Promise.reject(new Error('Bulk job not registered')); }
+          if (!e) {return Promise.reject(new Error('Bulk job not registered'));}
           const key = `${pairIndex}:${side}`;
           if (e.providedElements.has(key)) {
             return Promise.resolve(e.providedElements.get(key));
@@ -457,15 +460,15 @@ function _registerBulkHandlers() {
             const timer = setTimeout(() => {
               e.providedWaiters.delete(key);
               reject(Object.assign(new Error('Timed out waiting for provided elements'), {
-                code: 'STORAGE_DEGRADED',
+                code: 'STORAGE_DEGRADED'
               }));
             }, timeoutMs);
             e.providedWaiters.set(key, {
-              resolve: (val) => { clearTimeout(timer); resolve(val); },
-              reject:  (err) => { clearTimeout(timer); reject(err);  },
+              resolve: (val) => {clearTimeout(timer);resolve(val);},
+              reject: (err) => {clearTimeout(timer);reject(err);}
             });
           });
-        },
+        }
       };
 
       const jobSpec = {
@@ -518,7 +521,7 @@ function _registerBulkHandlers() {
       for (const [pairIndex, settler] of entry.pairSettlers) {
         if (!settler.started && !settler.settled) {
           _pushToWindow(CH.BULK_PAIR_COMPLETED, { jobId, pairIndex, status: 'cancelled' });
-          try { settler.settle({ pairIndex, status: 'cancelled' }); } catch { void 0; }
+          try {settler.settle({ pairIndex, status: 'cancelled' });} catch {void 0;}
           synthesised++;
         }
       }
@@ -526,7 +529,7 @@ function _registerBulkHandlers() {
 
     if (entry.providedWaiters) {
       for (const w of entry.providedWaiters.values()) {
-        try { w.reject(Object.assign(new Error('Bulk job cancelled'), { code: 'CANCELLED' })); } catch { void 0; }
+        try {w.reject(Object.assign(new Error('Bulk job cancelled'), { code: 'CANCELLED' }));} catch {void 0;}
       }
       entry.providedWaiters.clear();
     }
@@ -543,22 +546,300 @@ function _registerBulkHandlers() {
 
   ipcMain.handle(CH.BULK_PROVIDE_ELEMENTS, (event, payload = {}) => {
     const { jobId, pairIndex, side, elements } = payload;
-    if (!jobId || typeof pairIndex !== 'number' || (side !== 'baseline' && side !== 'compare')) {
+    if (!jobId || typeof pairIndex !== 'number' || side !== 'baseline' && side !== 'compare') {
       return { accepted: false, error: 'Invalid BULK_PROVIDE_ELEMENTS payload' };
     }
     const entry = _bulkJobs.get(jobId);
     if (!entry) {
       return { accepted: false, error: `Bulk job not found: ${jobId}` };
     }
-    const key  = `${pairIndex}:${side}`;
+    const key = `${pairIndex}:${side}`;
     const list = Array.isArray(elements) ? elements : [];
     entry.providedElements.set(key, list);
     const waiter = entry.providedWaiters.get(key);
     if (waiter) {
       entry.providedWaiters.delete(key);
-      try { waiter.resolve(list); } catch { void 0; }
+      try {waiter.resolve(list);} catch {void 0;}
     }
     return { accepted: true };
+  });
+}
+
+function _registerSauceHandlers() {
+  ipcMain.handle(CH.SAUCE_VALIDATE_CREDENTIALS, async (event, payload = {}) => {
+    const { username, accessKey, region } = payload;
+    const timeoutMs = defaultsConfig?.saucelabs?.versionCheckTimeoutMs ?? 5000;
+    const compatibleRange = defaultsConfig?.saucelabs?.compatibleSaucectlRange ?? '>=0.200.0 <1.0.0';
+
+    const binPath = await sauceBinaryManager.resolveBinaryPath({ timeoutMs });
+    if (!binPath) {
+      return {
+        success: false,
+        error: 'saucectl not found. Install it via: npm install -g saucectl, or place it on your PATH.'
+      };
+    }
+
+    sauceBinaryManager.runUpdateCheck(compatibleRange, {
+      hasActiveJobs: () => false
+    }).catch((err) => {
+      log.warn('[SauceHandler] background update check failed', { error: err?.message });
+    });
+
+    const result = await sauceManager.validateCredentials({ username, accessKey, region });
+    return result;
+  });
+
+  ipcMain.handle(CH.SAUCE_SUBMIT_JOB, (event, payload = {}) => {
+    const {
+      username, accessKey, region,
+      url, platform, browserName, screenResolution,
+      tunnelName, filters
+    } = payload;
+
+    if (!username || !accessKey || !url) {
+      return { success: false, error: 'Missing required parameters' };
+    }
+
+    const jobId = crypto.randomUUID();
+
+    sauceManager.submitExtraction({
+      jobId,
+      username,
+      accessKey,
+      region: region || 'us-west-1',
+      url,
+      platform: platform || 'Windows 11',
+      browserName: browserName || 'chromium',
+      screenResolution: screenResolution || '1920x1080',
+      tunnelName: tunnelName || null,
+      filters: filters || null,
+      onProgress: (progress) => {
+        _pushToWindow(CH.SAUCE_JOB_PROGRESS, { jobId, ...progress });
+      }
+    }).then((result) => {
+      _pushToWindow(CH.SAUCE_JOB_COMPLETE, {
+        jobId,
+        success: true,
+        report: result.report,
+        manifest: result.manifest,
+        sessionId: result.sessionId,
+        artifactsDir: result.artifactsDir
+      });
+    }).catch((err) => {
+      if (err?._sauceJobCancelled) {
+        log.info('[SauceHandler] extraction cancelled', { jobId });
+        _pushToWindow(CH.SAUCE_JOB_COMPLETE, { jobId, success: false, cancelled: true, error: 'Cancelled' });
+        return;
+      }
+      log.error('[SauceHandler] extraction failed', { jobId, error: err?.message });
+      _pushToWindow(CH.SAUCE_JOB_COMPLETE, {
+        jobId,
+        success: false,
+        error: err?.message || 'Extraction failed'
+      });
+    });
+
+    return { success: true, jobId };
+  });
+
+  ipcMain.handle(CH.SAUCE_SUBMIT_COMPARISON, (event, payload = {}) => {
+    const {
+      username, accessKey, region,
+      baselineUrl, compareUrl,
+      platform, browserName, screenResolution,
+      tunnelName, filters
+    } = payload;
+
+    if (!username || !accessKey || !baselineUrl || !compareUrl) {
+      return { success: false, error: 'Missing required parameters' };
+    }
+
+    const jobId = crypto.randomUUID();
+
+    sauceManager.submitComparison({
+      jobId,
+      username,
+      accessKey,
+      region: region || 'us-west-1',
+      baselineUrl,
+      compareUrl,
+      platform: platform || 'Windows 11',
+      browserName: browserName || 'chromium',
+      screenResolution: screenResolution || '1920x1080',
+      tunnelName: tunnelName || null,
+      filters: filters || null,
+      onProgress: (progress) => {
+        _pushToWindow(CH.SAUCE_JOB_PROGRESS, { jobId, ...progress });
+      },
+      onSessionId: (ids) => {
+        _pushToWindow(CH.SAUCE_JOB_PROGRESS, {
+          jobId,
+          phase: 'running',
+          baselineSessionId: ids.baselineSessionId,
+          compareSessionId: ids.compareSessionId
+        });
+      }
+    }).then((result) => {
+      _pushToWindow(CH.SAUCE_JOB_COMPLETE, {
+        jobId,
+        success: true,
+        baselineReport: result.baselineReport,
+        compareReport: result.compareReport,
+        baselineManifest: result.baselineManifest,
+        compareManifest: result.compareManifest,
+        baselineSessionId: result.baselineSessionId,
+        compareSessionId: result.compareSessionId,
+        baselineArtifactDir: result.baselineArtifactDir,
+        compareArtifactDir: result.compareArtifactDir
+      });
+    }).catch((err) => {
+      if (err?._sauceJobCancelled) {
+        log.info('[SauceHandler] comparison cancelled', { jobId });
+        _pushToWindow(CH.SAUCE_JOB_COMPLETE, { jobId, success: false, cancelled: true, error: 'Cancelled' });
+        return;
+      }
+      log.error('[SauceHandler] comparison failed', { jobId, error: err?.message });
+      const payload = {
+        jobId,
+        success: false,
+        error: err?.message || 'Comparison failed'
+      };
+      if (err.partiallyFailed) {
+        payload.partiallyFailed = true;
+        payload.partiallyFailedSession = err.partiallyFailedSession;
+        payload.baselineSessionId = err.baselineSessionId;
+        payload.compareSessionId = err.compareSessionId;
+        payload.baselineStatus = err.baselineStatus;
+        payload.compareStatus = err.compareStatus;
+      }
+      _pushToWindow(CH.SAUCE_JOB_COMPLETE, payload);
+    });
+
+    return { success: true, jobId };
+  });
+
+  ipcMain.handle(CH.SAUCE_CANCEL_JOB, async (event, payload = {}) => {
+    const { jobId, username, accessKey, region, baselineSessionId, compareSessionId } = payload;
+    log.info('[SauceHandler] SAUCE_CANCEL_JOB received', { jobId });
+
+
+
+    if (jobId && typeof sauceManager.cancelJob === 'function') {
+      try {
+        await sauceManager.cancelJob(jobId, {
+          username,
+          accessKey,
+          region: region || 'us-west-1'
+        });
+      } catch (err) {
+        log.warn('[SauceHandler] cancelJob failed', { jobId, error: err?.message });
+      }
+    }
+
+
+
+    if (username && accessKey) {
+      const sessionIds = [baselineSessionId, compareSessionId].filter(Boolean);
+      if (sessionIds.length > 0) {
+        try {
+          await sauceManager._cancelRemoteSessions({
+            username, accessKey,
+            region: region || 'us-west-1',
+            sessionIds
+          });
+        } catch (err) {
+          log.warn('[SauceHandler] remote session termination failed', { error: err?.message });
+        }
+      }
+    }
+
+    return { acknowledged: true };
+  });
+
+  ipcMain.handle(CH.SAUCE_READ_KEYFRAME, async (event, payload = {}) => {
+    const { artifactDir, filename } = payload;
+    if (typeof artifactDir !== 'string' || !path.isAbsolute(artifactDir)) {
+      return { success: false, error: 'Invalid artifactDir' };
+    }
+
+
+
+    if (typeof filename !== 'string' || !/^keyframe-\d+\.webp$/.test(filename)) {
+      return { success: false, error: 'Invalid filename' };
+    }
+
+    const artifactsRoot = path.join(app.getPath('userData'), 'saucelabs-artifacts');
+    const resolvedDir = path.resolve(artifactDir);
+    const resolvedRoot = path.resolve(artifactsRoot);
+    if (resolvedDir !== resolvedRoot && !resolvedDir.startsWith(resolvedRoot + path.sep)) {
+      log.warn('SAUCE_READ_KEYFRAME rejected: path outside saucelabs-artifacts', { artifactDir });
+      return { success: false, error: 'Path not under saucelabs-artifacts' };
+    }
+    const filePath = path.join(resolvedDir, filename);
+    try {
+      const buffer = await fs.promises.readFile(filePath);
+      return { success: true, base64: buffer.toString('base64'), mimeType: 'image/webp' };
+    } catch (err) {
+      log.warn('SAUCE_READ_KEYFRAME read failed', { filePath, error: err.message, code: err.code });
+      return { success: false, error: err.code === 'ENOENT' ? 'Keyframe file not found' : err.message };
+    }
+  });
+
+  ipcMain.handle(CH.SAUCE_RETRY_FAILED_SESSION, (event, payload = {}) => {
+    const {
+      username, accessKey, region,
+      jobId, failedSide, failedSideUrl, successSideSessionId,
+      platform, browserName, screenResolution, tunnelName, filters
+    } = payload;
+
+    if (!username || !accessKey || !jobId || !failedSide || !failedSideUrl || !successSideSessionId) {
+      return { success: false, error: 'Missing required parameters for retry' };
+    }
+
+    sauceManager.retryFailedSession({
+      username,
+      accessKey,
+      region: region || 'us-west-1',
+      failedSide,
+      failedSideUrl,
+      successSideSessionId,
+      platform: platform || 'Windows 11',
+      browserName: browserName || 'chromium',
+      screenResolution: screenResolution || '1920x1080',
+      tunnelName: tunnelName || null,
+      filters: filters || null,
+      jobId,
+      onProgress: (progress) => {
+        _pushToWindow(CH.SAUCE_JOB_PROGRESS, { jobId, ...progress });
+      }
+    }).then((result) => {
+      _pushToWindow(CH.SAUCE_JOB_COMPLETE, {
+        jobId,
+        success: true,
+        baselineReport: result.baselineReport,
+        compareReport: result.compareReport,
+        baselineManifest: result.baselineManifest,
+        compareManifest: result.compareManifest,
+        baselineSessionId: result.baselineSessionId,
+        compareSessionId: result.compareSessionId,
+        baselineArtifactDir: result.baselineArtifactDir,
+        compareArtifactDir: result.compareArtifactDir
+      });
+    }).catch((err) => {
+      log.error('[SauceHandler] retry failed', { jobId, error: err?.message });
+      const errPayload = {
+        jobId,
+        success: false,
+        error: err?.message || 'Retry failed'
+      };
+      if (err.partiallyFailed) {
+        errPayload.partiallyFailed = true;
+        errPayload.partiallyFailedSession = err.partiallyFailedSession;
+      }
+      _pushToWindow(CH.SAUCE_JOB_COMPLETE, errPayload);
+    });
+
+    return { success: true, jobId };
   });
 }
 

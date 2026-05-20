@@ -807,7 +807,7 @@
   outline-offset: -2px;
 }
 
-/* Multi-select mode */
+
 .report-card--multi-selected {
   background: var(--color-brand-subtle);
   box-shadow: inset 3px 0 0 var(--color-brand-ring);
@@ -885,7 +885,7 @@
   display: block;
 }
 
-/* Multi-select toolbar */
+
 #multi-select-toolbar-slot {
   z-index: var(--z-dropdown);
   flex-shrink: 0;

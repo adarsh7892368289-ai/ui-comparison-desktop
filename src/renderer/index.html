@@ -15,6 +15,7 @@
   <link rel="stylesheet" href="styles/result-panel.css">
   <link rel="stylesheet" href="styles/navigation.css">
   <link rel="stylesheet" href="styles/bulk.css">
+  <link rel="stylesheet" href="styles/saucelabs.css">
 </head>
 <body>
 
@@ -117,6 +118,7 @@
         <button type="button" class="main-pane-section-nav__btn" data-main-pane-section="extract" role="tab" aria-selected="true" aria-controls="section-extract">Extract</button>
         <button type="button" class="main-pane-section-nav__btn" data-main-pane-section="compare" role="tab" aria-selected="false" aria-controls="section-compare">Compare</button>
         <button type="button" class="main-pane-section-nav__btn" data-main-pane-section="bulk" role="tab" aria-selected="false" aria-controls="section-bulk" id="bulk-tab-btn">Bulk<span class="nav-section-status" id="nav-section-status-bulk" aria-hidden="true"></span></button>
+        <button type="button" class="main-pane-section-nav__btn" data-main-pane-section="saucelabs" role="tab" aria-selected="false" aria-controls="section-saucelabs" id="saucelabs-tab-btn">SauceLabs</button>
       </nav>
 
       <div class="tab-panel" id="section-extract" role="tabpanel" aria-labelledby="tab-extract">
@@ -290,6 +292,12 @@
           <div id="bulk-results-screenshot-section" class="result-panel__screenshot-section" aria-live="polite"></div>
           <div id="bulk-result-panel-host"></div>
         </div>
+      </div>
+
+      <div class="tab-panel" id="section-saucelabs" role="tabpanel" aria-labelledby="tab-saucelabs" hidden>
+        <section id="panel-saucelabs" class="panel active">
+          <div id="saucelabs-panel-root"></div>
+        </section>
       </div>
 
     </div>

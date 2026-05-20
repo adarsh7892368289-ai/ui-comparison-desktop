@@ -92,4 +92,26 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onBulkPairCompleted: makePushBridge(CH.BULK_PAIR_COMPLETED),
 
   onBulkJobComplete: makePushBridge(CH.BULK_JOB_COMPLETE),
+
+  sauceValidateCredentials: (params) =>
+    ipcRenderer.invoke(CH.SAUCE_VALIDATE_CREDENTIALS, params),
+
+  sauceSubmitJob: (params) =>
+    ipcRenderer.invoke(CH.SAUCE_SUBMIT_JOB, params),
+
+  sauceSubmitComparison: (params) =>
+    ipcRenderer.invoke(CH.SAUCE_SUBMIT_COMPARISON, params),
+
+  sauceCancelJob: (params) =>
+    ipcRenderer.invoke(CH.SAUCE_CANCEL_JOB, params),
+
+  sauceRetryFailedSession: (params) =>
+    ipcRenderer.invoke(CH.SAUCE_RETRY_FAILED_SESSION, params),
+
+  sauceReadKeyframe: (params) =>
+    ipcRenderer.invoke(CH.SAUCE_READ_KEYFRAME, params),
+
+  onSauceJobProgress: makePushBridge(CH.SAUCE_JOB_PROGRESS),
+
+  onSauceJobComplete: makePushBridge(CH.SAUCE_JOB_COMPLETE),
 });

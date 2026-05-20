@@ -418,15 +418,15 @@ async function _syncJobMeta(state) {
     if (typeof storage.loadAllBulkJobs === 'function') {
       storedJobs = await storage.loadAllBulkJobs();
     }
-  } catch { void 0; }
+  } catch {void 0;}
 
-  for (const j of (storedJobs ?? [])) {
+  for (const j of storedJobs ?? []) {
     if (!j?.id) continue;
     map.set(j.id, {
-      filename:   j.filename   ?? null,
+      filename: j.filename ?? null,
       totalPairs: j.totalPairs ?? null,
-      createdAt:  j.createdAt  ?? null,
-      status:     j.status     ?? null,
+      createdAt: j.createdAt ?? null,
+      status: j.status ?? null
     });
   }
 
@@ -435,10 +435,10 @@ async function _syncJobMeta(state) {
     const existing = map.get(job.jobId) ?? {};
     map.set(job.jobId, {
       ...existing,
-      filename:   job.filename   ?? existing.filename   ?? null,
+      filename: job.filename ?? existing.filename ?? null,
       totalPairs: job.totalPairs ?? job.pairs?.length ?? existing.totalPairs ?? null,
-      createdAt:  job.startedAt  ?? existing.createdAt  ?? null,
-      status:     job.status     ?? existing.status     ?? null,
+      createdAt: job.startedAt ?? existing.createdAt ?? null,
+      status: job.status ?? existing.status ?? null
     });
   }
 
@@ -588,7 +588,7 @@ async function handleDeleteSelectedReports() {
   );
   if (!confirmed) return;
 
-  _undoBuffer = state.reports.filter(r => ids.includes(r.id));
+  _undoBuffer = state.reports.filter((r) => ids.includes(r.id));
 
   dispatch('MULTI_SELECT_AFTER_DELETE', { deletedIds: ids });
   dispatch('REPORTS_REMOVE_BY_IDS', { ids });
@@ -599,8 +599,8 @@ async function handleDeleteSelectedReports() {
 
   _undoActive = true;
 
-  const deletedBaseline = _undoBuffer.some(r => r.id === state.selectedBaseline);
-  const deletedCompare = _undoBuffer.some(r => r.id === state.selectedCompare);
+  const deletedBaseline = _undoBuffer.some((r) => r.id === state.selectedBaseline);
+  const deletedCompare = _undoBuffer.some((r) => r.id === state.selectedCompare);
   if (deletedBaseline && deletedCompare) {
     Toast.info('Baseline and compare reports were deleted — select new ones');
   } else if (deletedBaseline) {
@@ -626,7 +626,7 @@ async function _commitDelete(ids) {
   try {
     await storage.deleteReportsBatch(ids);
   } catch (err) {
-    // [BUG FIX] On failure, restore reports from buffer and re-render
+
     if (savedBuffer && savedBuffer.length > 0) {
       dispatch('REPORTS_RESTORE', { reports: savedBuffer });
       const query = document.getElementById('search-reports')?.value ?? '';
@@ -703,7 +703,7 @@ function _showUndoToast(count) {
     requestAnimationFrame(() => {
       toast.classList.add('toast--visible');
       bar.style.transition = 'transform 5000ms linear';
-      requestAnimationFrame(() => { bar.style.transform = 'scaleX(0)'; });
+      requestAnimationFrame(() => {bar.style.transform = 'scaleX(0)';});
     });
   });
 
@@ -775,19 +775,19 @@ async function handleDeleteReport(report) {
 }
 
 async function _handleDeleteBulkJob(jobId) {
-  if (!jobId) { return; }
+  if (!jobId) {return;}
   let jobLabel = jobId.slice(0, 8) + '…';
   try {
     const meta = await storage.loadBulkJob?.(jobId);
-    if (meta?.filename) { jobLabel = meta.filename; }
-  } catch { void 0; }
+    if (meta?.filename) {jobLabel = meta.filename;}
+  } catch {void 0;}
 
   const confirmed = await Modal.confirm(
     'Delete bulk run',
     `Delete bulk run "${jobLabel}" and all its pairs? This cannot be undone.`,
     { confirmText: 'Delete', destructive: true }
   );
-  if (!confirmed) { return; }
+  if (!confirmed) {return;}
   try {
     if (typeof storage.deleteBulkJobCascade !== 'function') {
       Toast.error('Bulk delete is not supported in this build.');
@@ -851,7 +851,7 @@ async function initializeApp(statusBar) {
       },
       onMultiSelectDelete: () => {
         handleDeleteSelectedReports();
-      },
+      }
     });
   }
 
@@ -867,7 +867,7 @@ async function initializeApp(statusBar) {
 
   if (typeof api?.onContextAction === 'function') {
     api.onContextAction((payload) => {
-      if (!payload) { return; }
+      if (!payload) {return;}
       if (payload.action === 'deleteSelected') {
         handleDeleteSelectedReports();
         return;
@@ -876,10 +876,10 @@ async function initializeApp(statusBar) {
         void _handleDeleteBulkJob(payload.bulkJobId);
         return;
       }
-      if (typeof payload.reportId !== 'string') { return; }
+      if (typeof payload.reportId !== 'string') {return;}
       const reports = getState().reports ?? [];
       const report = reports.find((r) => r.id === payload.reportId);
-      if (!report) { return; }
+      if (!report) {return;}
       switch (payload.action) {
         case 'setBaseline':
           selectBaselineFromReport(report);

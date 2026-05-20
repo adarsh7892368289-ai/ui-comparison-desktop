@@ -23,6 +23,7 @@ Cross-browser visual regression tool built on Electron and Playwright. Extracts 
 - [Keyboard Shortcuts](#keyboard-shortcuts)
 - [How to Add a New IPC Channel](#how-to-add-a-new-ipc-channel)
 - [Known Gotchas](#known-gotchas)
+- [SauceLabs — Live Account Verification](#saucelabs--live-account-verification)
 - [CI / Release Pipeline](#ci--release-pipeline)
 - [Further Reading](#further-reading)
 
@@ -35,6 +36,7 @@ Cross-browser visual regression tool built on Electron and Playwright. Extracts 
 | **Extract** | Capture a single URL into a saved report. |
 | **Compare** | Diff two saved reports (baseline vs. compare) in `dynamic` or `static` mode, optionally with side-by-side keyframe screenshots. |
 | **Bulk** | Upload an Excel plan (`baseline_url`, `compare_url`, plus optional columns; up to 500 rows) and run comparisons in parallel with bounded concurrency, per-host cooldown, deduplication, resume-on-crash, and an exportable per-row summary. |
+| **SauceLabs** | Run extractions or full comparisons on SauceLabs cloud VMs via `saucectl`. Supports credential validation, multi-region, parallel baseline+compare sessions, adaptive polling, partial-failure retry, cancellation, and resume-after-restart. |
 
 The matching pipeline, bulk runner internals, and IDB persistence are documented in [`SYSTEM_REFERENCE.md`](./SYSTEM_REFERENCE.md).
 
@@ -46,10 +48,12 @@ The matching pipeline, bulk runner internals, and IDB persistence are documented
 |---|---|---|
 | Runtime | Electron | `^41.1.1` — sandboxed renderer, context isolation, preload bridge |
 | Browser automation | Playwright | `^1.48.0` — Chromium, Firefox, WebKit + system Chrome/Edge/Brave |
+| Cloud execution | saucectl | `>=0.200.0 <1.0.0` — SauceLabs CLI for cloud-based extraction via Playwright test runner |
 | Bundler | webpack 5 | Three configs: main, renderer, extractor (`webpack.*.config.js`) |
 | Transpiler | Babel 7 | `@babel/preset-env` via `babel-loader` |
 | Lint / Format | ESLint 8, Prettier 3 | `.eslintrc.json`, `.prettierrc` |
-| Persistence | IndexedDB | Version 9, WAL + circuit breaker (`src/infrastructure/idb-repository.js`) |
+| Test runner | Vitest | `^4.1.6` — unit tests in `test/unit/` |
+| Persistence | IndexedDB | Version 10, WAL + circuit breaker (`src/infrastructure/idb-repository.js`) |
 | Spreadsheet I/O | xlsx | `^0.18.5` — bulk plan parser + export |
 | Concurrency | p-limit | `^4.0.0` — ESM-only, dynamic `import()` in `src/main/bulk-runner.js` |
 | Packaging | electron-builder | `^26.8.1` — `electron-builder.yml` |
@@ -65,6 +69,7 @@ The matching pipeline, bulk runner internals, and IDB persistence are documented
 | npm | Whatever ships with the Node version above |
 | OS | Windows 10+, macOS 12+, Linux Ubuntu 20.04+ |
 | `PLAYWRIGHT_BROWSERS_PATH` | **Required.** Must point to a directory containing a Playwright `chromium` install. Validated by `scripts/check-env.js` on every `prebuild`. |
+| `saucectl` (optional) | **Required only for the SauceLabs tab.** In dev mode: `npm install -g saucectl` (must be on `PATH`). In packaged builds: bundled automatically from `.saucectl-bin/${os}/${arch}/` via `extraResources`. The app also auto-downloads a compatible version to `userData/saucectl/bin/` on first use. Compatible range: `>=0.200.0 <1.0.0`. |
 
 ---
 
@@ -131,21 +136,21 @@ All commands run `npm run build` first, then `electron-builder`.
 | `npm run dist:linux` | Linux AppImage + .deb x64 | |
 | `npm run dist:all` | All platforms | **Do not use for releases** -- cross-OS from a single host produces broken artifacts |
 
-Output goes to `release/`. Configuration lives in `electron-builder.yml`.
+Output goes to `release/`. Configuration lives in `electron-builder.yml`. The packaged app bundles both the Playwright browser tree (from `.playwright-browsers/`) and platform-specific `saucectl` binaries (from `.saucectl-bin/${os}/${arch}/`) as `extraResources`.
 
 ---
 
 ## Tests and Linting
 
-No Jest/Mocha test runner is configured. Available automated checks:
-
 | Command | What it does |
 |---|---|
-| `npm run smoke-test` | `electron . --smoke-test` -- asserts extractor bundle on disk + `app.getVersion()` non-empty |
+| `npm test` | `vitest run` — executes unit tests in `test/unit/` |
+| `npm run test:watch` | `vitest` in watch mode |
+| `npm run smoke-test` | `electron . --smoke-test` — asserts extractor bundle on disk + `app.getVersion()` non-empty |
 | `npm run lint` | `eslint .` |
 | `npm run format` | `prettier --write .` |
 
-`fake-indexeddb` is a devDependency reserved for future unit tests; no source currently imports it.
+Unit tests use Vitest with `fake-indexeddb` (devDependency) for IDB schema tests. Configuration in `vitest.config.js`.
 
 ---
 
@@ -161,11 +166,13 @@ No Jest/Mocha test runner is configured. Available automated checks:
 | `src/core/selectors/` | CSS/XPath generator with timeouts + bounded concurrency |
 | `src/core/export/` | HTML/CSV/JSON/Excel exporters, bulk summary, plan template |
 | `src/infrastructure/` | IDB repository (WAL + circuit breaker, v9), logger, error tracker, perf monitor |
-| `src/main/` | Electron main: lifecycle, IPC handlers, preload, playwright-manager, browser-detector, bulk-runner, protocol-handler, resource-paths |
+| `src/main/` | Electron main: lifecycle, IPC handlers, preload, playwright-manager, browser-detector, bulk-runner, saucelabs-manager, saucelabs-binary-manager, protocol-handler, resource-paths |
 | `src/renderer/` | State machine, app entry, application workflows, components, styles, utils |
-| `src/renderer/application/` | Workflow orchestration (extract, compare, bulk, import/export, report management, notifications) |
-| `src/renderer/components/` | UI: shell, browser selector, modal, progress, report list (virtual scroll + multi-select), bulk panel, multi-select toolbar, toast, tooltip |
+| `src/renderer/application/` | Workflow orchestration (extract, compare, bulk, saucelabs, import/export, report management, notifications) |
+| `src/renderer/components/` | UI: shell, browser selector, modal, progress, report list (virtual scroll + multi-select), bulk panel, saucelabs panel, multi-select toolbar, toast, tooltip |
 | `src/renderer/styles/` | `tokens.css` design tokens + component stylesheets |
+| `.saucectl-bin/` | Platform-specific `saucectl` binaries bundled via `extraResources` for packaged builds |
+| `test/` | Vitest unit tests (`test/unit/*.test.js`) |
 | `scripts/` | `check-env.js` (env validation), `strip-comments.js` (dev utility) |
 | `docs/` | Design notes (not loaded at runtime) |
 | `dist/` | Webpack output (not committed) |
@@ -247,6 +254,14 @@ The complete `window.electronAPI` object exposed by `src/main/preload.js`:
 | `onBulkProgress(cb)` | `BULK_PROGRESS` | push (returns unsubscribe fn) |
 | `onBulkPairCompleted(cb)` | `BULK_PAIR_COMPLETED` | push (returns unsubscribe fn) |
 | `onBulkJobComplete(cb)` | `BULK_JOB_COMPLETE` | push (returns unsubscribe fn) |
+| `sauceValidateCredentials(params)` | `SAUCE_VALIDATE_CREDENTIALS` | invoke |
+| `sauceSubmitJob(params)` | `SAUCE_SUBMIT_JOB` | invoke |
+| `sauceSubmitComparison(params)` | `SAUCE_SUBMIT_COMPARISON` | invoke |
+| `sauceCancelJob(params)` | `SAUCE_CANCEL_JOB` | invoke |
+| `sauceRetryFailedSession(params)` | `SAUCE_RETRY_FAILED_SESSION` | invoke |
+| `sauceReadKeyframe(params)` | `SAUCE_READ_KEYFRAME` | invoke |
+| `onSauceJobProgress(cb)` | `SAUCE_JOB_PROGRESS` | push (returns unsubscribe fn) |
+| `onSauceJobComplete(cb)` | `SAUCE_JOB_COMPLETE` | push (returns unsubscribe fn) |
 | `platform` | -- | property (`process.platform`) |
 
 ---
@@ -327,7 +342,7 @@ See [`SYSTEM_REFERENCE.md`](./SYSTEM_REFERENCE.md) for the complete IPC registry
 - **`electronAPI` undefined is fatal.** If `window.electronAPI` is missing (typically a moved `dist/preload.js`), `src/renderer/app.js` replaces the body with a fatal banner. Confirm `BrowserWindow.webPreferences.preload` resolves to `dist/preload.js`.
 - **IDB lives only in the renderer.** Main process cannot access IndexedDB. Comparisons run in main but persistence happens after results return to the renderer via IPC.
 - **Renderer is sandboxed.** `app.enableSandbox()` is called in `src/main/index.js`. All Node capabilities the renderer needs must come through the preload bridge.
-- **IDB version is `9`.** A fresh install creates every store at v9 atomically. Upgrading from v8 adds `bulk_jobs`, `bulk_pairs`, and new indexes. See [`SYSTEM_REFERENCE.md`](./SYSTEM_REFERENCE.md) for the full schema.
+- **IDB version is `10`.** A fresh install creates every store at v10 atomically. Upgrading from v9 adds `sauce_jobs`. See [`SYSTEM_REFERENCE.md`](./SYSTEM_REFERENCE.md) for the full schema.
 - **Storage-degraded events cancel running bulk jobs.** Three consecutive IDB write failures open the circuit until renderer reload. `storage-degraded` events are dispatched on `window` with `detail.reason` of `CIRCUIT_OPEN` or `WAL_REPLAY_EXHAUSTED`.
 - **WAL replay bounded to 3 attempts.** `SAVE_VISUAL_BLOB` entries are never replayed (binary payload may be lost). `SAVE_BULK_JOB` / `SAVE_BULK_PAIR` entries are force-failed at boot if pending.
 - **Bulk eviction skips bulk-tagged rows.** `_evictAndWrite` excludes bulk rows from the `MAX_COMPARISONS=20` / `storage.maxReports=50` eviction counts. Bulk retention is bounded separately by `BULK_MAX_RETAINED_JOBS=10` in `src/infrastructure/idb-repository.js`.
@@ -339,12 +354,22 @@ See [`SYSTEM_REFERENCE.md`](./SYSTEM_REFERENCE.md) for the complete IPC registry
 - **Multi-select delete is optimistic with a 5s undo window.** IDB deletes are committed only after the timeout in `src/renderer/application/report-manager.js`. A crash during the window means no deletes are committed.
 - **Multi-select mode persists only in memory.** Not saved to `localStorage` or IDB. A page reload exits selection mode.
 
+### SauceLabs
+
+- **`saucectl` must be available.** The binary is resolved in priority order: (1) downloaded to `userData/saucectl/bin/`, (2) bundled at `resources/saucectl/`, (3) on `PATH`. If none is found, `SAUCE_VALIDATE_CREDENTIALS` returns an error before the API call. The binary manager auto-updates against GitHub releases within the `>=0.200.0 <1.0.0` semver range, with SHA-256 checksum verification.
+- **Credentials are memory-only.** Never persisted to disk. Cleared on app restart. In-flight SauceLabs jobs are persisted to IDB (`sauce_jobs` store) and can be resumed after providing credentials again.
+- **Adaptive polling backoff.** Session polling intervals escalate: 10 s for the first 2 min, 20 s for 2–5 min, 30 s for 5–10 min, then 60 s until the 90-min timeout. Up to 8 consecutive errors before giving up. Errors apply exponential backoff (up to 5 min).
+- **Partial failure and retry.** If one side of a comparison (baseline or compare) fails while the other succeeds, the job enters `partially_failed` state. The user can retry just the failed side without re-running the successful session.
+- **Cancellation kills saucectl + DELETEs remote sessions.** `SAUCE_CANCEL_JOB` sends SIGTERM→SIGKILL to any in-flight saucectl child processes and DELETEs remote sessions via the SauceLabs REST API. An in-process `AbortController` per job aborts all polling loops.
+- **saucectl timeout is 10 minutes.** If `saucectl run` does not exit within `saucelabs.saucectlTimeoutMs` (default 10 min), the child is SIGKILL'd.
+- **Cross-session abort.** In comparison mode, if one session fails polling, the sibling session's polling is also aborted to avoid a 90-min wait.
+
 ### Dead Code
 
-- **`better-sqlite3`** -- declared in `package.json` but no `src/` file imports it. All persistence is IndexedDB. Rebuilt against Electron via `postinstall` but never loaded.
-- **`electron-updater`** -- declared as a dependency and listed as a webpack external in `webpack.main.config.js`, but no `src/` file imports it and `electron-builder.yml` has no `publish` configuration.
-- **`OPERATION_CANCELLED` and `APP_NOTIFICATION` IPC channels** -- constants exist in `src/main/ipc-channels.js`, bridged in `src/main/preload.js`, and subscribed to in `src/renderer/app.js`. No code path in `src/main/` ever calls `webContents.send` on either channel.
-- **`recoverFrozenSessions()`** -- runs at boot in `src/main/playwright-manager.js` but iterates an in-process `_browsers` Map that is always empty at boot. Defensive but currently a no-op.
+- **`better-sqlite3`** — declared in `package.json` but no `src/` file imports it. All persistence is IndexedDB. Rebuilt against Electron via `postinstall` but never loaded.
+- **`electron-updater`** — declared as a dependency and listed as a webpack external in `webpack.main.config.js`, but no `src/` file imports it and `electron-builder.yml` has no `publish` configuration.
+- **`OPERATION_CANCELLED` and `APP_NOTIFICATION` IPC channels** — constants exist in `src/main/ipc-channels.js`, bridged in `src/main/preload.js`, and subscribed to in `src/renderer/app.js`. No code path in `src/main/` ever calls `webContents.send` on either channel.
+- **`recoverFrozenSessions()`** — runs at boot in `src/main/playwright-manager.js` but iterates an in-process `_browsers` Map that is always empty at boot. Defensive but currently a no-op.
 
 ### Operational
 
@@ -357,6 +382,20 @@ See [`SYSTEM_REFERENCE.md`](./SYSTEM_REFERENCE.md) for the complete IPC registry
 ### Known Bug
 
 - **`BulkJobState.status` JSDoc at `src/renderer/state.js:7` is incomplete.** Declares `'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'` but the reducer also produces `'parsed'` and `'partial'`. See [`SYSTEM_REFERENCE.md`](./SYSTEM_REFERENCE.md) for the full status union.
+
+---
+
+## SauceLabs — Live Account Verification
+
+The following aspects of the SauceLabs integration cannot be verified by unit tests or mocked HTTP responses and require a real SauceLabs account with Playwright session-creation entitlements:
+
+1. **Artifact write path.** The generated test script writes `extraction-result.json`, `screenshots-manifest.json`, and `keyframe-N.webp` files from inside the SauceLabs VM. Verify that these files appear in the session's artifact list via `GET /rest/v1/{username}/jobs/{sessionId}/assets` and are downloadable with correct, non-zero content.
+
+2. **Actual session polling.** Confirm that `GET /rest/v1/{username}/jobs/{sessionId}` transitions through `in progress` → `complete`/`passed` within the expected time window (typically 1–3 minutes for a simple page). Verify that the adaptive backoff schedule (10 s / 20 s / 30 s / 60 s) does not cause premature timeout on real SauceLabs infrastructure latency.
+
+3. **Full comparison round-trip.** Submit a comparison (two URLs) via the SauceLabs tab, wait for both sessions to complete, download artifacts, run local comparison, and confirm the comparison result appears in the report list with visual keyframe screenshots rendered correctly. This exercises the entire pipeline end-to-end: YAML generation → saucectl spawn → session polling → artifact download → Comparator → post-comparison keyframe filter → IDB persistence → protocol-handler blob registration → UI rendering.
+
+These checks should be run manually at each phase sign-off. They are not part of CI (they require credentials and consume SauceLabs concurrency).
 
 ---
 
@@ -378,9 +417,10 @@ Both jobs use `actions/checkout@v5`, `actions/setup-node@v5`, `actions/upload-ar
 [`SYSTEM_REFERENCE.md`](./SYSTEM_REFERENCE.md) covers:
 
 - Full IPC registry (every channel name, direction, payload type, handler location)
-- IndexedDB schema (all stores, indexes, upgrade path from v5 through v9)
+- IndexedDB schema (all stores, indexes, upgrade path from v5 through v10)
 - State machine (complete action/reducer reference, transition rules)
 - Matching pipeline internals (4-phase algorithm, scoring, thresholds)
 - Bulk runner internals (concurrency model, dedup, cooldown, resume, eviction)
 - Normalization engine (per-property strategies, engine quirk profiles)
+- SauceLabs pipeline (binary resolution hierarchy, dual-session state machine, polling, credential flow, post-comparison keyframe filter, close-and-resume, `_parseSauceSessionId` contract)
 - Failure modes and recovery paths

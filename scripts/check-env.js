@@ -34,3 +34,18 @@ if (!chromiumDir) {
 }
 
 console.log(`[check-env] OK: chromium found at ${path.join(resolved, chromiumDir)}`);
+
+const saucectlBinDir = path.resolve(__dirname, '..', '.saucectl-bin');
+const platformMap = { win32: 'win', darwin: 'mac', linux: 'linux' };
+const osDir = platformMap[process.platform] || process.platform;
+const arch = process.arch;
+const binaryName = process.platform === 'win32' ? 'saucectl.exe' : 'saucectl';
+const expectedBin = path.join(saucectlBinDir, osDir, arch, binaryName);
+
+if (!fs.existsSync(expectedBin)) {
+  console.warn(`[check-env] WARN: saucectl binary not found at ${expectedBin}`);
+  console.warn('  The packaged app will not include a bundled saucectl (Level 2 fallback skipped).');
+  console.warn('  See .saucectl-bin/README.md for instructions on obtaining the binary.');
+} else {
+  console.log(`[check-env] OK: saucectl binary found at ${expectedBin}`);
+}

@@ -3,40 +3,41 @@ import { ERROR_CODES, errorTracker } from './error-tracker.js';
 import logger from './logger.js';
 import { performanceMonitor } from './performance-monitor.js';
 
-const DB_NAME                    = 'ui_comparison_db';
-const DB_VERSION                 = 9;
-const STORE_REPORTS              = 'reports';
-const STORE_ELEMENTS             = 'elements';
-const STORE_COMPARISONS          = 'comparisons';
-const STORE_COMP_DIFFS           = 'comparison_diffs';
-const STORE_COMP_SUMMARY         = 'comparison_summary';
-const STORE_VISUAL_BLOBS         = 'visual_blobs';
-const STORE_VISUAL_KEYFRAMES     = 'visual_keyframes';
+const DB_NAME = 'ui_comparison_db';
+const DB_VERSION = 10;
+const STORE_REPORTS = 'reports';
+const STORE_ELEMENTS = 'elements';
+const STORE_COMPARISONS = 'comparisons';
+const STORE_COMP_DIFFS = 'comparison_diffs';
+const STORE_COMP_SUMMARY = 'comparison_summary';
+const STORE_VISUAL_BLOBS = 'visual_blobs';
+const STORE_VISUAL_KEYFRAMES = 'visual_keyframes';
 const STORE_VISUAL_ELEMENT_RECTS = 'visual_element_rects';
-const STORE_OP_LOG               = 'operation_log';
-const STORE_APP_META             = 'app_meta';
-const STORE_BULK_JOBS            = 'bulk_jobs';
-const STORE_BULK_PAIRS           = 'bulk_pairs';
-const META_KEY_V5_DATA_CLEARED   = 'v5_upgrade_data_cleared_notice';
-const MAX_COMPARISONS            = 20;
-const BULK_MAX_RETAINED_JOBS     = 10;
-const OP_STATUS_PENDING          = 'PENDING';
-const OP_STATUS_COMPLETE         = 'COMPLETE';
-const OP_STATUS_FAILED           = 'FAILED';
-const CIRCUIT_BREAKER_LIMIT      = 3;
+const STORE_OP_LOG = 'operation_log';
+const STORE_APP_META = 'app_meta';
+const STORE_BULK_JOBS = 'bulk_jobs';
+const STORE_BULK_PAIRS = 'bulk_pairs';
+const STORE_SAUCE_JOBS = 'sauce_jobs';
+const META_KEY_V5_DATA_CLEARED = 'v5_upgrade_data_cleared_notice';
+const MAX_COMPARISONS = 20;
+const BULK_MAX_RETAINED_JOBS = 10;
+const OP_STATUS_PENDING = 'PENDING';
+const OP_STATUS_COMPLETE = 'COMPLETE';
+const OP_STATUS_FAILED = 'FAILED';
+const CIRCUIT_BREAKER_LIMIT = 3;
 
 function requestToPromise(request) {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
-    request.onerror   = () => reject(request.error);
+    request.onerror = () => reject(request.error);
   });
 }
 
 function transactionToPromise(tx) {
   return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();
-    tx.onerror    = () => reject(tx.error);
-    tx.onabort    = () => reject(tx.error ?? new Error('Transaction aborted'));
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error ?? new Error('Transaction aborted'));
   });
 }
 
@@ -74,18 +75,18 @@ function commitReportWrite(reportStore, elementStore, reportCtx) {
 
 function buildReportStores(db) {
   const reportStore = db.createObjectStore(STORE_REPORTS, { keyPath: 'id' });
-  reportStore.createIndex('by_timestamp', 'timestamp',          { unique: false });
-  reportStore.createIndex('by_url',       'url',                { unique: false });
-  reportStore.createIndex('by_url_ts',    ['url', 'timestamp'], { unique: false });
+  reportStore.createIndex('by_timestamp', 'timestamp', { unique: false });
+  reportStore.createIndex('by_url', 'url', { unique: false });
+  reportStore.createIndex('by_url_ts', ['url', 'timestamp'], { unique: false });
   db.createObjectStore(STORE_ELEMENTS, { keyPath: 'reportId' });
 }
 
 function buildComparisonStores(db) {
   const compStore = db.createObjectStore(STORE_COMPARISONS, { keyPath: 'id' });
-  compStore.createIndex('by_pair',      'pairKey',    { unique: true  });
-  compStore.createIndex('by_timestamp', 'timestamp',  { unique: false });
-  compStore.createIndex('by_baseline',  'baselineId', { unique: false });
-  compStore.createIndex('by_compare',   'compareId',  { unique: false });
+  compStore.createIndex('by_pair', 'pairKey', { unique: true });
+  compStore.createIndex('by_timestamp', 'timestamp', { unique: false });
+  compStore.createIndex('by_baseline', 'baselineId', { unique: false });
+  compStore.createIndex('by_compare', 'compareId', { unique: false });
   db.createObjectStore(STORE_COMP_DIFFS, { keyPath: 'comparisonId' });
 }
 
@@ -98,23 +99,23 @@ function buildAuxStores(db) {
   if (!db.objectStoreNames.contains(STORE_VISUAL_BLOBS)) {
     const blobStore = db.createObjectStore(STORE_VISUAL_BLOBS, { keyPath: 'key' });
     blobStore.createIndex('by_comparisonId', 'comparisonId', { unique: false });
-    blobStore.createIndex('by_timestamp',    'timestamp',    { unique: false });
+    blobStore.createIndex('by_timestamp', 'timestamp', { unique: false });
   }
 
   if (!db.objectStoreNames.contains(STORE_OP_LOG)) {
     const logStore = db.createObjectStore(STORE_OP_LOG, { keyPath: 'id' });
-    logStore.createIndex('by_status',    'status',    { unique: false });
+    logStore.createIndex('by_status', 'status', { unique: false });
     logStore.createIndex('by_timestamp', 'timestamp', { unique: false });
   }
 }
 
 function upgradeToV5(upgradeTx) {
-  upgradeTx.objectStore(STORE_COMPARISONS)
-    .createIndex('by_triple', ['baselineId', 'compareId', 'mode'], { unique: true });
+  upgradeTx.objectStore(STORE_COMPARISONS).
+  createIndex('by_triple', ['baselineId', 'compareId', 'mode'], { unique: true });
 
   const reportStore = upgradeTx.objectStore(STORE_REPORTS);
-  const logStore    = upgradeTx.objectStore(STORE_OP_LOG);
-  const reportIds   = [];
+  const logStore = upgradeTx.objectStore(STORE_OP_LOG);
+  const reportIds = [];
 
   const cursorReq = reportStore.openCursor();
   cursorReq.onsuccess = () => {
@@ -124,11 +125,11 @@ function upgradeToV5(upgradeTx) {
       cursor.continue();
     } else {
       logStore.put({
-        id:        crypto.randomUUID(),
+        id: crypto.randomUUID(),
         operation: 'PRE_UPGRADE_V5_BACKUP',
-        payload:   { reportCount: reportIds.length, reportIds, timestamp: Date.now() },
-        status:    OP_STATUS_COMPLETE,
-        timestamp: new Date().toISOString(),
+        payload: { reportCount: reportIds.length, reportIds, timestamp: Date.now() },
+        status: OP_STATUS_COMPLETE,
+        timestamp: new Date().toISOString()
       });
 
       const stalePurge = [STORE_REPORTS, STORE_ELEMENTS, STORE_COMPARISONS, STORE_COMP_DIFFS, STORE_COMP_SUMMARY];
@@ -140,12 +141,12 @@ function upgradeToV5(upgradeTx) {
 
   upgradeTx.addEventListener('complete', () => {
     const db = upgradeTx.db;
-    if (!db.objectStoreNames.contains(STORE_APP_META)) { return; }
+    if (!db.objectStoreNames.contains(STORE_APP_META)) {return;}
     const tx = db.transaction([STORE_APP_META], 'readwrite');
     tx.objectStore(STORE_APP_META).put({
-      key:     META_KEY_V5_DATA_CLEARED,
+      key: META_KEY_V5_DATA_CLEARED,
       pending: true,
-      at:      Date.now(),
+      at: Date.now()
     });
   });
 }
@@ -155,17 +156,17 @@ function upgradeToV6(db) {
   kfStore.createIndex('by_session', 'sessionId', { unique: false });
 
   const rectStore = db.createObjectStore(STORE_VISUAL_ELEMENT_RECTS, { keyPath: 'id' });
-  rectStore.createIndex('by_session',         'sessionId',                 { unique: false });
+  rectStore.createIndex('by_session', 'sessionId', { unique: false });
   rectStore.createIndex('by_session_element', ['sessionId', 'elementKey'], { unique: false });
 }
 
 function upgradeToV7(db, upgradeTx) {
-  if (!db.objectStoreNames.contains(STORE_VISUAL_BLOBS)) { return; }
+  if (!db.objectStoreNames.contains(STORE_VISUAL_BLOBS)) {return;}
   const blobStore = upgradeTx.objectStore(STORE_VISUAL_BLOBS);
   const req = blobStore.openCursor();
   req.onsuccess = () => {
     const cursor = req.result;
-    if (!cursor) { return; }
+    if (!cursor) {return;}
     const record = cursor.value;
     if (!record.key.includes(':') && record.comparisonId) {
       const newKey = `${record.comparisonId}:${record.key}`;
@@ -186,14 +187,14 @@ function upgradeToV9(db, upgradeTx) {
   if (!db.objectStoreNames.contains(STORE_BULK_JOBS)) {
     const jobsStore = db.createObjectStore(STORE_BULK_JOBS, { keyPath: 'id' });
     jobsStore.createIndex('by_createdAt', 'createdAt', { unique: false });
-    jobsStore.createIndex('by_status',    'status',    { unique: false });
+    jobsStore.createIndex('by_status', 'status', { unique: false });
   }
 
   if (!db.objectStoreNames.contains(STORE_BULK_PAIRS)) {
     const pairsStore = db.createObjectStore(STORE_BULK_PAIRS, { keyPath: 'id' });
-    pairsStore.createIndex('by_jobId',              'jobId',                  { unique: false });
-    pairsStore.createIndex('by_jobId_status',       ['jobId', 'status'],      { unique: false });
-    pairsStore.createIndex('by_jobId_pairIndex',    ['jobId', 'pairIndex'],   { unique: false });
+    pairsStore.createIndex('by_jobId', 'jobId', { unique: false });
+    pairsStore.createIndex('by_jobId_status', ['jobId', 'status'], { unique: false });
+    pairsStore.createIndex('by_jobId_pairIndex', ['jobId', 'pairIndex'], { unique: false });
   }
 
   if (db.objectStoreNames.contains(STORE_REPORTS)) {
@@ -214,30 +215,39 @@ function upgradeToV9(db, upgradeTx) {
   }
 }
 
+function upgradeToV10(db) {
+  if (!db.objectStoreNames.contains(STORE_SAUCE_JOBS)) {
+    const store = db.createObjectStore(STORE_SAUCE_JOBS, { keyPath: 'id' });
+    store.createIndex('by_status', 'status', { unique: false });
+    store.createIndex('by_createdAt', 'createdAt', { unique: false });
+  }
+}
+
 function runUpgrade(db, upgradeTx, oldVersion) {
-  if (oldVersion < 1) { buildReportStores(db); }
-  if (oldVersion < 2) { buildComparisonStores(db); }
-  if (oldVersion < 4) { buildAuxStores(db); }
-  if (oldVersion < 8) { upgradeToV8(db); }
-  if (oldVersion < 5) { upgradeToV5(upgradeTx); }
-  if (oldVersion < 6) { upgradeToV6(db); }
-  if (oldVersion < 7) { upgradeToV7(db, upgradeTx); }
-  if (oldVersion < 9) { upgradeToV9(db, upgradeTx); }
+  if (oldVersion < 1) {buildReportStores(db);}
+  if (oldVersion < 2) {buildComparisonStores(db);}
+  if (oldVersion < 4) {buildAuxStores(db);}
+  if (oldVersion < 8) {upgradeToV8(db);}
+  if (oldVersion < 5) {upgradeToV5(upgradeTx);}
+  if (oldVersion < 6) {upgradeToV6(db);}
+  if (oldVersion < 7) {upgradeToV7(db, upgradeTx);}
+  if (oldVersion < 9) {upgradeToV9(db, upgradeTx);}
+  if (oldVersion < 10) {upgradeToV10(db);}
 }
 
 class IDBRepository {
-  #db                  = null;
-  #opening             = null;
-  #writeQueue          = Promise.resolve();
+  #db = null;
+  #opening = null;
+  #writeQueue = Promise.resolve();
   #consecutiveFailures = 0;
-  #circuitOpen         = false;
+  #circuitOpen = false;
 
   #handleWriteFailure(err) {
     this.#consecutiveFailures += 1;
     logger.error('IDB write failure recorded', {
-      error:               err.message,
+      error: err.message,
       consecutiveFailures: this.#consecutiveFailures,
-      limit:               CIRCUIT_BREAKER_LIMIT
+      limit: CIRCUIT_BREAKER_LIMIT
     });
     trackError(ERROR_CODES.STORAGE_WRITE_FAILED, err.message);
     if (this.#consecutiveFailures >= CIRCUIT_BREAKER_LIMIT) {
@@ -247,11 +257,11 @@ class IDBRepository {
       });
       window.dispatchEvent(new CustomEvent('storage-degraded', {
         detail: {
-          reason:              'CIRCUIT_OPEN',
+          reason: 'CIRCUIT_OPEN',
           consecutiveFailures: this.#consecutiveFailures,
-          limit:               CIRCUIT_BREAKER_LIMIT,
-          openedAt:            Date.now(),
-        },
+          limit: CIRCUIT_BREAKER_LIMIT,
+          openedAt: Date.now()
+        }
       }));
     }
   }
@@ -313,7 +323,7 @@ class IDBRepository {
           trackError(ERROR_CODES.STORAGE_READ_FAILED, dbEvent.target.error?.message ?? 'IDB error');
         };
 
-        this.#db      = openedDb;
+        this.#db = openedDb;
         this.#opening = null;
         resolve(openedDb);
       };
@@ -339,9 +349,9 @@ class IDBRepository {
   async #saveReportInner(report) {
     const maxReports = get('storage.maxReports');
     const { elements, extractionKey, ...rest } = report;
-    const meta = extractionKey === undefined
-      ? { ...rest }
-      : { ...rest, extractionKey };
+    const meta = extractionKey === undefined ?
+    { ...rest } :
+    { ...rest, extractionKey };
     const logId = crypto.randomUUID();
 
     try {
@@ -358,24 +368,24 @@ class IDBRepository {
 
   #writeReportWithEviction(db, meta, elements, reportId, maxReports) {
     return new Promise((resolve, reject) => {
-      const tx           = db.transaction([STORE_REPORTS, STORE_ELEMENTS], 'readwrite');
-      const reportStore  = tx.objectStore(STORE_REPORTS);
+      const tx = db.transaction([STORE_REPORTS, STORE_ELEMENTS], 'readwrite');
+      const reportStore = tx.objectStore(STORE_REPORTS);
       const elementStore = tx.objectStore(STORE_ELEMENTS);
 
       transactionToPromise(tx).then(resolve).catch(reject);
 
       const totalReq = reportStore.count();
-      const bulkReq  = reportStore.index('by_bulkJobId').count();
+      const bulkReq = reportStore.index('by_bulkJobId').count();
       let totalCount = null;
-      let bulkCount  = null;
+      let bulkCount = null;
 
       const proceed = () => {
-        if (totalCount === null || bulkCount === null) { return; }
+        if (totalCount === null || bulkCount === null) {return;}
         const nonBulkCount = totalCount - bulkCount;
-        const isBulkWrite  = meta.bulkJobId != null;
-        const projected    = isBulkWrite ? nonBulkCount : nonBulkCount + 1;
-        const excess       = projected - maxReports;
-        const reportCtx    = { meta, elements, id: reportId };
+        const isBulkWrite = meta.bulkJobId != null;
+        const projected = isBulkWrite ? nonBulkCount : nonBulkCount + 1;
+        const excess = projected - maxReports;
+        const reportCtx = { meta, elements, id: reportId };
         if (excess <= 0) {
           commitReportWrite(reportStore, elementStore, reportCtx);
           return;
@@ -383,10 +393,10 @@ class IDBRepository {
         this.#evictReports(reportStore, elementStore, reportCtx, excess);
       };
 
-      totalReq.onerror   = () => tx.abort();
-      bulkReq.onerror    = () => tx.abort();
-      totalReq.onsuccess = () => { totalCount = totalReq.result; proceed(); };
-      bulkReq.onsuccess  = () => { bulkCount  = bulkReq.result;  proceed(); };
+      totalReq.onerror = () => tx.abort();
+      bulkReq.onerror = () => tx.abort();
+      totalReq.onsuccess = () => {totalCount = totalReq.result;proceed();};
+      bulkReq.onsuccess = () => {bulkCount = bulkReq.result;proceed();};
     });
   }
 
@@ -394,7 +404,7 @@ class IDBRepository {
     const cursorReq = reportStore.index('by_timestamp').openCursor(null, 'next');
     let deleted = 0;
 
-    cursorReq.onerror  = () => reportStore.transaction.abort();
+    cursorReq.onerror = () => reportStore.transaction.abort();
     cursorReq.onsuccess = () => {
       const cursor = cursorReq.result;
       if (cursor && deleted < excess) {
@@ -428,8 +438,8 @@ class IDBRepository {
   async loadReportElements(reportId) {
     return performanceMonitor.wrap('idb.loadReportElements', async () => {
       try {
-        const db     = await this.#getDB();
-        const tx     = db.transaction(STORE_ELEMENTS, 'readonly');
+        const db = await this.#getDB();
+        const tx = db.transaction(STORE_ELEMENTS, 'readonly');
         const record = await requestToPromise(tx.objectStore(STORE_ELEMENTS).get(reportId));
         return record?.data ?? [];
       } catch (readError) {
@@ -445,15 +455,15 @@ class IDBRepository {
 
   async #deleteReportInner(id) {
     try {
-      const db              = await this.#getDB();
+      const db = await this.#getDB();
       const compIdsToDelete = await this.#getComparisonIdsByReportId(db, id);
 
       const stores = [
-        STORE_REPORTS, STORE_ELEMENTS,
-        STORE_COMPARISONS, STORE_COMP_DIFFS, STORE_COMP_SUMMARY,
-        STORE_VISUAL_BLOBS, STORE_VISUAL_KEYFRAMES, STORE_VISUAL_ELEMENT_RECTS
-      ];
-      const tx     = db.transaction(stores, 'readwrite');
+      STORE_REPORTS, STORE_ELEMENTS,
+      STORE_COMPARISONS, STORE_COMP_DIFFS, STORE_COMP_SUMMARY,
+      STORE_VISUAL_BLOBS, STORE_VISUAL_KEYFRAMES, STORE_VISUAL_ELEMENT_RECTS];
+
+      const tx = db.transaction(stores, 'readwrite');
 
       tx.objectStore(STORE_REPORTS).delete(id);
       tx.objectStore(STORE_ELEMENTS).delete(id);
@@ -464,24 +474,24 @@ class IDBRepository {
         tx.objectStore(STORE_COMP_SUMMARY).delete(compId);
 
         const blobStore = tx.objectStore(STORE_VISUAL_BLOBS);
-        const blobReq   = blobStore.index('by_comparisonId').openKeyCursor(IDBKeyRange.only(compId));
+        const blobReq = blobStore.index('by_comparisonId').openKeyCursor(IDBKeyRange.only(compId));
         blobReq.onsuccess = () => {
           const cursor = blobReq.result;
-          if (cursor) { blobStore.delete(cursor.primaryKey); cursor.continue(); }
+          if (cursor) {blobStore.delete(cursor.primaryKey);cursor.continue();}
         };
 
         const kfStore = tx.objectStore(STORE_VISUAL_KEYFRAMES);
-        const kfReq   = kfStore.index('by_session').openKeyCursor(IDBKeyRange.only(compId));
+        const kfReq = kfStore.index('by_session').openKeyCursor(IDBKeyRange.only(compId));
         kfReq.onsuccess = () => {
           const cursor = kfReq.result;
-          if (cursor) { kfStore.delete(cursor.primaryKey); cursor.continue(); }
+          if (cursor) {kfStore.delete(cursor.primaryKey);cursor.continue();}
         };
 
         const rectStore = tx.objectStore(STORE_VISUAL_ELEMENT_RECTS);
-        const rectReq   = rectStore.index('by_session').openKeyCursor(IDBKeyRange.only(compId));
+        const rectReq = rectStore.index('by_session').openKeyCursor(IDBKeyRange.only(compId));
         rectReq.onsuccess = () => {
           const cursor = rectReq.result;
-          if (cursor) { rectStore.delete(cursor.primaryKey); cursor.continue(); }
+          if (cursor) {rectStore.delete(cursor.primaryKey);cursor.continue();}
         };
       }
 
@@ -498,17 +508,17 @@ class IDBRepository {
   }
 
   async #deleteReportsBatchInner(ids) {
-    if (!ids?.length) { return { success: true, deletedCount: 0 }; }
+    if (!ids?.length) {return { success: true, deletedCount: 0 };}
     try {
       const db = await this.#getDB();
       const idSet = new Set(ids);
 
       const stores = [
-        STORE_REPORTS, STORE_ELEMENTS,
-        STORE_COMPARISONS, STORE_COMP_DIFFS, STORE_COMP_SUMMARY,
-        STORE_VISUAL_BLOBS, STORE_VISUAL_KEYFRAMES, STORE_VISUAL_ELEMENT_RECTS,
-        STORE_BULK_JOBS, STORE_BULK_PAIRS,
-      ];
+      STORE_REPORTS, STORE_ELEMENTS,
+      STORE_COMPARISONS, STORE_COMP_DIFFS, STORE_COMP_SUMMARY,
+      STORE_VISUAL_BLOBS, STORE_VISUAL_KEYFRAMES, STORE_VISUAL_ELEMENT_RECTS,
+      STORE_BULK_JOBS, STORE_BULK_PAIRS];
+
       const tx = db.transaction(stores, 'readwrite');
 
       const compStore = tx.objectStore(STORE_COMPARISONS);
@@ -518,7 +528,7 @@ class IDBRepository {
       const collectCompAndBulk = () => new Promise((resolve) => {
         const reportStore = tx.objectStore(STORE_REPORTS);
         let pending = idSet.size;
-        if (pending === 0) { resolve(); return; }
+        if (pending === 0) {resolve();return;}
 
         for (const reportId of idSet) {
           const req = reportStore.get(reportId);
@@ -528,33 +538,33 @@ class IDBRepository {
               bulkJobCounts.set(report.bulkJobId, (bulkJobCounts.get(report.bulkJobId) ?? 0) + 1);
             }
             pending--;
-            if (pending === 0) { resolve(); }
+            if (pending === 0) {resolve();}
           };
-          req.onerror = () => { pending--; if (pending === 0) { resolve(); } };
+          req.onerror = () => {pending--;if (pending === 0) {resolve();}};
         }
       });
 
       const collectCompIds = () => new Promise((resolve) => {
         let pending = idSet.size * 2;
-        if (pending === 0) { resolve(); return; }
+        if (pending === 0) {resolve();return;}
 
         for (const reportId of idSet) {
           const range = IDBKeyRange.only(reportId);
           const blReq = compStore.index('by_baseline').getAllKeys(range);
           blReq.onsuccess = () => {
-            for (const k of (blReq.result ?? [])) { compIds.add(k); }
+            for (const k of blReq.result ?? []) {compIds.add(k);}
             pending--;
-            if (pending === 0) { resolve(); }
+            if (pending === 0) {resolve();}
           };
-          blReq.onerror = () => { pending--; if (pending === 0) { resolve(); } };
+          blReq.onerror = () => {pending--;if (pending === 0) {resolve();}};
 
           const cpReq = compStore.index('by_compare').getAllKeys(range);
           cpReq.onsuccess = () => {
-            for (const k of (cpReq.result ?? [])) { compIds.add(k); }
+            for (const k of cpReq.result ?? []) {compIds.add(k);}
             pending--;
-            if (pending === 0) { resolve(); }
+            if (pending === 0) {resolve();}
           };
-          cpReq.onerror = () => { pending--; if (pending === 0) { resolve(); } };
+          cpReq.onerror = () => {pending--;if (pending === 0) {resolve();}};
         }
       });
 
@@ -574,35 +584,35 @@ class IDBRepository {
         const blobReq = blobStore.index('by_comparisonId').openKeyCursor(IDBKeyRange.only(compId));
         blobReq.onsuccess = () => {
           const cursor = blobReq.result;
-          if (cursor) { blobStore.delete(cursor.primaryKey); cursor.continue(); }
+          if (cursor) {blobStore.delete(cursor.primaryKey);cursor.continue();}
         };
 
         const kfStore = tx.objectStore(STORE_VISUAL_KEYFRAMES);
         const kfReq = kfStore.index('by_session').openKeyCursor(IDBKeyRange.only(compId));
         kfReq.onsuccess = () => {
           const cursor = kfReq.result;
-          if (cursor) { kfStore.delete(cursor.primaryKey); cursor.continue(); }
+          if (cursor) {kfStore.delete(cursor.primaryKey);cursor.continue();}
         };
 
         const rectStore = tx.objectStore(STORE_VISUAL_ELEMENT_RECTS);
         const rectReq = rectStore.index('by_session').openKeyCursor(IDBKeyRange.only(compId));
         rectReq.onsuccess = () => {
           const cursor = rectReq.result;
-          if (cursor) { rectStore.delete(cursor.primaryKey); cursor.continue(); }
+          if (cursor) {rectStore.delete(cursor.primaryKey);cursor.continue();}
         };
       }
 
-      // Cascade bulk jobs where ALL reports from the job are being deleted
+
       for (const [bulkJobId] of bulkJobCounts) {
         const allReportsReq = tx.objectStore(STORE_REPORTS).index('by_bulkJobId').getAllKeys(IDBKeyRange.only(bulkJobId));
         allReportsReq.onsuccess = () => {
-          const remaining = (allReportsReq.result ?? []).filter(k => !idSet.has(k));
+          const remaining = (allReportsReq.result ?? []).filter((k) => !idSet.has(k));
           if (remaining.length === 0) {
             tx.objectStore(STORE_BULK_JOBS).delete(bulkJobId);
             const pairReq = tx.objectStore(STORE_BULK_PAIRS).index('by_jobId').openKeyCursor(IDBKeyRange.only(bulkJobId));
             pairReq.onsuccess = () => {
               const cursor = pairReq.result;
-              if (cursor) { tx.objectStore(STORE_BULK_PAIRS).delete(cursor.primaryKey); cursor.continue(); }
+              if (cursor) {tx.objectStore(STORE_BULK_PAIRS).delete(cursor.primaryKey);cursor.continue();}
             };
           }
         };
@@ -618,13 +628,13 @@ class IDBRepository {
 
   async #getComparisonIdsByReportId(db, reportId) {
     try {
-      const tx     = db.transaction(STORE_COMPARISONS, 'readonly');
-      const store  = tx.objectStore(STORE_COMPARISONS);
-      const range  = IDBKeyRange.only(reportId);
+      const tx = db.transaction(STORE_COMPARISONS, 'readonly');
+      const store = tx.objectStore(STORE_COMPARISONS);
+      const range = IDBKeyRange.only(reportId);
       const [baselineKeys, compareKeys] = await Promise.all([
-        requestToPromise(store.index('by_baseline').getAllKeys(range)),
-        requestToPromise(store.index('by_compare').getAllKeys(range))
-      ]);
+      requestToPromise(store.index('by_baseline').getAllKeys(range)),
+      requestToPromise(store.index('by_compare').getAllKeys(range))]
+      );
       return [...new Set([...(baselineKeys ?? []), ...(compareKeys ?? [])])];
     } catch {
       return [];
@@ -637,12 +647,12 @@ class IDBRepository {
 
   async #deleteAllInner() {
     try {
-      const db     = await this.#getDB();
+      const db = await this.#getDB();
       const stores = [
-        STORE_REPORTS, STORE_ELEMENTS,
-        STORE_COMPARISONS, STORE_COMP_DIFFS, STORE_COMP_SUMMARY,
-        STORE_VISUAL_BLOBS, STORE_VISUAL_KEYFRAMES, STORE_VISUAL_ELEMENT_RECTS
-      ];
+      STORE_REPORTS, STORE_ELEMENTS,
+      STORE_COMPARISONS, STORE_COMP_DIFFS, STORE_COMP_SUMMARY,
+      STORE_VISUAL_BLOBS, STORE_VISUAL_KEYFRAMES, STORE_VISUAL_ELEMENT_RECTS];
+
       const tx = db.transaction(stores, 'readwrite');
       for (const storeName of stores) {
         tx.objectStore(storeName).clear();
@@ -676,17 +686,17 @@ class IDBRepository {
   #writeComparisonWithEviction(db, meta, slimResults) {
     return new Promise((resolve, reject) => {
       const storeNames = [STORE_COMPARISONS, STORE_COMP_DIFFS, STORE_COMP_SUMMARY];
-      const tx         = db.transaction(storeNames, 'readwrite');
-      const writeCtx   = {
-        comp:    tx.objectStore(STORE_COMPARISONS),
-        diffs:   tx.objectStore(STORE_COMP_DIFFS),
+      const tx = db.transaction(storeNames, 'readwrite');
+      const writeCtx = {
+        comp: tx.objectStore(STORE_COMPARISONS),
+        diffs: tx.objectStore(STORE_COMP_DIFFS),
         summary: tx.objectStore(STORE_COMP_SUMMARY)
       };
 
       transactionToPromise(tx).then(resolve).catch(reject);
 
       const pairReq = writeCtx.comp.index('by_pair').get(meta.pairKey);
-      pairReq.onerror  = () => tx.abort();
+      pairReq.onerror = () => tx.abort();
       pairReq.onsuccess = () => {
         const existing = pairReq.result;
         if (existing) {
@@ -706,25 +716,25 @@ class IDBRepository {
       writeCtx.summary.put({ comparisonId: meta.id, timestamp: meta.timestamp, pairKey: meta.pairKey });
     };
 
-    const tx       = writeCtx.comp.transaction;
+    const tx = writeCtx.comp.transaction;
     const totalReq = writeCtx.comp.count();
-    const bulkReq  = writeCtx.comp.index('by_bulkJobId').count();
+    const bulkReq = writeCtx.comp.index('by_bulkJobId').count();
     let totalCount = null;
-    let bulkCount  = null;
+    let bulkCount = null;
 
     const proceed = () => {
-      if (totalCount === null || bulkCount === null) { return; }
+      if (totalCount === null || bulkCount === null) {return;}
       const nonBulkCount = totalCount - bulkCount;
-      const isBulkWrite  = meta.bulkJobId != null;
-      const projected    = isBulkWrite ? nonBulkCount : nonBulkCount + 1;
-      const excess       = projected - MAX_COMPARISONS;
+      const isBulkWrite = meta.bulkJobId != null;
+      const projected = isBulkWrite ? nonBulkCount : nonBulkCount + 1;
+      const excess = projected - MAX_COMPARISONS;
       if (excess <= 0) {
         writeAll();
         return;
       }
       const cursorReq = writeCtx.comp.index('by_timestamp').openCursor(null, 'next');
       let deleted = 0;
-      cursorReq.onerror  = () => tx.abort();
+      cursorReq.onerror = () => tx.abort();
       cursorReq.onsuccess = () => {
         const cursor = cursorReq.result;
         if (cursor && deleted < excess) {
@@ -744,10 +754,10 @@ class IDBRepository {
       };
     };
 
-    totalReq.onerror   = () => tx.abort();
-    bulkReq.onerror    = () => tx.abort();
-    totalReq.onsuccess = () => { totalCount = totalReq.result; proceed(); };
-    bulkReq.onsuccess  = () => { bulkCount  = bulkReq.result;  proceed(); };
+    totalReq.onerror = () => tx.abort();
+    bulkReq.onerror = () => tx.abort();
+    totalReq.onsuccess = () => {totalCount = totalReq.result;proceed();};
+    bulkReq.onsuccess = () => {bulkCount = bulkReq.result;proceed();};
   }
 
   async #writeWalEntry(db, id, operation, payload) {
@@ -756,7 +766,7 @@ class IDBRepository {
       id,
       operation,
       payload,
-      status:    OP_STATUS_PENDING,
+      status: OP_STATUS_PENDING,
       timestamp: new Date().toISOString()
     });
     await transactionToPromise(tx);
@@ -769,9 +779,9 @@ class IDBRepository {
   }
 
   async #failWalEntry(db, id) {
-    const tx    = db.transaction(STORE_OP_LOG, 'readwrite');
+    const tx = db.transaction(STORE_OP_LOG, 'readwrite');
     const store = tx.objectStore(STORE_OP_LOG);
-    const req   = store.get(id);
+    const req = store.get(id);
     req.onsuccess = () => {
       if (req.result) {
         store.put({ ...req.result, status: OP_STATUS_FAILED });
@@ -785,7 +795,7 @@ class IDBRepository {
     tx.objectStore(STORE_OP_LOG).put({
       ...entry,
       replayCount: (entry.replayCount ?? 0) + 1,
-      lastAttempt: Date.now(),
+      lastAttempt: Date.now()
     });
     await transactionToPromise(tx);
   }
@@ -793,18 +803,18 @@ class IDBRepository {
   async applyPendingOperations() {
     return performanceMonitor.wrap('idb.applyPendingOperations', async () => {
       try {
-        const db      = await this.#getDB();
-        const readTx  = db.transaction(STORE_OP_LOG, 'readonly');
+        const db = await this.#getDB();
+        const readTx = db.transaction(STORE_OP_LOG, 'readonly');
         const pending = await requestToPromise(
           readTx.objectStore(STORE_OP_LOG).index('by_status').getAll(IDBKeyRange.only(OP_STATUS_PENDING))
         );
 
-        if (!pending?.length) { return; }
+        if (!pending?.length) {return;}
 
         logger.warn('WAL replay starting', { pendingCount: pending.length });
 
         let replayed = 0;
-        let failed   = 0;
+        let failed = 0;
 
         for (const entry of pending) {
           if (entry.operation === 'SAVE_VISUAL_BLOB') {
@@ -825,10 +835,10 @@ class IDBRepository {
             await this.#failWalEntry(db, entry.id);
             window.dispatchEvent(new CustomEvent('storage-degraded', {
               detail: {
-                reason:    'WAL_REPLAY_EXHAUSTED',
-                entryId:   entry.id,
-                operation: entry.operation,
-              },
+                reason: 'WAL_REPLAY_EXHAUSTED',
+                entryId: entry.id,
+                operation: entry.operation
+              }
             }));
             failed++;
             continue;
@@ -852,8 +862,8 @@ class IDBRepository {
           } catch (replayError) {
             logger.error('WAL replay: operation failed, will retry on next startup', {
               operation: entry.operation,
-              id:        entry.id,
-              error:     replayError.message,
+              id: entry.id,
+              error: replayError.message
             });
           }
         }
@@ -868,10 +878,10 @@ class IDBRepository {
   async loadComparisonByPair(baselineId, compareId, mode) {
     return performanceMonitor.wrap('idb.loadComparisonByPair', async () => {
       try {
-        const db      = await this.#getDB();
+        const db = await this.#getDB();
         const pairKey = buildPairKey(baselineId, compareId, mode);
-        const tx      = db.transaction(STORE_COMPARISONS, 'readonly');
-        const record  = await requestToPromise(
+        const tx = db.transaction(STORE_COMPARISONS, 'readonly');
+        const record = await requestToPromise(
           tx.objectStore(STORE_COMPARISONS).index('by_pair').get(pairKey)
         );
         return record ?? null;
@@ -885,8 +895,8 @@ class IDBRepository {
   async loadComparisonDiffs(comparisonId) {
     return performanceMonitor.wrap('idb.loadComparisonDiffs', async () => {
       try {
-        const db     = await this.#getDB();
-        const tx     = db.transaction(STORE_COMP_DIFFS, 'readonly');
+        const db = await this.#getDB();
+        const tx = db.transaction(STORE_COMP_DIFFS, 'readonly');
         const record = await requestToPromise(tx.objectStore(STORE_COMP_DIFFS).get(comparisonId));
         return record?.results ?? [];
       } catch (readError) {
@@ -919,8 +929,8 @@ class IDBRepository {
   async loadVisualBlob(key) {
     return performanceMonitor.wrap('idb.loadVisualBlob', async () => {
       try {
-        const db     = await this.#getDB();
-        const tx     = db.transaction(STORE_VISUAL_BLOBS, 'readonly');
+        const db = await this.#getDB();
+        const tx = db.transaction(STORE_VISUAL_BLOBS, 'readonly');
         const record = await requestToPromise(tx.objectStore(STORE_VISUAL_BLOBS).get(key));
         return record?.blob ?? null;
       } catch (readError) {
@@ -936,15 +946,15 @@ class IDBRepository {
 
   async #deleteVisualBlobsInner(comparisonId) {
     try {
-      const db       = await this.#getDB();
-      const readTx   = db.transaction(STORE_VISUAL_BLOBS, 'readonly');
+      const db = await this.#getDB();
+      const readTx = db.transaction(STORE_VISUAL_BLOBS, 'readonly');
       const blobKeys = await requestToPromise(
         readTx.objectStore(STORE_VISUAL_BLOBS).index('by_comparisonId').getAllKeys(IDBKeyRange.only(comparisonId))
       );
       if (!blobKeys?.length) {
         return { success: true };
       }
-      const writeTx   = db.transaction(STORE_VISUAL_BLOBS, 'readwrite');
+      const writeTx = db.transaction(STORE_VISUAL_BLOBS, 'readwrite');
       const blobStore = writeTx.objectStore(STORE_VISUAL_BLOBS);
       for (const blobKey of blobKeys) {
         blobStore.delete(blobKey);
@@ -976,12 +986,12 @@ class IDBRepository {
 
   async loadKeyframesBySession(sessionId) {
     try {
-      const db      = await this.#getDB();
-      const tx      = db.transaction(STORE_VISUAL_KEYFRAMES, 'readonly');
+      const db = await this.#getDB();
+      const tx = db.transaction(STORE_VISUAL_KEYFRAMES, 'readonly');
       const records = await requestToPromise(
         tx.objectStore(STORE_VISUAL_KEYFRAMES).index('by_session').getAll(IDBKeyRange.only(sessionId))
       );
-      return new Map((records ?? []).map(r => [r.id, r]));
+      return new Map((records ?? []).map((r) => [r.id, r]));
     } catch (readError) {
       trackError(ERROR_CODES.STORAGE_READ_FAILED, readError.message);
       return new Map();
@@ -1012,8 +1022,8 @@ class IDBRepository {
   async #saveVisualElementRectsInner(rectRecords) {
     if (!rectRecords?.length) {return { success: true };}
     try {
-      const db    = await this.#getDB();
-      const tx    = db.transaction(STORE_VISUAL_ELEMENT_RECTS, 'readwrite');
+      const db = await this.#getDB();
+      const tx = db.transaction(STORE_VISUAL_ELEMENT_RECTS, 'readwrite');
       const store = tx.objectStore(STORE_VISUAL_ELEMENT_RECTS);
       for (const record of rectRecords) {
         store.put(record);
@@ -1028,14 +1038,14 @@ class IDBRepository {
 
   async loadElementRectsBySession(sessionId) {
     try {
-      const db      = await this.#getDB();
-      const tx      = db.transaction(STORE_VISUAL_ELEMENT_RECTS, 'readonly');
+      const db = await this.#getDB();
+      const tx = db.transaction(STORE_VISUAL_ELEMENT_RECTS, 'readonly');
       const records = await requestToPromise(
         tx.objectStore(STORE_VISUAL_ELEMENT_RECTS).index('by_session').getAll(IDBKeyRange.only(sessionId))
       );
 
       const out = new Map();
-      for (const record of (records ?? [])) {
+      for (const record of records ?? []) {
         if (!out.has(record.elementKey)) {
           out.set(record.elementKey, {});
         }
@@ -1057,20 +1067,20 @@ class IDBRepository {
       const db = await this.#getDB();
 
       const [blobKeys, kfKeys, rectKeys] = await Promise.all([
-        this.#getAllKeysByIndex(db, STORE_VISUAL_BLOBS,         'by_comparisonId', sessionId),
-        this.#getAllKeysByIndex(db, STORE_VISUAL_KEYFRAMES,     'by_session',      sessionId),
-        this.#getAllKeysByIndex(db, STORE_VISUAL_ELEMENT_RECTS, 'by_session',      sessionId)
-      ]);
+      this.#getAllKeysByIndex(db, STORE_VISUAL_BLOBS, 'by_comparisonId', sessionId),
+      this.#getAllKeysByIndex(db, STORE_VISUAL_KEYFRAMES, 'by_session', sessionId),
+      this.#getAllKeysByIndex(db, STORE_VISUAL_ELEMENT_RECTS, 'by_session', sessionId)]
+      );
 
       const hasData = blobKeys.length || kfKeys.length || rectKeys.length;
       if (!hasData) {return { success: true };}
 
-      const stores  = [STORE_VISUAL_BLOBS, STORE_VISUAL_KEYFRAMES, STORE_VISUAL_ELEMENT_RECTS];
+      const stores = [STORE_VISUAL_BLOBS, STORE_VISUAL_KEYFRAMES, STORE_VISUAL_ELEMENT_RECTS];
       const writeTx = db.transaction(stores, 'readwrite');
 
-      for (const k of blobKeys) { writeTx.objectStore(STORE_VISUAL_BLOBS).delete(k); }
-      for (const k of kfKeys)   { writeTx.objectStore(STORE_VISUAL_KEYFRAMES).delete(k); }
-      for (const k of rectKeys) { writeTx.objectStore(STORE_VISUAL_ELEMENT_RECTS).delete(k); }
+      for (const k of blobKeys) {writeTx.objectStore(STORE_VISUAL_BLOBS).delete(k);}
+      for (const k of kfKeys) {writeTx.objectStore(STORE_VISUAL_KEYFRAMES).delete(k);}
+      for (const k of rectKeys) {writeTx.objectStore(STORE_VISUAL_ELEMENT_RECTS).delete(k);}
 
       await transactionToPromise(writeTx);
       return { success: true };
@@ -1083,9 +1093,9 @@ class IDBRepository {
   async #getAllKeysByIndex(db, storeName, indexName, value) {
     try {
       const tx = db.transaction(storeName, 'readonly');
-      return await requestToPromise(
+      return (await requestToPromise(
         tx.objectStore(storeName).index(indexName).getAllKeys(IDBKeyRange.only(value))
-      ) ?? [];
+      )) ?? [];
     } catch {
       return [];
     }
@@ -1097,7 +1107,7 @@ class IDBRepository {
         return { bytesInUse: 0, quota: 0, percentUsed: 0, available: 0 };
       }
       const { usage, quota } = await navigator.storage.estimate();
-      const percentUsed = quota > 0 ? (usage / quota) * 100 : 0;
+      const percentUsed = quota > 0 ? usage / quota * 100 : 0;
       return { bytesInUse: usage, quota, percentUsed, available: quota - usage };
     } catch {
       return null;
@@ -1114,12 +1124,12 @@ class IDBRepository {
       const db = await this.#getDB();
       await this.#writeWalEntry(db, logId, 'SAVE_BULK_JOB', { job });
 
-      const readTx     = db.transaction(STORE_BULK_JOBS, 'readonly');
-      const jobCount   = await requestToPromise(readTx.objectStore(STORE_BULK_JOBS).count());
-      let oldestIds    = [];
+      const readTx = db.transaction(STORE_BULK_JOBS, 'readonly');
+      const jobCount = await requestToPromise(readTx.objectStore(STORE_BULK_JOBS).count());
+      let oldestIds = [];
       if (jobCount >= BULK_MAX_RETAINED_JOBS) {
         const overflow = jobCount - BULK_MAX_RETAINED_JOBS + 1;
-        const evictTx  = db.transaction(STORE_BULK_JOBS, 'readonly');
+        const evictTx = db.transaction(STORE_BULK_JOBS, 'readonly');
         oldestIds = await this.#collectOldestBulkJobIds(evictTx, overflow, job.id);
       }
 
@@ -1164,9 +1174,9 @@ class IDBRepository {
 
   async #updateBulkJobInner(jobId, patch) {
     try {
-      const db       = await this.#getDB();
-      const tx       = db.transaction(STORE_BULK_JOBS, 'readwrite');
-      const store    = tx.objectStore(STORE_BULK_JOBS);
+      const db = await this.#getDB();
+      const tx = db.transaction(STORE_BULK_JOBS, 'readwrite');
+      const store = tx.objectStore(STORE_BULK_JOBS);
       const existing = await requestToPromise(store.get(jobId));
       if (!existing) {
         return { success: false, error: `Bulk job not found: ${jobId}` };
@@ -1206,9 +1216,9 @@ class IDBRepository {
 
   async #updateBulkPairInner(pairId, patch) {
     try {
-      const db       = await this.#getDB();
-      const tx       = db.transaction(STORE_BULK_PAIRS, 'readwrite');
-      const store    = tx.objectStore(STORE_BULK_PAIRS);
+      const db = await this.#getDB();
+      const tx = db.transaction(STORE_BULK_PAIRS, 'readwrite');
+      const store = tx.objectStore(STORE_BULK_PAIRS);
       const existing = await requestToPromise(store.get(pairId));
       if (!existing) {
         return { success: false, error: `Bulk pair not found: ${pairId}` };
@@ -1225,8 +1235,8 @@ class IDBRepository {
   async loadBulkJob(jobId) {
     return performanceMonitor.wrap('idb.loadBulkJob', async () => {
       try {
-        const db     = await this.#getDB();
-        const tx     = db.transaction(STORE_BULK_JOBS, 'readonly');
+        const db = await this.#getDB();
+        const tx = db.transaction(STORE_BULK_JOBS, 'readonly');
         const record = await requestToPromise(tx.objectStore(STORE_BULK_JOBS).get(jobId));
         return record ?? null;
       } catch (readError) {
@@ -1252,10 +1262,10 @@ class IDBRepository {
   async loadBulkPairsByJob(jobId) {
     return performanceMonitor.wrap('idb.loadBulkPairsByJob', async () => {
       try {
-        const db    = await this.#getDB();
-        const tx    = db.transaction(STORE_BULK_PAIRS, 'readonly');
+        const db = await this.#getDB();
+        const tx = db.transaction(STORE_BULK_PAIRS, 'readonly');
         const range = IDBKeyRange.bound([jobId, -Infinity], [jobId, Infinity]);
-        const recs  = await requestToPromise(
+        const recs = await requestToPromise(
           tx.objectStore(STORE_BULK_PAIRS).index('by_jobId_pairIndex').getAll(range)
         );
         return recs ?? [];
@@ -1269,8 +1279,8 @@ class IDBRepository {
   async loadBulkPairsByStatus(jobId, status) {
     return performanceMonitor.wrap('idb.loadBulkPairsByStatus', async () => {
       try {
-        const db   = await this.#getDB();
-        const tx   = db.transaction(STORE_BULK_PAIRS, 'readonly');
+        const db = await this.#getDB();
+        const tx = db.transaction(STORE_BULK_PAIRS, 'readonly');
         const recs = await requestToPromise(
           tx.objectStore(STORE_BULK_PAIRS).index('by_jobId_status').getAll(IDBKeyRange.only([jobId, status]))
         );
@@ -1292,52 +1302,52 @@ class IDBRepository {
 
       const readTx = db.transaction([STORE_BULK_PAIRS, STORE_REPORTS, STORE_COMPARISONS], 'readonly');
       const [pairKeys, reportKeys, compKeys] = await Promise.all([
-        requestToPromise(readTx.objectStore(STORE_BULK_PAIRS).index('by_jobId').getAllKeys(IDBKeyRange.only(jobId))),
-        requestToPromise(readTx.objectStore(STORE_REPORTS).index('by_bulkJobId').getAllKeys(IDBKeyRange.only(jobId))),
-        requestToPromise(readTx.objectStore(STORE_COMPARISONS).index('by_bulkJobId').getAllKeys(IDBKeyRange.only(jobId)))
-      ]);
+      requestToPromise(readTx.objectStore(STORE_BULK_PAIRS).index('by_jobId').getAllKeys(IDBKeyRange.only(jobId))),
+      requestToPromise(readTx.objectStore(STORE_REPORTS).index('by_bulkJobId').getAllKeys(IDBKeyRange.only(jobId))),
+      requestToPromise(readTx.objectStore(STORE_COMPARISONS).index('by_bulkJobId').getAllKeys(IDBKeyRange.only(jobId)))]
+      );
 
       const visualLookupTx = db.transaction([STORE_VISUAL_BLOBS, STORE_VISUAL_KEYFRAMES, STORE_VISUAL_ELEMENT_RECTS], 'readonly');
       const visualBlobStore = visualLookupTx.objectStore(STORE_VISUAL_BLOBS);
-      const visualKfStore   = visualLookupTx.objectStore(STORE_VISUAL_KEYFRAMES);
+      const visualKfStore = visualLookupTx.objectStore(STORE_VISUAL_KEYFRAMES);
       const visualRectStore = visualLookupTx.objectStore(STORE_VISUAL_ELEMENT_RECTS);
       const visualBlobKeys = [];
-      const visualKfKeys   = [];
+      const visualKfKeys = [];
       const visualRectKeys = [];
-      for (const compId of (compKeys ?? [])) {
+      for (const compId of compKeys ?? []) {
         const range = IDBKeyRange.only(compId);
         const [bk, kk, rk] = await Promise.all([
-          requestToPromise(visualBlobStore.index('by_comparisonId').getAllKeys(range)),
-          requestToPromise(visualKfStore.index('by_session').getAllKeys(range)),
-          requestToPromise(visualRectStore.index('by_session').getAllKeys(range)),
-        ]);
+        requestToPromise(visualBlobStore.index('by_comparisonId').getAllKeys(range)),
+        requestToPromise(visualKfStore.index('by_session').getAllKeys(range)),
+        requestToPromise(visualRectStore.index('by_session').getAllKeys(range))]
+        );
         visualBlobKeys.push(...(bk ?? []));
         visualKfKeys.push(...(kk ?? []));
         visualRectKeys.push(...(rk ?? []));
       }
 
-      const stores  = [
-        STORE_BULK_JOBS, STORE_BULK_PAIRS,
-        STORE_REPORTS, STORE_ELEMENTS,
-        STORE_COMPARISONS, STORE_COMP_DIFFS, STORE_COMP_SUMMARY,
-        STORE_VISUAL_BLOBS, STORE_VISUAL_KEYFRAMES, STORE_VISUAL_ELEMENT_RECTS,
-      ];
+      const stores = [
+      STORE_BULK_JOBS, STORE_BULK_PAIRS,
+      STORE_REPORTS, STORE_ELEMENTS,
+      STORE_COMPARISONS, STORE_COMP_DIFFS, STORE_COMP_SUMMARY,
+      STORE_VISUAL_BLOBS, STORE_VISUAL_KEYFRAMES, STORE_VISUAL_ELEMENT_RECTS];
+
       const writeTx = db.transaction(stores, 'readwrite');
 
       writeTx.objectStore(STORE_BULK_JOBS).delete(jobId);
-      for (const k of (pairKeys   ?? [])) { writeTx.objectStore(STORE_BULK_PAIRS).delete(k); }
-      for (const k of (reportKeys ?? [])) {
+      for (const k of pairKeys ?? []) {writeTx.objectStore(STORE_BULK_PAIRS).delete(k);}
+      for (const k of reportKeys ?? []) {
         writeTx.objectStore(STORE_REPORTS).delete(k);
         writeTx.objectStore(STORE_ELEMENTS).delete(k);
       }
-      for (const k of (compKeys   ?? [])) {
+      for (const k of compKeys ?? []) {
         writeTx.objectStore(STORE_COMPARISONS).delete(k);
         writeTx.objectStore(STORE_COMP_DIFFS).delete(k);
         writeTx.objectStore(STORE_COMP_SUMMARY).delete(k);
       }
-      for (const k of visualBlobKeys) { writeTx.objectStore(STORE_VISUAL_BLOBS).delete(k); }
-      for (const k of visualKfKeys)   { writeTx.objectStore(STORE_VISUAL_KEYFRAMES).delete(k); }
-      for (const k of visualRectKeys) { writeTx.objectStore(STORE_VISUAL_ELEMENT_RECTS).delete(k); }
+      for (const k of visualBlobKeys) {writeTx.objectStore(STORE_VISUAL_BLOBS).delete(k);}
+      for (const k of visualKfKeys) {writeTx.objectStore(STORE_VISUAL_KEYFRAMES).delete(k);}
+      for (const k of visualRectKeys) {writeTx.objectStore(STORE_VISUAL_ELEMENT_RECTS).delete(k);}
 
       await transactionToPromise(writeTx);
       return { success: true, deletedComparisonIds: compKeys ?? [] };
@@ -1350,15 +1360,15 @@ class IDBRepository {
   async loadReportByExtractionKey(extractionKey) {
     return performanceMonitor.wrap('idb.loadReportByExtractionKey', async () => {
       try {
-        const db   = await this.#getDB();
-        const tx   = db.transaction(STORE_REPORTS, 'readonly');
+        const db = await this.#getDB();
+        const tx = db.transaction(STORE_REPORTS, 'readonly');
         const recs = await requestToPromise(
           tx.objectStore(STORE_REPORTS).index('by_extractionKey').getAll(IDBKeyRange.only(extractionKey))
         );
-        if (!recs?.length) { return null; }
+        if (!recs?.length) {return null;}
         let newest = recs[0];
         for (const r of recs) {
-          if ((r.timestamp ?? 0) > (newest.timestamp ?? 0)) { newest = r; }
+          if ((r.timestamp ?? 0) > (newest.timestamp ?? 0)) {newest = r;}
         }
         return newest;
       } catch (readError) {
@@ -1379,9 +1389,9 @@ class IDBRepository {
         localStorage.removeItem(LEGACY_LS_KEY);
         const migTx = db.transaction([STORE_APP_META], 'readwrite');
         migTx.objectStore(STORE_APP_META).put({
-          key:     META_KEY_V5_DATA_CLEARED,
+          key: META_KEY_V5_DATA_CLEARED,
           pending: true,
-          at:      Date.now(),
+          at: Date.now()
         });
         await transactionToPromise(migTx);
       }
@@ -1399,6 +1409,104 @@ class IDBRepository {
     } catch (err) {
       logger.warn('consumeV5UpgradeDataClearedNotice failed', { message: err?.message });
       return false;
+    }
+  }
+
+  saveSauceJob(job) {
+    return this.#enqueue(performanceMonitor.wrap('idb.saveSauceJob', () => this.#saveSauceJobInner(job)));
+  }
+
+  async #saveSauceJobInner(job) {
+    try {
+      const db = await this.#getDB();
+      const tx = db.transaction(STORE_SAUCE_JOBS, 'readwrite');
+      tx.objectStore(STORE_SAUCE_JOBS).put(job);
+      await transactionToPromise(tx);
+      return { success: true, id: job.id };
+    } catch (writeError) {
+      trackError(ERROR_CODES.STORAGE_WRITE_FAILED, writeError.message, { id: job?.id });
+      return { success: false, error: writeError.message };
+    }
+  }
+
+  updateSauceJob(jobId, patch) {
+    return this.#enqueue(performanceMonitor.wrap('idb.updateSauceJob', () => this.#updateSauceJobInner(jobId, patch)));
+  }
+
+  async #updateSauceJobInner(jobId, patch) {
+    try {
+      const db = await this.#getDB();
+      const tx = db.transaction(STORE_SAUCE_JOBS, 'readwrite');
+      const store = tx.objectStore(STORE_SAUCE_JOBS);
+      const existing = await requestToPromise(store.get(jobId));
+      if (!existing) {
+        return { success: false, error: `Sauce job not found: ${jobId}` };
+      }
+      store.put({ ...existing, ...patch });
+      await transactionToPromise(tx);
+      return { success: true, id: jobId };
+    } catch (writeError) {
+      trackError(ERROR_CODES.STORAGE_WRITE_FAILED, writeError.message, { jobId });
+      return { success: false, error: writeError.message };
+    }
+  }
+
+  async loadSauceJob(jobId) {
+    return performanceMonitor.wrap('idb.loadSauceJob', async () => {
+      try {
+        const db = await this.#getDB();
+        const tx = db.transaction(STORE_SAUCE_JOBS, 'readonly');
+        const record = await requestToPromise(tx.objectStore(STORE_SAUCE_JOBS).get(jobId));
+        return record ?? null;
+      } catch (readError) {
+        trackError(ERROR_CODES.STORAGE_READ_FAILED, readError.message, { jobId });
+        return null;
+      }
+    })();
+  }
+
+  async loadAllSauceJobs() {
+    return performanceMonitor.wrap('idb.loadAllSauceJobs', async () => {
+      try {
+        const db = await this.#getDB();
+        const tx = db.transaction(STORE_SAUCE_JOBS, 'readonly');
+        return collectCursor(tx.objectStore(STORE_SAUCE_JOBS).index('by_createdAt'), 'prev');
+      } catch (readError) {
+        trackError(ERROR_CODES.STORAGE_READ_FAILED, readError.message);
+        return [];
+      }
+    })();
+  }
+
+  async loadSauceJobsByStatus(statuses) {
+    return performanceMonitor.wrap('idb.loadSauceJobsByStatus', async () => {
+      try {
+        const db = await this.#getDB();
+        const tx = db.transaction(STORE_SAUCE_JOBS, 'readonly');
+        const all = await collectCursor(tx.objectStore(STORE_SAUCE_JOBS));
+        const set = new Set(statuses);
+        return all.filter((j) => set.has(j.status));
+      } catch (readError) {
+        trackError(ERROR_CODES.STORAGE_READ_FAILED, readError.message);
+        return [];
+      }
+    })();
+  }
+
+  deleteSauceJob(jobId) {
+    return this.#enqueue(performanceMonitor.wrap('idb.deleteSauceJob', () => this.#deleteSauceJobInner(jobId)));
+  }
+
+  async #deleteSauceJobInner(jobId) {
+    try {
+      const db = await this.#getDB();
+      const tx = db.transaction(STORE_SAUCE_JOBS, 'readwrite');
+      tx.objectStore(STORE_SAUCE_JOBS).delete(jobId);
+      await transactionToPromise(tx);
+      return { success: true };
+    } catch (deleteError) {
+      trackError(ERROR_CODES.STORAGE_WRITE_FAILED, deleteError.message, { jobId });
+      return { success: false, error: deleteError.message };
     }
   }
 }

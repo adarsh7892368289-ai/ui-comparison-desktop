@@ -19,6 +19,10 @@ extraResources:
     to: browsers
     filter:
       - "**/*"
+  - from: .saucectl-bin/${os}/${arch}
+    to: saucectl
+    filter:
+      - "**/*"
 npmRebuild: true
 mac:
   category: public.app-category.developer-tools

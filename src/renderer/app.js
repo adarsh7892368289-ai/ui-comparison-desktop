@@ -23,8 +23,8 @@ import { dispatchEnqueue } from './application/notification-queue.js';
 import {
   initializeApp,
   insertReportListSkeletonOverlay,
-  filteredReportCount,
-} from
+  filteredReportCount } from
+
 './application/report-manager.js';
 import { routeExtractBtnClick } from './application/extract-workflow.js';
 import {
@@ -42,6 +42,7 @@ import {
 './application/compare-workflow.js';
 import { createResultPanel } from './components/result-panel.js';
 import { createBulkPanel } from './components/bulk-panel.js';
+import { createSauceLabsPanel } from './components/saucelabs-panel.js';
 import {
   initBulkListeners,
   detectAndOfferResume } from
@@ -266,7 +267,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.documentElement.classList.add('platform-darwin');
   }
 
-  // Auto-show scrollbar thumb while scrolling, hide after idle
+
   function initScrollReveal(el) {
     if (!el) return;
     let timer;
@@ -298,7 +299,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initScrollReveal(document.getElementById('main-content'));
   const vscrollEl = document.querySelector('.vscroll-viewport');
   if (vscrollEl) initScrollReveal(vscrollEl);
-  // observe dynamically created vscroll-viewport
+
   const reportsListEl = document.getElementById('reports-list');
   if (reportsListEl) {
     const obs = new MutationObserver(() => {
@@ -355,7 +356,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     _statusBar?.updateReportCount(reports, filteredReportCount(reports, searchQ));
 
     const bulkDetailOpen =
-      state.bulkJob != null && state.bulkJob.activePairIndex != null;
+    state.bulkJob != null && state.bulkJob.activePairIndex != null;
     const bulkViewer = state.bulkJob?.viewer;
     const bulkResultArea = document.getElementById('bulk-result-area');
     if (bulkResultArea) {
@@ -413,12 +414,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   subscribe((state) => {
     const b = state.selectedBaseline ?? null;
     const c = state.selectedCompare ?? null;
-    if (b === _prevBaseline && c === _prevCompare) { return; }
+    if (b === _prevBaseline && c === _prevCompare) {return;}
     _prevBaseline = b;
     _prevCompare = c;
 
     if (b && c && b !== c) {
-      if (_appShell) { _appShell.activateSection('compare'); }
+      if (_appShell) {_appShell.activateSection('compare');}
       tryLoadCachedComparison();
     } else {
       dispatch('RESET_COMPARISON');
@@ -433,13 +434,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     createBulkPanel(_bulkPanelHost, api, storage);
   }
 
+  const _saucePanelHost = document.getElementById('saucelabs-panel-root');
+  if (_saucePanelHost) {
+    createSauceLabsPanel(_saucePanelHost);
+  }
+
   try {
     await detectAndOfferResume();
   } catch (err) {
     console.error('[bulk] detectAndOfferResume failed', err);
   }
   window.addEventListener('beforeunload', () => {
-    try { _bulkListenersCleanup?.(); } catch { void 0; }
+    try {_bulkListenersCleanup?.();} catch {void 0;}
   });
 
 
@@ -487,9 +493,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const _bulkJob = getState().bulkJob;
     if (_bulkJob?.status === 'running' && _bulkJob.jobId) {
-      // Per UI spec §7.2 row 13 / §8.5: storage-degraded marks the job
-      // and immediately enters the same Cancelling… visual state as a
-      // user-initiated cancel, then asks main to halt.
+
+
+
       dispatch('BULK_JOB_STORAGE_DEGRADED', {});
       dispatch('BULK_JOB_CANCELLING', {});
       try {

@@ -162,9 +162,9 @@ app.on('ready', () => {
 
   if (!_contextMenuListenerRegistered) {
     ipcMain.on(IPC.SHOW_CONTEXT_MENU, (event, payload) => {
-      if (!payload) { return; }
+      if (!payload) {return;}
       const win = BrowserWindow.fromWebContents(event.sender);
-      if (!win) { return; }
+      if (!win) {return;}
       const send = (data) => {
         if (!event.sender.isDestroyed()) {
           event.sender.send(IPC.CONTEXT_ACTION, data);
@@ -175,28 +175,28 @@ app.on('ready', () => {
       if (typeof payload.bulkJobId === 'string') {
         const { bulkJobId } = payload;
         template = [
-          { label: 'Delete this bulk run', click: () => send({ action: 'deleteBulkJob', bulkJobId }) },
-        ];
+        { label: 'Delete this bulk run', click: () => send({ action: 'deleteBulkJob', bulkJobId }) }];
+
       } else if (payload.multiSelect === true && typeof payload.count === 'number') {
         const count = payload.count;
         template = [
-          { label: `Delete ${count} report${count !== 1 ? 's' : ''}`, click: () => send({ action: 'deleteSelected' }) },
-        ];
+        { label: `Delete ${count} report${count !== 1 ? 's' : ''}`, click: () => send({ action: 'deleteSelected' }) }];
+
       } else if (typeof payload.reportId === 'string') {
         const { reportId } = payload;
         template = [
-          { label: 'Set as Baseline', click: () => send({ action: 'setBaseline', reportId }) },
-          { label: 'Set as Compare',  click: () => send({ action: 'compare',     reportId }) },
-          { type: 'separator' },
-          { label: 'Export as JSON',  click: () => send({ action: 'export', format: 'json',  reportId }) },
-          { label: 'Export as Excel', click: () => send({ action: 'export', format: 'excel', reportId }) },
-          { label: 'Export as CSV',   click: () => send({ action: 'export', format: 'csv',   reportId }) },
-          { type: 'separator' },
-          { label: 'Delete', click: () => send({ action: 'delete', reportId }) },
-        ];
+        { label: 'Set as Baseline', click: () => send({ action: 'setBaseline', reportId }) },
+        { label: 'Set as Compare', click: () => send({ action: 'compare', reportId }) },
+        { type: 'separator' },
+        { label: 'Export as JSON', click: () => send({ action: 'export', format: 'json', reportId }) },
+        { label: 'Export as Excel', click: () => send({ action: 'export', format: 'excel', reportId }) },
+        { label: 'Export as CSV', click: () => send({ action: 'export', format: 'csv', reportId }) },
+        { type: 'separator' },
+        { label: 'Delete', click: () => send({ action: 'delete', reportId }) }];
+
       }
 
-      if (!template) { return; }
+      if (!template) {return;}
       Menu.buildFromTemplate(template).popup({ window: win });
     });
     _contextMenuListenerRegistered = true;
@@ -232,9 +232,9 @@ function _loadWindowState() {
 
 function _saveWindowState(win) {
   try {
-    const b = typeof win.getNormalBounds === 'function'
-      ? win.getNormalBounds()
-      : win.getBounds();
+    const b = typeof win.getNormalBounds === 'function' ?
+    win.getNormalBounds() :
+    win.getBounds();
     fs.writeFileSync(_stateFilePath(), JSON.stringify({
       x: b.x, y: b.y,
       width: b.width, height: b.height,
@@ -248,9 +248,9 @@ function _saveWindowState(win) {
 function _halfScreenBounds() {
   try {
     const wa = screen.getPrimaryDisplay().workArea;
-    const width  = Math.max(900, Math.floor(wa.width  / 2));
+    const width = Math.max(900, Math.floor(wa.width / 2));
     const height = Math.max(600, Math.floor(wa.height / 2));
-    const x = wa.x + Math.floor((wa.width  - width)  / 2);
+    const x = wa.x + Math.floor((wa.width - width) / 2);
     const y = wa.y + Math.floor((wa.height - height) / 2);
     return { x, y, width, height };
   } catch {
@@ -333,7 +333,7 @@ function createMainWindow() {
         win.setSize(savedState.width, savedState.height);
       } else {
         const half = _halfScreenBounds();
-        if (half) { win.setBounds(half); }
+        if (half) {win.setBounds(half);}
       }
       if (savedState.x != null && savedState.y != null) {
         win.setPosition(savedState.x, savedState.y);

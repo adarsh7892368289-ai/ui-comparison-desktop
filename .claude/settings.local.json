@@ -37,7 +37,23 @@
       "WebFetch(domain:wiki.saucelabs.com)",
       "Bash(python -c \"import sys,json; [print\\(f['name']\\) for f in json.loads\\(sys.stdin.read\\(\\)\\)]\")",
       "WebFetch(domain:api.github.com)",
-      "Bash(mkdir -p c:/Projects/ui-comparison-desktop/docs)"
+      "Bash(mkdir -p c:/Projects/ui-comparison-desktop/docs)",
+      "Bash(npx --no-install md-to-pdf --version)",
+      "Bash(powershell -Command 'Get-ChildItem -Path '\\\\''C:\\\\Program Files'\\\\'', '\\\\''C:\\\\Program Files \\(x86\\)'\\\\'' -Filter '\\\\''chrome.exe'\\\\'' -Recurse -ErrorAction SilentlyContinue 2>$null | Select-Object -First 2 -ExpandProperty FullName; Get-ChildItem -Path '\\\\''C:\\\\Program Files'\\\\'', '\\\\''C:\\\\Program Files \\(x86\\)'\\\\'' -Filter '\\\\''msedge.exe'\\\\'' -Recurse -ErrorAction SilentlyContinue 2>$null | Select-Object -First 2 -ExpandProperty FullName')",
+      "Bash(node scripts/md-to-pdf.js UI-Comparison.md UI-Comparison.pdf)",
+      "Bash(npm install *)",
+      "Bash(npx vitest *)",
+      "Bash(where saucectl *)",
+      "Bash(saucectl --version)",
+      "Bash(ls -la /c/nvm4w/nodejs/saucectl* 2>/dev/null)",
+      "Read(//c/nvm4w/nodejs/**)",
+      "Bash(xxd)",
+      "Bash(python3 -c ' *)",
+      "Bash(node -e ' *)",
+      "Bash(sed -n '386,390p' \"c:/Projects/ui-comparison-desktop/src/main/saucelabs-manager.js\")",
+      "Bash(node --input-type=commonjs -e ' *)",
+      "Bash(awk 'NR>=386 && NR<=389 { for\\(i=1;i<=length\\($0\\);i++\\) { c=substr\\($0,i,1\\); n=ord\\(c\\); if \\(n<32 && n!=9\\) printf \"Line %d col %d: control byte 0x%02x\\\\n\", NR, i, n; } } function ord\\(c\\) { return _ord_[c] } BEGIN { for\\(i=0;i<256;i++\\) _ord_[sprintf\\(\"%c\",i\\)]=i }' \"c:/Projects/ui-comparison-desktop/src/main/saucelabs-manager.js\")",
+      "Bash(npm test *)"
     ],
     "additionalDirectories": [
       "c:\\Projects\\ui-comparison-desktop"

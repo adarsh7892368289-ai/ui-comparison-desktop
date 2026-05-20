@@ -25,6 +25,7 @@ This document covers the runtime contracts.
 13. [Browser Detection & Capability Profiles](#13-browser-detection--capability-profiles)
 14. [Bulk Pipeline](#14-bulk-pipeline)
 15. [CI / Release Pipeline](#15-ci--release-pipeline)
+16. [SauceLabs Pipeline](#16-saucelabs-pipeline)
 
 ---
 
@@ -82,9 +83,9 @@ real module. Same pattern in
 
 ### Main (Node)
 
-- **Files:** `src/main/index.js`, `src/main/ipc-handlers.js`, `src/main/playwright-manager.js`, `src/main/bulk-runner.js`, `src/main/protocol-handler.js`, `src/main/resource-paths.js`, `src/main/ipc-channels.js`, `src/core/comparison/*.js`, `src/core/bulk/plan-validator.js` (loaded by the validator path), `src/config/defaults.js` (loaded via `index.js`).
-- **Why it must run there:** Needs `app`, `BrowserWindow`, `protocol`, `ipcMain`, `dialog`, `Menu`, `os`, file system, `playwright`, raw buffers. Sandboxed renderer cannot do any of this.
-- **What breaks if moved:** Renderer cannot launch browsers (`chromium.launch` requires Node), cannot register custom protocols, cannot read `extractor-bundle.js` from disk, cannot probe host memory.
+- **Files:** `src/main/index.js`, `src/main/ipc-handlers.js`, `src/main/playwright-manager.js`, `src/main/bulk-runner.js`, `src/main/saucelabs-manager.js`, `src/main/saucelabs-binary-manager.js`, `src/main/protocol-handler.js`, `src/main/resource-paths.js`, `src/main/ipc-channels.js`, `src/core/comparison/*.js`, `src/core/bulk/plan-validator.js` (loaded by the validator path), `src/config/defaults.js` (loaded via `index.js`).
+- **Why it must run there:** Needs `app`, `BrowserWindow`, `protocol`, `ipcMain`, `dialog`, `Menu`, `os`, file system, `playwright`, `child_process.spawn` (saucectl), raw buffers. Sandboxed renderer cannot do any of this.
+- **What breaks if moved:** Renderer cannot launch browsers (`chromium.launch` requires Node), cannot register custom protocols, cannot read `extractor-bundle.js` from disk, cannot probe host memory, cannot spawn saucectl child processes.
 
 ### Preload
 
@@ -95,7 +96,7 @@ real module. Same pattern in
 ### Renderer (Chromium, sandboxed)
 
 - **Files:** `src/renderer/**`, `src/infrastructure/**`, plus `src/core/bulk/extraction-key.js` (uses `crypto.subtle`, available in renderer) and `src/core/export/bulk-summary-exporter.js` (uses `xlsx` in the renderer bundle).
-- **Why it must run there:** Owns the DOM, IndexedDB (`infrastructure/idb-repository.js` opens `indexedDB.open(DB_NAME, 9)`). `app.enableSandbox()` (`src/main/index.js:22`) plus `nodeIntegration:false`, `sandbox:true` (`src/main/index.js:282-285`).
+- **Why it must run there:** Owns the DOM, IndexedDB (`infrastructure/idb-repository.js` opens `indexedDB.open(DB_NAME, 10)`). `app.enableSandbox()` (`src/main/index.js:22`) plus `nodeIntegration:false`, `sandbox:true` (`src/main/index.js:282-285`).
 - **What breaks if moved:** IndexedDB does not exist in main; SaaS workflows that touch DOM (`getComputedStyle`, `getBoundingClientRect`) only work here. `crypto.subtle.digest` for the extraction key would have to be re-implemented in main.
 
 ### In-page (target site)
@@ -380,6 +381,80 @@ All channel constants live in `src/main/ipc-channels.js` and are imported as
 - **Handler:** —
 - **Producer:** **none**
 
+### Channel: `SAUCE_VALIDATE_CREDENTIALS`
+
+- **Runtime string:** `SAUCE_VALIDATE_CREDENTIALS`
+- **Direction / method:** renderer → main, `invoke`
+- **Renderer payload:** `{ username, accessKey, region }` — region is one of `us-west-1`, `us-east-4`, `eu-central-1`.
+- **Main behavior:** (1) Resolves the `saucectl` binary via `sauceBinaryManager.resolveBinaryPath()` (downloaded → bundled → PATH); returns error if not found. (2) Fires background `runUpdateCheck` against the compatible range (`>=0.200.0 <1.0.0`). (3) Calls `sauceManager.validateCredentials` which hits `GET /rest/v1/{username}/activity` on the region's API host. Returns `{ success:true, username, region }` or `{ success:false, error }`.
+- **Handler:** `ipc-handlers.js` → `_registerSauceHandlers`
+- **Producer:** —
+
+### Channel: `SAUCE_SUBMIT_JOB`
+
+- **Runtime string:** `SAUCE_SUBMIT_JOB`
+- **Direction / method:** renderer → main, `invoke`
+- **Renderer payload:** `{ username, accessKey, region, url, platform, browserName, screenResolution, tunnelName?, filters? }`
+- **Main behavior:** Validates required fields, generates a `jobId`, **fires-and-forgets** `sauceManager.submitExtraction(...)`. Returns synchronously: `{ success:true, jobId }`. Progress is reported on `SAUCE_JOB_PROGRESS`; final result on `SAUCE_JOB_COMPLETE`.
+- **Handler:** `ipc-handlers.js` → `_registerSauceHandlers`
+- **Producer:** —
+
+### Channel: `SAUCE_SUBMIT_COMPARISON`
+
+- **Runtime string:** `SAUCE_SUBMIT_COMPARISON`
+- **Direction / method:** renderer → main, `invoke`
+- **Renderer payload:** `{ username, accessKey, region, baselineUrl, compareUrl, platform, browserName, screenResolution, tunnelName?, filters? }`
+- **Main behavior:** Validates required fields, generates a `jobId`, **fires-and-forgets** `sauceManager.submitComparison(...)`. Both sessions (baseline + compare) are submitted in parallel. Returns synchronously: `{ success:true, jobId }`. Partial failures surface as `SAUCE_JOB_COMPLETE` with `partiallyFailed:true` and `partiallyFailedSession:'baseline'|'compare'`.
+- **Handler:** `ipc-handlers.js` → `_registerSauceHandlers`
+- **Producer:** —
+
+### Channel: `SAUCE_CANCEL_JOB`
+
+- **Runtime string:** `SAUCE_CANCEL_JOB`
+- **Direction / method:** renderer → main, `invoke`
+- **Renderer payload:** `{ jobId, username?, accessKey?, region?, baselineSessionId?, compareSessionId? }`
+- **Main behavior:** (1) Calls `sauceManager.cancelJob(jobId)` which aborts the job's `AbortController`, SIGTERM→SIGKILL any running saucectl children, and DELETEs tracked remote sessions. (2) Fallback: if caller provided session IDs not in the registry, DELETEs them directly. Returns `{ acknowledged:true }`.
+- **Handler:** `ipc-handlers.js` → `_registerSauceHandlers`
+- **Producer:** —
+
+### Channel: `SAUCE_RETRY_FAILED_SESSION`
+
+- **Runtime string:** `SAUCE_RETRY_FAILED_SESSION`
+- **Direction / method:** renderer → main, `invoke`
+- **Renderer payload:** `{ username, accessKey, region, jobId, failedSide:'baseline'|'compare', failedSideUrl, successSideSessionId, platform, browserName, screenResolution, tunnelName?, filters? }`
+- **Main behavior:** **Fires-and-forgets** `sauceManager.retryFailedSession(...)`. Re-submits only the failed side; downloads both sides' artifacts after completion. Returns synchronously: `{ success:true, jobId }`. Result arrives on `SAUCE_JOB_COMPLETE`.
+- **Handler:** `ipc-handlers.js` → `_registerSauceHandlers`
+- **Producer:** —
+
+### Channel: `SAUCE_READ_KEYFRAME`
+
+- **Runtime string:** `SAUCE_READ_KEYFRAME`
+- **Direction / method:** renderer → main, `invoke`
+- **Renderer payload:** `{ artifactDir, filename }` — `filename` must match `/^keyframe-\d+\.webp$/`; `artifactDir` must be under `app.getPath('userData')/saucelabs-artifacts/`.
+- **Main behavior:** Defense-in-depth: rejects paths outside the artifacts root. Reads the file and returns `{ success:true, base64, mimeType:'image/webp' }` or `{ success:false, error }`.
+- **Handler:** `ipc-handlers.js` → `_registerSauceHandlers`
+- **Producer:** —
+- **Security note:** Both `artifactDir` and `filename` are validated server-side: `artifactDir` must resolve inside the saucelabs-artifacts root (prevents directory traversal); `filename` is allow-listed to the `keyframe-N.webp` pattern only.
+
+### Channel: `SAUCE_JOB_PROGRESS`
+
+- **Runtime string:** `SAUCE_JOB_PROGRESS`
+- **Direction / method:** main → renderer, `webContents.send`
+- **Payload:** `{ jobId, phase:'submitted'|'running'|'downloading'|'comparing'|'done', side?:'baseline'|'compare', sessionId?, baselineSessionId?, compareSessionId?, sauceStatus? }`
+- **Main behavior:** Pushed by `sauceManager.submitExtraction`/`submitComparison`/`retryFailedSession` callbacks. Multiple emissions per job.
+- **Handler:** —
+- **Producer:** `ipc-handlers.js _registerSauceHandlers` (via `onProgress`/`onSessionId` callbacks)
+
+### Channel: `SAUCE_JOB_COMPLETE`
+
+- **Runtime string:** `SAUCE_JOB_COMPLETE`
+- **Direction / method:** main → renderer, `webContents.send`
+- **Payload (extraction):** `{ jobId, success:true, report, manifest, sessionId, artifactsDir }` or `{ jobId, success:false, error, cancelled? }`
+- **Payload (comparison):** `{ jobId, success:true, baselineReport, compareReport, baselineManifest, compareManifest, baselineSessionId, compareSessionId, baselineArtifactDir, compareArtifactDir }` or `{ jobId, success:false, error, partiallyFailed?, partiallyFailedSession?, baselineSessionId?, compareSessionId?, baselineStatus?, compareStatus? }`
+- **Main behavior:** Emitted exactly once per job (extraction or comparison) at terminal state.
+- **Handler:** —
+- **Producer:** `ipc-handlers.js _registerSauceHandlers` (`.then`/`.catch` of `submitExtraction`/`submitComparison`/`retryFailedSession`)
+
 **Sender preconditions** (what the renderer must guarantee before invoking):
 
 - `START_COMPARISON`: `baselineElements` and `compareElements` must each be non-empty arrays loaded from IDB before invocation. `playwright-manager.js` throws `"Baseline elements array is empty …"` otherwise.
@@ -390,13 +465,17 @@ All channel constants live in `src/main/ipc-channels.js` and are imported as
 - `REGISTER_BLOB`: `blobId` must match `^[^:]+:[^:]+$` exactly; rejected otherwise.
 - `EXPORT_HTML`/`EXPORT_FILE`/`OPEN_REPORT`: payload `htmlContent` / `data` is serialized over IPC; treat large payloads as expensive.
 - `EXPORT_FILE_TO_DIRECTORY`: `dirPath` must have been approved by a prior successful `PICK_DIRECTORY` call in the same renderer session; `filename` must not contain path separators or `..`.
+- `SAUCE_VALIDATE_CREDENTIALS`: must be called before `SAUCE_SUBMIT_JOB`/`SAUCE_SUBMIT_COMPARISON`; it resolves the saucectl binary path (module-cached).
+- `SAUCE_SUBMIT_JOB`/`SAUCE_SUBMIT_COMPARISON`: credentials must be validated; `url`/`baselineUrl`/`compareUrl` must be navigable HTTP(S) URLs.
+- `SAUCE_CANCEL_JOB`: `jobId` should be a previously-submitted job. Idempotent — cancelling an already-cancelled or completed job is a no-op.
+- `SAUCE_READ_KEYFRAME`: `artifactDir` must be an absolute path under `userData/saucelabs-artifacts/`; `filename` must match `keyframe-\d+.webp`.
 - `MENU_ACTION` / `CONTEXT_ACTION` / `APP_NOTIFICATION` / `OPERATION_CANCELLED`: renderer must not assume any of these will arrive — the first two are produced; the latter two are not.
 
 ---
 
 ## 4. IndexedDB Schema
 
-Database name: `ui_comparison_db`. **Current version: `9`.** All constants in
+Database name: `ui_comparison_db`. **Current version: `10`.** All constants in
 `src/infrastructure/idb-repository.js:6-26`. Single connection per renderer
 process; opened lazily by `IDBRepository.#getDB()`.
 
@@ -525,6 +604,18 @@ process; opened lazily by `IDBRepository.#getDB()`.
   - `by_jobId_pairIndex` → `['jobId','pairIndex']`, not unique
 - **Owner of writes:** `IDBRepository.saveBulkPair` (initial state `'queued'`), `updateBulkPair` (in-place patch by `pairId`).
 
+#### Store: `sauce_jobs` (v10)
+
+- **Constant:** `STORE_SAUCE_JOBS`
+- **keyPath:** `id`
+- **Created in:** `upgradeToV10`
+- **Indexes:**
+  - `by_status` → `status`, not unique
+  - `by_createdAt` → `createdAt`, not unique
+- **Owner of writes:** `IDBRepository.saveSauceJob`, `updateSauceJob`, `deleteSauceJob`.
+- **Retention:** `saucelabs.maxRetainedJobs = 20` (`config/defaults.js:304`). Enforced in `#saveSauceJobInner` — oldest jobs beyond the limit are deleted.
+- **Used by:** `saucelabs-workflow.js` for persisting SauceLabs job state across renderer restarts. Jobs in `submitted`/`running`/`downloading`/`comparing`/`partially_failed` status can be resumed after re-entering credentials.
+
 ### 4.2 Upgrade ladder
 
 Source: `runUpgrade(db, upgradeTx, oldVersion)` at `idb-repository.js:217-226`. Execution order is the lexical order of the `if` statements:
@@ -539,6 +630,7 @@ Source: `runUpgrade(db, upgradeTx, oldVersion)` at `idb-repository.js:217-226`. 
 | 6 | `upgradeToV6` | `oldVersion < 6` | Create `visual_keyframes` and `visual_element_rects` with their indexes. |
 | 7 | `upgradeToV7` | `oldVersion < 7` | Cursor-walk `visual_blobs`; for any record whose key lacks `:` and has `comparisonId`, delete and re-insert with key `${comparisonId}:${oldKey}`. |
 | 8 | `upgradeToV9` | `oldVersion < 9` | Create `bulk_jobs` (with `by_createdAt`/`by_status`) and `bulk_pairs` (with `by_jobId`/`by_jobId_status`/`by_jobId_pairIndex`). On the existing `reports` store add `by_bulkJobId` and `by_extractionKey`. On `comparisons` add `by_bulkJobId`. All steps are guarded with `objectStoreNames.contains` / `indexNames.contains`. |
+| 9 | `upgradeToV10` | `oldVersion < 10` | Create `sauce_jobs` (with `by_status`/`by_createdAt`). Guarded with `objectStoreNames.contains`. |
 
 **The v5/v8 ordering anomaly, mechanically.** v8 creates `app_meta`; v5
 attaches a `complete` listener that, after the upgrade transaction commits,
@@ -1804,10 +1896,10 @@ AppImage/deb artifacts are needed for distribution.
 ## Verification answer: v5/v8 ordering
 
 The existing `runUpgrade` in `idb-repository.js:217-226` runs the v8 block
-before the v5 block (and now the v9 block last). The exact controlling
+before the v5 block (and now the v10 block last). The exact controlling
 conditions are `if (oldVersion < 8) { upgradeToV8(db); }` followed by
 `if (oldVersion < 5) { upgradeToV5(upgradeTx); }`. For a fresh install going
-0 → 9, every `oldVersion < N` condition is true and every block runs.
+0 → 10, every `oldVersion < N` condition is true and every block runs.
 
 What would *actually* break if v8 ran *after* v5 in source order? **Nothing,
 under IDB version-change semantics.** Both `db.createObjectStore(...)` calls
@@ -1833,8 +1925,569 @@ during a single `versionchange` transaction is visible in
 `db.objectStoreNames` from the moment of invocation through commit, and the
 `complete` event fires only after commit.
 
-The same reasoning applies to v9: it adds two new stores (`bulk_jobs`,
-`bulk_pairs`) and three new indexes on existing stores. All of those
-mutations happen synchronously on `upgradeTx`; their visibility to the
-post-commit `complete` listener is guaranteed regardless of the textual
+The same reasoning applies to v9 and v10: v9 adds two new stores (`bulk_jobs`,
+`bulk_pairs`) and three new indexes on existing stores; v10 adds `sauce_jobs`.
+All of those mutations happen synchronously on `upgradeTx`; their visibility
+to the post-commit `complete` listener is guaranteed regardless of the textual
 ordering relative to the older blocks.
+
+---
+
+## 16. SauceLabs Pipeline
+
+Source: `src/main/saucelabs-manager.js`, `src/main/saucelabs-binary-manager.js`
+(main process), `src/renderer/application/saucelabs-workflow.js` (renderer),
+`src/renderer/components/saucelabs-panel.js` (UI).
+
+### 16.1 Binary resolution hierarchy
+
+`sauceBinaryManager.resolveBinaryPath(opts)` (`saucelabs-binary-manager.js:199-244`)
+resolves the `saucectl` binary in strict priority order. Each level is attempted
+sequentially; the first that produces a parseable semver version wins.
+
+**Level 1 — Downloaded binary in app data directory.**
+
+| Platform | Path |
+|---|---|
+| Windows | `%APPDATA%/ui-comparison-desktop/saucectl/bin/saucectl.exe` |
+| macOS | `~/Library/Application Support/ui-comparison-desktop/saucectl/bin/saucectl` |
+| Linux | `~/.config/ui-comparison-desktop/saucectl/bin/saucectl` |
+
+All three derive from `app.getPath('userData')` + `/saucectl/bin/` + `PLATFORM_BINARY`.
+
+**Level 2 — Bundled binary in app resources.**
+- Packaged: `process.resourcesPath/saucectl/saucectl[.exe]` (maps to the
+  `extraResources` entry in `electron-builder.yml`).
+- Development: `app.getAppPath()/resources/saucectl/saucectl[.exe]`.
+
+**Level 3 — Binary on system PATH.**
+Scans `process.env.PATH` (split on `;` on Windows, `:` elsewhere). On Windows,
+three candidate filenames are checked per directory: `saucectl.exe`,
+`saucectl.cmd`, `saucectl` (in that order). On POSIX, only `saucectl`.
+
+**Level 4 — Setup error.** If no candidate produces a valid version,
+`resolveBinaryPath()` returns `null`. The `SAUCE_VALIDATE_CREDENTIALS` handler
+detects this and returns `{ success: false, error: 'saucectl not found ...' }`
+before attempting any API call.
+
+**Version check timeout.** Each candidate is verified by spawning
+`saucectl --version` with a hard `opts.timeoutMs ?? 5000` ms wall-clock limit
+(`_getVersionFromBinary`, line 120-158). If the process does not exit within
+the timeout, it is `SIGKILL`'d and the binary is treated as non-functional,
+falling through to the next level. The timeout absorbs cold-start AV scans on
+Windows without blocking the SauceLabs tab behind a slow disk.
+
+**Windows `.cmd` resolution.** When the PATH search finds a `.cmd` or `.bat`
+shim (common with `npm install -g`), `_resolveSpawnCommand` (line 88-118) reads
+the shim content, parses `%~dp0%\<relative-path>` or `node "<script>"` patterns,
+resolves the target to an absolute path, and returns
+`{ executable: process.execPath, prefixArgs: [scriptPath] }`. This means
+`_spawnSaucectl` and `_getVersionFromBinary` spawn `node saucectl.js` rather
+than `cmd /c saucectl.cmd`, which is critical because `child_process.spawn` is
+called with `shell: false` (the default) — spawning a `.cmd` without a shell
+errors on Windows. `shell: false` is intentional: it avoids command-injection
+risk from user-controlled environment variables.
+
+**Module-level caching.** Once resolved, `_resolvedPath` and `_resolvedVersion`
+are cached at module scope. All subsequent calls to `getResolvedPath()` and
+`getResolvedVersion()` return the cached values until the process restarts or
+`runUpdateCheck` overwrites them.
+
+### 16.1a Update check lifecycle
+
+Triggered by `_registerSauceHandlers` during `SAUCE_VALIDATE_CREDENTIALS`
+handling: after binary resolution succeeds, `runUpdateCheck(compatibleRange)`
+is called as a fire-and-forget background operation.
+
+**Firing conditions:**
+- Fires at most once per process (guarded by `_updateCheckDone` flag).
+- Deferred if `opts.hasActiveJobs()` returns true (active `sauce_jobs` rows
+  in `submitted`/`running`/`downloading`). The flag is reset so the next
+  credential validation re-triggers. Deferral avoids replacing a `.exe` on
+  Windows while a child spawned from it is alive (which returns EBUSY).
+- Never fires on app startup — only on the first SauceLabs tab interaction.
+
+**Sequence:**
+1. `GET https://api.github.com/repos/saucelabs/saucectl/releases/latest`
+   (15 s timeout, optional `GITHUB_TOKEN` auth header if env var set).
+2. Parse `tag_name` → strip leading `v` → validate as semver.
+3. Reject if latest does not satisfy `compatibleSaucectlRange` (`>=0.200.0 <1.0.0`).
+4. Skip if resolved version is already ≥ latest.
+5. Map `process.platform:process.arch` → asset filename via `ASSET_MAP`.
+6. Download archive + `checksums.txt` from GitHub releases.
+7. SHA-256 verify: `crypto.createHash('sha256')` on the archive → compare with
+   entry in `checksums.txt` matching the asset filename. Mismatch → delete
+   archive → abort.
+8. Extract binary from archive (PowerShell `Expand-Archive` on Windows, `tar -xzf`
+   elsewhere), write to `.tmp` file, `fs.renameSync` over the target. The atomic
+   rename guarantees no corrupt binary on crash.
+
+**Failure handling.** Any failure (network, rate-limit 403/429, checksum mismatch,
+write error) is logged and silently swallowed. The existing binary continues to
+be used. The update check never blocks the user and never shows an error dialog.
+
+### 16.2 Job lifecycle
+
+#### Extraction flow
+
+```
+renderer                          main (fire-and-forget)
+─────────────────────────────────────────────────────────
+sauceSubmitJob(payload) ────────► _registerSauceHandlers
+  ← { success:true, jobId }
+                                  sauceManager.submitExtraction({...})
+                                    1. _registerJob(jobId, ...)
+                                    2. Write tmp: .sauce/config.yml + tests/extract.spec.js
+                                    3. _spawnSaucectl(saucectl run ...)
+                                    4. _parseSauceSessionId(stdout)
+                                    5. _pollSessionUntilDone(...)  ← adaptive backoff
+                                    6. _downloadArtifact(extraction-result.json)
+                                    7. Download screenshots-manifest.json + keyframes
+                                    8. Stamp report with engine/platform/sessionId
+                                  ┌─ onProgress callbacks → SAUCE_JOB_PROGRESS
+                                  └─ .then → SAUCE_JOB_COMPLETE { report, manifest }
+```
+
+#### Comparison flow
+
+```
+renderer                          main (fire-and-forget)
+─────────────────────────────────────────────────────────
+sauceSubmitComparison(payload) ──► _registerSauceHandlers
+  ← { success:true, jobId }
+                                  sauceManager.submitComparison({...})
+                                    1. _registerJob(jobId, ...)
+                                    2. Promise.all([
+                                         _submitSingleSession({side:'baseline'}),
+                                         _submitSingleSession({side:'compare'}),
+                                       ])
+                                    3. Cross-session abort: if one side fails polling,
+                                       siblingAbort.abort() cancels the other's poll
+                                    4. _pollSessionUntilDone() × 2 (parallel)
+                                    5. _downloadSessionArtifacts() × 2 (parallel)
+                                    6. Stamp both reports
+                                  ┌─ onProgress → SAUCE_JOB_PROGRESS
+                                  ├─ onSessionId → SAUCE_JOB_PROGRESS { baselineSessionId, compareSessionId }
+                                  └─ .then → SAUCE_JOB_COMPLETE { baselineReport, compareReport, ... }
+```
+
+#### Partial failure + retry
+
+If one session completes but the other fails/times-out, `submitComparison`
+throws an error decorated with `{ partiallyFailed:true, partiallyFailedSession,
+baselineSessionId, compareSessionId, baselineStatus, compareStatus }`. The IPC
+handler's `.catch` emits `SAUCE_JOB_COMPLETE` with these fields. The renderer
+persists status `'partially_failed'` in `sauce_jobs`. The user can then invoke
+`sauceRetryFailedSession`, which re-submits only the failed side, polls it,
+downloads both sessions' artifacts (the successful side's from the original
+session ID — if already on disk, the download is skipped), and emits a fresh
+`SAUCE_JOB_COMPLETE` with both reports.
+
+### 16.3 Cancellation
+
+Each job is registered in `_jobRegistry` (`Map<jobId, Entry>`) where the
+entry contains:
+
+- `controller: AbortController` — signal polled by `_interruptibleSleep` and `_pollSessionUntilDone`
+- `procs: Set<ChildProcess>` — in-flight saucectl children
+- `sessionIds: Set<string>` — known remote session IDs (populated as stdout is parsed)
+- `creds: { username, accessKey, region }` — for remote session DELETE
+- `cancelled: boolean` — gate checked by `_throwIfCancelled`
+
+`cancelJob(jobId)`:
+1. Sets `entry.cancelled = true`
+2. Calls `entry.controller.abort()` — unblocks all sleeping poll loops
+3. SIGTERM → 3 s delay → SIGKILL every tracked child process
+4. `DELETE /rest/v1/{user}/jobs/{sessionId}` for all tracked sessions
+   (via `Promise.allSettled` — one slow DELETE does not block the other)
+
+`_throwIfCancelled(jobId)` is checked after saucectl exit, after session ID
+resolution, and before polling begins. Raises `JobCancelledError` to abort
+the pipeline.
+
+### 16.4 saucectl YAML generation
+
+`_generateYaml(...)` (`saucelabs-manager.js:273-301`) produces a minimal
+`.sauce/config.yml`:
+
+```yaml
+apiVersion: v1alpha
+kind: playwright
+sauce:
+  region: <region>
+  concurrency: 1
+  tunnel:             # only if tunnelName is provided
+    name: "<tunnelName>"
+playwright:
+  version: 1.52.0
+suites:
+  - name: "<suiteName>"
+    platformName: "<platform>"
+    screenResolution: "<resolution>"
+    params:
+      browserName: "<browser>"
+      headless: false
+    testMatch: ["tests/extract.spec.js"]
+artifacts:
+  download:
+    when: always
+    match: ["extraction-result.json", "screenshots-manifest.json", "keyframe-*.webp"]
+    directory: ./artifacts/
+```
+
+### 16.5 Test script generation
+
+`_generateTestScript(...)` (`saucelabs-manager.js:315-482`) builds a Playwright
+test file (`tests/extract.spec.js`) that performs extraction and screenshots in a
+single browser session on the remote VM.
+
+**What is embedded at generation time (read from disk, not hardcoded):**
+- The full `dist/extractor-bundle.js` content as a JSON-escaped string literal
+  (via `_getExtractorBundleSource()` — same three-path probe as
+  `playwright-manager.js`).
+- The `src/core/comparison/keyframe-grouper.js` source, converted from ESM to
+  CJS inline by `_convertEsmToCjs` (strips `export { ... }` and `export`
+  keyword prefixes). The resulting `groupIntoKeyframes` function is available
+  in the test script's scope.
+
+**Script execution steps:**
+1. Navigate to the URL (`page.goto`, 60 s timeout).
+2. Readiness gate: if filters produce a `compoundSelector`, wait for that
+   selector (30 s) then wait for descendant-count stabilisation (polling 750 ms,
+   timeout 30 s). Without a selector: `networkidle` (15 s) + DOM count > 100.
+3. Inject extractor bundle via `page.addScriptTag({ content: EXTRACTOR_BUNDLE })`.
+4. Run extraction: `page.evaluate(() => window.__uiCompare.extractWithConfig(filters, cfg))`.
+   Config overrides: `batchHardCapMs:30, maxElements:10000, skipInvisible:true,
+   stabilityWindowMs:500, hardTimeoutMs:20000`.
+5. Write `extraction-result.json`.
+6. Measure element rects via `page.evaluate` on `selectorPairs` (CSS selectors
+   from `el.cssSelector`).
+7. `groupIntoKeyframes(validRects, viewportHeight, viewportWidth, documentHeight)`.
+8. If keyframes exceed `MAX_KEYFRAMES` (default 200): sort by `elementIds.length`
+   descending, keep top N, re-sort by `scrollY`, re-index IDs.
+9. Freeze animations (inject `<style>` with
+   `animation-play-state:paused !important; transition-duration:0s !important`).
+10. For each keyframe: `window.scrollTo(0, kf.scrollY)`, 300 ms settle,
+    `page.screenshot({ type:'webp', quality:85, fullPage:false })`,
+    write `keyframe-N.webp`.
+11. Write `screenshots-manifest.json` with per-keyframe entries (`id`, `scrollY`,
+    `viewportWidth`, `viewportHeight`, `elementIds`, `filename`) and the
+    `elementKeyframeMap` (HPID → keyframe ID).
+
+**Artifact schema written by the script:**
+```
+extraction-result.json       — same shape as runExtraction returns
+screenshots-manifest.json    — { keyframes: [...], elementKeyframeMap: { [hpid]: kfId } }
+keyframe-0.webp ... N.webp   — viewport screenshots at keyframe scroll positions
+```
+
+### 16.6 Polling
+
+`_pollSessionUntilDone(...)` (`saucelabs-manager.js:590-677`) hits
+`GET /rest/v1/{username}/jobs/{sessionId}` repeatedly.
+
+| Elapsed time | Interval |
+|---|---|
+| 0–2 min | 10 s |
+| 2–5 min | 20 s |
+| 5–10 min | 30 s |
+| >10 min | 60 s |
+
+**Error handling:**
+- Up to 8 consecutive API errors (`MAX_CONSECUTIVE_ERRORS`) before declaring failure
+- Exponential backoff on errors: `min(baseInterval × 2^(n-1), 5 min)`
+- HTTP 401 → immediate failure ("Credentials expired during polling")
+- HTTP 429 → treated as a consecutive error (rate-limited)
+- Session status `complete`/`passed` → success
+- Session status `error`/`failed` → failure
+- 90-minute total elapsed → `timed_out`
+
+Sleep is interruptible: the job's `AbortController.signal` and an optional
+`externalSignal` (used for cross-session abort in comparison mode) both wake
+the sleep early via event listener on `'abort'`.
+
+### 16.7 The `_parseSauceSessionId` contract
+
+`_parseSauceSessionId(stdout)` (`saucelabs-manager.js:561-588`) extracts a
+SauceLabs session UUID from saucectl's stdout. The parser has an intentional
+rejection rule:
+
+**Priority 1 — URL path match.** Regex: `app.saucelabs.com/tests/<UUID>`.
+Takes priority over all other patterns because it is the most specific.
+
+**Priority 2 — Labelled match.** `job:` or `session:` followed by a UUID.
+
+**Priority 3 — Bare UUID scan with rejection filter.** Scans for any UUID
+pattern. For each match, inspects the 32 characters preceding the match. If
+`_REJECT_LABEL_RE` (`/(?:storageId|checksum|config)\s*[:=]?\s*$/i`) matches
+that prefix, the UUID is **skipped**. This prevents matching artifact checksums,
+upload storage IDs, or config hash UUIDs that saucectl also prints. The first
+UUID that passes the rejection filter wins.
+
+**Priority 4 — UUID-without-dashes.** Pattern: `job` followed by a 32-character
+hex string on the same line. Converted to standard UUID via `_toUuidWithDashes`
+(inserts dashes at positions 8-12-16-20).
+
+**Why `storageId` must not be matched.** saucectl prints `storageId=<UUID>` for
+the uploaded test bundle. This UUID identifies the artifact in SauceLabs'
+internal storage, not the session. If it were matched as the session ID, polling
+would hit `GET /rest/v1/{user}/jobs/{storageId}` and get 404 indefinitely until
+the 90-minute timeout. The rejection filter is what prevents this.
+
+### 16.8 IDB v10 schema: `sauce_jobs` store
+
+**Store:** `sauce_jobs` (constant `STORE_SAUCE_JOBS`, `idb-repository.js:20`).
+**keyPath:** `id`. **Created in:** `upgradeToV10` (line 218-224).
+
+**Indexes:**
+- `by_status` → `status`, not unique
+- `by_createdAt` → `createdAt`, not unique
+
+**Full record schema:**
+
+```
+{
+  id:                    string,      // crypto.randomUUID()
+  status:               'submitted' | 'running' | 'downloading' | 'comparing'
+                      | 'partially_failed' | 'done' | 'failed' | 'timed_out'
+                      | 'cancelled',
+  baselineStatus:       'submitted' | 'running' | 'complete' | 'failed'
+                      | 'timed_out' | 'cancelled' | null,
+  compareStatus:        'submitted' | 'running' | 'complete' | 'failed'
+                      | 'timed_out' | 'cancelled' | null,
+  partiallyFailedSession: 'baseline' | 'compare' | null,
+  url:                  string | null,        // extraction-only jobs
+  baselineUrl:          string | null,        // comparison jobs
+  compareUrl:           string | null,
+  platform:             string,
+  browserName:          string,
+  screenResolution:     string,
+  region:               string,
+  tunnelName:           string | null,
+  filters:             object | null,
+  baselineSessionId:   string | null,
+  compareSessionId:    string | null,
+  sessionId:           string | null,         // extraction-only jobs
+  baselineArtifactDir: string | null,
+  compareArtifactDir:  string | null,
+  artifactsDir:        string | null,         // extraction-only jobs
+  comparisonId:        string | null,         // cross-ref to comparisons store
+  baselineReportId:    string | null,
+  compareReportId:     string | null,
+  reportId:            string | null,         // extraction-only jobs
+  kind:                'extraction' | 'comparison',
+  error:               string | null,
+  createdAt:           number,                // Date.now()
+  completedAt:         number | null,
+  lastPolledAt:        number | null,
+  baselinePollStartedAt: number | null,
+  comparePollStartedAt:  number | null
+}
+```
+
+**Status enum — complete set with sub-states:**
+- `submitted` — IPC handler returned, saucectl not yet spawned or session ID not yet known.
+- `running` — at least one session ID is known and polling is active.
+- `downloading` — both sessions completed, artifacts being fetched.
+- `comparing` — artifacts downloaded, `Comparator.compare()` running locally.
+- `partially_failed` — exactly one session completed successfully, the other failed/timed-out. `partiallyFailedSession` names which side. Retryable.
+- `done` — terminal. Comparison persisted to IDB.
+- `failed` — terminal. Both sessions failed, or an unrecoverable error occurred.
+- `timed_out` — terminal. Polling exceeded 90-minute budget.
+- `cancelled` — terminal. User cancelled.
+
+**`credentials_required` is NOT a persisted status.** It is a renderer-only
+overlay: dispatched by `detectAndResumeSauceJobs()` when in-flight rows exist
+but `_creds === null`. The IDB row retains its original status unchanged.
+
+**Retention policy.** `saucelabs.maxRetainedJobs = 20` (in `config/defaults.js:304`).
+Enforced in `#saveSauceJobInner` — oldest rows beyond the limit are deleted.
+
+**Cross-reference integrity with `comparisons` store.** A `sauce_jobs` row is
+not evicted while its `comparisonId` references a comparison that is still
+present in the `comparisons` store. If the comparison is evicted by the existing
+`MAX_COMPARISONS = 20` LRU, its eviction path nulls out the `sauce_jobs.comparisonId`
+field in the same logical save sequence. This prevents dangling references in
+either direction. Artifact directories (`baselineArtifactDir`, `compareArtifactDir`)
+are `fs.rm`'d when the row is deleted (by retention, user dismissal, or cancel).
+
+### 16.9 Dual-session state machine
+
+The top-level `status` is a **derived projection** of two independent
+`baselineStatus` / `compareStatus` fields. Both advance on their own poll loops.
+
+**Per-session sub-status transitions** (each applies independently):
+```
+submitted ──[session ID recovered]──► running
+running   ──[poll → complete/passed]──► complete  (terminal)
+running   ──[poll → error/failed]───► failed     (terminal)
+running   ──[90 min elapsed]────────► timed_out  (terminal)
+running   ──[user cancel]──────────► cancelled   (terminal)
+```
+
+**Top-level derivation rules:**
+| Both sub-statuses | Top-level status |
+|---|---|
+| Both `submitted` | `submitted` |
+| At least one `running`, neither terminal | `running` |
+| Both `complete` | `downloading` → `comparing` → `done` |
+| One `complete`, other ∈ {`failed`,`timed_out`} | `partially_failed` |
+| Both ∈ {`failed`,`timed_out`} | `failed` |
+| Either `cancelled` | `cancelled` |
+
+**The `partially_failed` → `running` transition** occurs when the user clicks
+"Retry Failed Session": the failed side's sub-status resets to `submitted`→`running`,
+`partiallyFailedSession` is cleared, and a new session ID is allocated. The
+successful side's artifacts are preserved and reused without re-download.
+
+### 16.10 Post-comparison keyframe filter (Scenario C)
+
+After both sessions' artifacts are downloaded and `Comparator.compare()` runs
+locally in `_handleComparisonComplete` (`saucelabs-workflow.js:449-535`), a
+filtering step executes **before visual data is written to IDB**.
+
+**What it does.** `_computeDiffKeyframeIds(comparisonResults, baselineManifest,
+compareManifest)` (line 553-572):
+1. Iterates comparison results, collecting HPIDs where `totalDifferences > 0`
+   into `diffHpids`.
+2. For each diff HPID, looks up `baselineManifest.elementKeyframeMap[hpid]` and
+   `compareManifest.elementKeyframeMap[hpid]` to find which keyframe IDs cover
+   that element.
+3. Returns the union as `diffKeyframeIds: Set<string>`.
+
+**How the manifest provides the mapping.** The generated test script writes
+`elementKeyframeMap` (an object keyed by HPID, valued by the covering keyframe's
+`id` field) alongside the `keyframes` array. This field is what allows the
+renderer to project from diff-set HPIDs to keyframe IDs without re-running the
+grouper.
+
+**What `_persistFilteredVisualData` does.** Only keyframes whose `kf.id` is in
+`diffKeyframeIds` are written to `visual_keyframes` and `visual_blobs`. Keyframes
+covering exclusively non-diff elements are never persisted — their screenshot
+bytes are discarded in-memory after download.
+
+**Why it exists.** The test script captures ALL elements (it cannot know which
+will diff before comparison runs). Without the filter, every keyframe from both
+sessions would be persisted, producing tens of MB of WebP blobs in IDB for pages
+with hundreds of elements. The filter achieves the theoretical minimum IDB
+footprint: only keyframes that visualise actual diffs are retained.
+
+**What breaks if it is removed.** Every keyframe from both sessions is persisted
+to `visual_blobs` (up to `maxScreenshotsPerSession × 2 = 400` keyframes per
+comparison). IDB size balloons. The UI still works (it looks up only diff-related
+keyframes), but storage consumption becomes unbounded relative to diff count.
+
+### 16.11 Credential flow across the IPC boundary
+
+**Where credentials live in the renderer.** Module-level `let _creds = null` in
+`saucelabs-workflow.js:12`. This is a closure-scoped slot in the application
+layer — not a component-level variable. It survives tab navigation because
+the module is loaded once by webpack and stays resident until the renderer
+process is unloaded.
+
+**How they survive tab navigation.** The SauceLabs panel is destroyed and
+recreated on each navigation to/from the tab, but `_creds` lives in the
+workflow module above the component layer. When the panel re-mounts, it calls
+`getCredentials()` and pre-fills the form from the cached value.
+
+**How they cross to the main process.** Every IPC call
+(`SAUCE_SUBMIT_JOB`, `SAUCE_SUBMIT_COMPARISON`, `SAUCE_CANCEL_JOB`,
+`SAUCE_RETRY_FAILED_SESSION`) reads `_creds` and includes `{ username,
+accessKey, region }` in its payload. The main process is stateless with respect
+to credentials between calls — it reads them from the payload, uses them for
+the SauceLabs REST API call or as `SAUCE_USERNAME`/`SAUCE_ACCESS_KEY` env vars
+passed to the saucectl child, then drops the reference. The only main-process
+retention is inside the `_jobRegistry` entry's `creds` field, which is used by
+`cancelJob` to issue `DELETE` calls after the renderer may have navigated away.
+
+**What happens on app restart.** `_creds` is `null`. In-flight jobs are detected
+by `detectAndResumeSauceJobs()` querying `sauce_jobs` for non-terminal statuses.
+`SAUCE_CREDENTIALS_REQUIRED` is dispatched with the count of in-flight jobs.
+The panel renders a banner: "Re-enter credentials above to resume." Polling does
+not start until the user validates credentials via the same flow as initial login.
+
+### 16.12 Close-and-resume lifecycle
+
+**What is persisted at submission time.** The entire `sauce_jobs` record
+(see §16.8) is written to IDB immediately after `SAUCE_SUBMIT_JOB` /
+`SAUCE_SUBMIT_COMPARISON` returns `{ success:true, jobId }` — before the main
+process has spawned saucectl. Fields like `baselineSessionId`, `compareSessionId`,
+`comparisonId` start as `null` and are patched incrementally as the job
+progresses via `storage.updateSauceJob(jobId, patch)`.
+
+**What `detectAndResumeSauceJobs()` does on boot** (`saucelabs-workflow.js:294-330`):
+1. Queries `sauce_jobs` store via `loadSauceJobsByStatus(['submitted', 'running',
+   'downloading', 'comparing', 'partially_failed'])`.
+2. If results > 0, dispatches `SAUCE_CREDENTIALS_REQUIRED` with `{ count }`.
+3. Dispatches `SAUCE_JOB_LOADED` with the most-recent job (by `createdAt` descending),
+   populating the job status card in the UI.
+4. Returns. No polling is started.
+
+**The `SAUCE_CREDENTIALS_REQUIRED` dispatch.** This triggers the panel to show
+the credentials form with a contextual message. It does NOT modify the IDB row's
+`status` — `credentials_required` is a renderer-only overlay.
+
+**The resume path** (after the user re-enters credentials via `validateAndStoreCredentials`):
+1. `_creds` is set.
+2. `_resumeInFlightJobs()` is called (line 402-435).
+3. It queries `sauce_jobs` for in-flight rows (excluding `partially_failed`).
+4. Dispatches `SAUCE_JOB_LOADED` with the most recent job (which re-populates
+   the UI job card). The main process's fire-and-forget work continues
+   independently — if the session completed during shutdown, the next
+   `SAUCE_JOB_COMPLETE` event will arrive when the main-process polling (if
+   still running) or the next submission finishes.
+
+**Limitation:** The current implementation does not re-initiate main-process
+polling for jobs that were in-flight before restart. It relies on the main
+process's own `sauceManager` state, which is lost on restart. The resume path
+restores the UI state and allows the user to retry or cancel, but a session
+that completed while the app was closed must be retried to get results.
+
+### 16.13 Configuration
+
+All SauceLabs tunables live under `config.saucelabs` in `src/config/defaults.js:299-305`:
+
+| Key | Default | Purpose |
+|---|---|---|
+| `compatibleSaucectlRange` | `>=0.200.0 <1.0.0` | Semver range for binary resolution + auto-update |
+| `versionCheckTimeoutMs` | `5000` | Timeout for `saucectl --version` probe |
+| `maxScreenshotsPerSession` | `200` | Cap on keyframe screenshots per extraction |
+| `pollTimeoutMs` | `90 * 60 * 1000` (90 min) | Maximum polling duration before declaring timeout |
+| `maxRetainedJobs` | `20` | IDB retention limit for `sauce_jobs` store |
+
+Additionally, `saucectlTimeoutMs` (default 10 min, `saucelabs-manager.js:760`) caps
+how long a single `saucectl run` child process is allowed to execute before SIGKILL.
+
+### 16.14 Renderer-side state management
+
+`saucelabs-workflow.js` dispatches the following actions:
+
+- **Credential state** — `SAUCE_CREDENTIAL_VALIDATING` / `SAUCE_CREDENTIAL_VALID` / `SAUCE_CREDENTIAL_FAILED` / `SAUCE_CREDENTIAL_RESET`
+- **Job state** — `SAUCE_JOB_SUBMITTED` / `SAUCE_JOB_PROGRESS` / `SAUCE_JOB_COMPLETE` / `SAUCE_JOB_FAILED` / `SAUCE_JOB_PARTIALLY_FAILED` / `SAUCE_JOB_CANCELLED` / `SAUCE_JOB_RESET`
+- **Comparison state** — `SAUCE_COMPARISON_SUBMITTED`
+- **Persistence** — `SAUCE_PERSIST_WARNING` (non-fatal IDB save failure)
+- **Resume** — `SAUCE_CREDENTIALS_REQUIRED` / `SAUCE_JOB_LOADED`
+
+On `SAUCE_JOB_COMPLETE` with comparison data, the workflow runs the
+`Comparator` locally (same matching/diffing pipeline as the local compare
+flow), persists reports + comparison + filtered visual keyframes to IDB, and
+registers keyframe blobs in the protocol cache for immediate UI rendering.
+
+### 16.15 Failure modes
+
+| Failure | Detection | Recovery |
+|---|---|---|
+| saucectl binary not found | `resolveBinaryPath()` returns null | Error returned to UI; user must install saucectl |
+| Credentials invalid | HTTP 401 from activity endpoint | UI shows error; user re-enters credentials |
+| Account lacks Playwright entitlement | HTTP 403 or 200 without concurrency data | Error: "Account cannot create Playwright sessions" |
+| Concurrent session limit hit | Pattern match on saucectl stdout (`/concurrent session limit/i`) | `_sauceKnownFailure` error surfaced to UI |
+| Session timeout (90 min) | `_pollSessionUntilDone` elapsed check | Job marked `timed_out`; user can retry |
+| saucectl process timeout (10 min) | `setTimeout` SIGKILL in `_spawnSaucectl` | Error surfaced; session may still be running remotely |
+| API unreachable (8 retries) | `consecutiveErrors >= MAX_CONSECUTIVE_ERRORS` | Job marked `failed` |
+| One session fails, other succeeds | `partiallyFailed` flag on error | UI offers retry for failed side only |
+| Both sessions fail | Neither sub-status is `complete` | Job marked `failed` |
+| Cross-session abort | One side's poll returns non-complete → `siblingAbort.abort()` | Other side's poll wakes early and marks cancelled |
+| IDB write failure during persist | `try/catch` in `_handleComparisonComplete` | `SAUCE_PERSIST_WARNING` dispatched; job data in memory only |
+| Checksum mismatch on update | SHA-256 comparison | Update aborted; existing binary retained |
+| GitHub rate limit (403/429) | Response status code | Update check skipped silently |
+| Session ID not parseable from stdout | `_parseSauceSessionId` returns null | Fallback: `_recoverSessionId` via `GET /rest/v1/{user}/jobs?limit=1` |

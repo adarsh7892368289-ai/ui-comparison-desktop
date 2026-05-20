@@ -180,7 +180,7 @@ async function handleExtraction() {
   }
 
   const url = urlInput.value.trim();
-  if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) {
+  if (!url || !url.startsWith('http://') && !url.startsWith('https://')) {
     setError('extract', 'Enter a valid URL starting with http:// or https://');
     return;
   }
@@ -193,13 +193,13 @@ async function handleExtraction() {
     return;
   }
   const selectedBrowser = stateSnapshot.selectedBrowser;
-  const browserPayload = selectedBrowser
-    ? {
-        browserType:    selectedBrowser.browserType,
-        channel:        selectedBrowser.channel,
-        executablePath: selectedBrowser.executablePath,
-      }
-    : { browserType: 'chromium', channel: null, executablePath: null };
+  const browserPayload = selectedBrowser ?
+  {
+    browserType: selectedBrowser.browserType,
+    channel: selectedBrowser.channel,
+    executablePath: selectedBrowser.executablePath
+  } :
+  { browserType: 'chromium', channel: null, executablePath: null };
 
   _extractBusy = true;
   setError('extract', '');
@@ -234,9 +234,9 @@ async function handleExtraction() {
   if (filterClass) {filters.class = filterClass;}
   if (filterId) {filters.id = filterId;}
   if (filterTag) {filters.tag = filterTag;}
-  const options = Object.keys(filters).length > 0
-    ? { filters, browser: browserPayload }
-    : { browser: browserPayload };
+  const options = Object.keys(filters).length > 0 ?
+  { filters, browser: browserPayload } :
+  { browser: browserPayload };
   const filterClause = _filterClause(Object.keys(filters).length ? filters : {});
 
   const offExtraction = api.onExtractionProgress((data) => {
