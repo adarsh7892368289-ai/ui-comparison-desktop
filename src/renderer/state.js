@@ -58,7 +58,8 @@ const initialState = {
   },
   sauceJob: null,
   sauceCredentialState: 'idle',
-  sauceCredentialError: null
+  sauceCredentialError: null,
+  sauceComparisonResult: null
 };
 
 let _state = { ...initialState };
@@ -751,7 +752,37 @@ function reduce(state, type, payload) {
       return { ...state, sauceJob: payload.job ?? null };
 
     case 'SAUCE_JOB_RESET':
-      return { ...state, sauceJob: null };
+      return { ...state, sauceJob: null, sauceComparisonResult: null };
+
+    case 'SAUCE_COMPARISON_RESULT':
+      return {
+        ...state,
+        sauceComparisonResult: {
+          jobId: payload.jobId ?? null,
+          comparisonId: payload.comparisonId ?? null,
+          result: payload.result ?? null,
+          cachedAt: payload.cachedAt ?? null,
+          fromCache: !!payload.fromCache
+        }
+      };
+
+    case 'SAUCE_PERSISTENCE_INCOMPLETE':
+      // Partial failure during keyframe / rect / blob persistence. The job
+      // itself completed; we just want the user to know the report may be
+      // missing some visual data. Stored on the existing sauceJob slot as
+      // a non-fatal warning.
+      if (!state.sauceJob) return state;
+      return {
+        ...state,
+        sauceJob: {
+          ...state.sauceJob,
+          persistenceWarning: {
+            summary: payload.summary ?? 'Some visual data could not be saved',
+            failedSteps: payload.failedSteps ?? [],
+            steps: payload.steps ?? {}
+          }
+        }
+      };
 
     case 'FILTERS_UPDATED':
       return { ...state, filters: { ...state.filters, ...payload.filters } };

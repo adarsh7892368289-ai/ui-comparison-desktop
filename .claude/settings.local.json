@@ -53,7 +53,18 @@
       "Bash(sed -n '386,390p' \"c:/Projects/ui-comparison-desktop/src/main/saucelabs-manager.js\")",
       "Bash(node --input-type=commonjs -e ' *)",
       "Bash(awk 'NR>=386 && NR<=389 { for\\(i=1;i<=length\\($0\\);i++\\) { c=substr\\($0,i,1\\); n=ord\\(c\\); if \\(n<32 && n!=9\\) printf \"Line %d col %d: control byte 0x%02x\\\\n\", NR, i, n; } } function ord\\(c\\) { return _ord_[c] } BEGIN { for\\(i=0;i<256;i++\\) _ord_[sprintf\\(\"%c\",i\\)]=i }' \"c:/Projects/ui-comparison-desktop/src/main/saucelabs-manager.js\")",
-      "Bash(npm test *)"
+      "Bash(npm test *)",
+      "Bash(where saucectl.cmd)",
+      "Bash(where saucectl.exe)",
+      "Read(//c/Users/adarshbm.gowda/AppData/Local/nvm/v20.20.2/**)",
+      "Bash(\"C:/nvm4w/nodejs/node_modules/saucectl/bin/saucectl.exe\" --version)",
+      "Bash(\"C:/nvm4w/nodejs/node_modules/saucectl/bin/saucectl.exe\" run *)",
+      "Bash(grep -rn \"/blob/\\\\|app:///blob\\\\|blob/\\\\${\" src/renderer/ src/core/)",
+      "Bash(node -e \"const g = require\\('./dist/saucelabs-runner/keyframe-grouper'\\); console.log\\('exports:', Object.keys\\(g\\)\\); console.log\\('groupIntoKeyframes type:', typeof g.groupIntoKeyframes\\);\")",
+      "Bash(node --check dist/saucelabs-runner/extract.spec.js)",
+      "Bash(awk 'NR==338{p=1} NR==623{p=0; next} !p' src/main/saucelabs-manager.js)",
+      "Bash(sed -n '335,345p' src/main/saucelabs-manager.js)",
+      "Bash(node -e \"const s = require\\('./dist/saucelabs-runner/schemas'\\); console.log\\('exports:', Object.keys\\(s\\)\\); s.validateJobConfig\\({ url: 'https://example.com', maxScreenshots: 100, testTimeoutMs: 600000 }\\); console.log\\('OK valid'\\); try { s.validateJobConfig\\({ url: 'not a url', maxScreenshots: -1, testTimeoutMs: 0 }\\); } catch \\(e\\) { console.log\\('OK fail:', e.message.split\\('\\\\n'\\)[0]\\); }\")"
     ],
     "additionalDirectories": [
       "c:\\Projects\\ui-comparison-desktop"

@@ -12,6 +12,25 @@ const { app } = require('electron');
 const sauceBinaryManager = require('./saucelabs-binary-manager');
 const { mainDistributionDir } = require('./resource-paths');
 const { config: defaultsConfig } = require('../config/defaults.js');
+const {
+  validateJobConfig,
+  validateScreenshotsManifest,
+  validateExtractionResult,
+  SchemaValidationError
+} = require('@core/saucelabs-bridge/schemas.js');
+const {
+  SIDE,
+  oppositeSide
+} = require('@core/saucelabs-bridge/constants.js');
+const {
+  findFirstByName,
+  findAllMatchingPattern
+} = require('@core/saucelabs-bridge/artifact-walker.js');
+const {
+  writeLockFile,
+  removeLockFile,
+  isStaleTmpDir
+} = require('@core/saucelabs-bridge/process-lock.js');
 
 const _CREDENTIAL_KEYS = new Set(['accessKey', 'access_key', 'password', 'SAUCE_ACCESS_KEY', 'secret', 'token']);
 
@@ -60,11 +79,19 @@ function _registerJob(jobId, { username, accessKey, region }) {
     cancelled: false
   };
   _jobRegistry.set(jobId, entry);
+  // Mark this app instance as the owner of the on-disk tmp dir for this job.
+  // cleanupOrphanedTmpDirs() in another instance will see the live PID and
+  // skip the dir.
+  writeLockFile(_tmpDir(jobId));
   return entry;
 }
 
 function _unregisterJob(jobId) {
-  if (jobId) _jobRegistry.delete(jobId);
+  if (!jobId) return;
+  _jobRegistry.delete(jobId);
+  // Best-effort: tmp may already be cleaned up by _cleanupTmp; that's fine,
+  // removeLockFile silently swallows ENOENT.
+  removeLockFile(_tmpDir(jobId));
 }
 
 function _trackProc(jobId, proc) {
@@ -164,21 +191,6 @@ function _request(options, body) {
   });
 }
 
-function _requestBinary(options) {
-  return new Promise((resolve, reject) => {
-    const req = https.request(options, (res) => {
-      const chunks = [];
-      res.on('data', (chunk) => {chunks.push(chunk);});
-      res.on('end', () => {
-        resolve({ statusCode: res.statusCode, buffer: Buffer.concat(chunks), headers: res.headers });
-      });
-    });
-    req.on('error', reject);
-    req.setTimeout(60000, () => {req.destroy();reject(new Error('Download timeout'));});
-    req.end();
-  });
-}
-
 async function validateCredentials({ username, accessKey, region }) {
   if (!username || !accessKey) {
     return { success: false, error: 'Username and access key are required' };
@@ -238,36 +250,91 @@ async function validateCredentials({ username, accessKey, region }) {
   return { success: true, username, region };
 }
 
-function _getExtractorBundleSource() {
+// Locates a prebuilt artifact under dist/ in dev or unpacked-app in prod.
+function _resolveDistFile(...relativeParts) {
   const distDir = mainDistributionDir();
   const candidates = [
-  path.join(distDir, 'extractor-bundle.js'),
-  path.join(__dirname, 'extractor-bundle.js'),
-  path.join(process.cwd(), 'dist', 'extractor-bundle.js')];
-
+    path.join(distDir, ...relativeParts),
+    path.join(__dirname, ...relativeParts),
+    path.join(process.cwd(), 'dist', ...relativeParts)
+  ];
   for (const candidate of candidates) {
-    try {
-      return fs.readFileSync(candidate, 'utf8');
-    } catch {
-      void 0;
-    }
+    if (fs.existsSync(candidate)) return candidate;
   }
-  throw new Error('Extractor bundle not found — run: npm run build:extractor');
+  return null;
 }
 
-function _getKeyframeGrouperSource() {
-  const candidates = [
-  path.join(__dirname, '..', 'core', 'comparison', 'keyframe-grouper.js'),
-  path.join(process.cwd(), 'src', 'core', 'comparison', 'keyframe-grouper.js')];
+// Returns the prebuilt staging files for the SauceLabs runner project.
+// Throws if the build hasn't been run — the runner cannot operate without
+// these. extractor-bundle.js is built by webpack.extractor.config.js;
+// extract.spec.js + keyframe-grouper.js by webpack.saucelabs-runner.config.js.
+function _resolveRunnerStagingPaths() {
+  const extractorBundle = _resolveDistFile('extractor-bundle.js');
+  const spec = _resolveDistFile('saucelabs-runner', 'extract.spec.js');
+  const grouper = _resolveDistFile('saucelabs-runner', 'keyframe-grouper.js');
+  const schemas = _resolveDistFile('saucelabs-runner', 'schemas.js');
 
-  for (const candidate of candidates) {
-    try {
-      return fs.readFileSync(candidate, 'utf8');
-    } catch {
-      void 0;
-    }
+  const missing = [];
+  if (!extractorBundle) missing.push('dist/extractor-bundle.js (run: npm run build:extractor)');
+  if (!spec) missing.push('dist/saucelabs-runner/extract.spec.js (run: npm run build:saucelabs-runner)');
+  if (!grouper) missing.push('dist/saucelabs-runner/keyframe-grouper.js (run: npm run build:saucelabs-runner)');
+  if (!schemas) missing.push('dist/saucelabs-runner/schemas.js (run: npm run build:saucelabs-runner)');
+
+  if (missing.length > 0) {
+    throw new Error('SauceLabs runner staging files not found:\n  - ' + missing.join('\n  - '));
   }
-  throw new Error('keyframe-grouper.js not found on disk');
+  return { extractorBundle, spec, grouper, schemas };
+}
+
+const _DEFAULT_EXTRACTION_OVERRIDES = Object.freeze({
+  extraction: {
+    batchHardCapMs: 30,
+    maxElements: 10_000,
+    skipInvisible: true,
+    stabilityWindowMs: 500,
+    hardTimeoutMs: 20_000
+  }
+});
+
+// Stages the static runner project + per-job config under the saucectl tmp
+// dir. Layout written under <tmpBase>:
+//
+//   .sauce/config.yml          — saucectl config
+//   tests/extract.spec.js      — prebuilt spec (copy of dist/saucelabs-runner)
+//   tests/keyframe-grouper.js  — prebuilt grouper CJS
+//   tests/extractor-bundle.js  — prebuilt extractor bundle
+//   tests/job.json             — per-job parameters (url, filters, ...)
+//
+// All non-config files live under tests/ so saucectl uploads them as part of
+// the project. job.json is co-located with the spec so it survives any
+// .sauceignore-style filtering of dotted top-level dirs.
+function _stageRunnerProject(tmpBase, { url, filters, maxScreenshots }) {
+  const { extractorBundle, spec, grouper, schemas } = _resolveRunnerStagingPaths();
+
+  const sauceDir = path.join(tmpBase, '.sauce');
+  const testsDir = path.join(tmpBase, 'tests');
+  fs.mkdirSync(sauceDir, { recursive: true });
+  fs.mkdirSync(testsDir, { recursive: true });
+
+  fs.copyFileSync(spec, path.join(testsDir, 'extract.spec.js'));
+  fs.copyFileSync(grouper, path.join(testsDir, 'keyframe-grouper.js'));
+  fs.copyFileSync(schemas, path.join(testsDir, 'schemas.js'));
+  fs.copyFileSync(extractorBundle, path.join(testsDir, 'extractor-bundle.js'));
+
+  const jobConfig = {
+    url,
+    filters: filters || null,
+    maxScreenshots: maxScreenshots || 200,
+    configOverrides: _DEFAULT_EXTRACTION_OVERRIDES,
+    testTimeoutMs: 600_000
+  };
+  // Validate before serializing — catches programmer errors here, where the
+  // stack trace points at the bug, instead of inside the SauceLabs VM where
+  // it produces an opaque test failure 90 seconds later.
+  validateJobConfig(jobConfig, 'staged job.json');
+  fs.writeFileSync(path.join(testsDir, 'job.json'), JSON.stringify(jobConfig, null, 2));
+
+  return { sauceDir, testsDir };
 }
 
 function _generateYaml({ platform, browserName, screenResolution, region, tunnelName, suiteName }) {
@@ -296,191 +363,11 @@ suites:
 artifacts:
   download:
     when: always
-    match: ["extraction-result.json", "screenshots-manifest.json", "keyframe-*.webp"]
+    match: ["extraction-result.json", "screenshots-manifest.json", "keyframe-*.jpg"]
     directory: ./artifacts/
 `;
 }
 
-function _convertEsmToCjs(source) {
-  let cjs = source.replace(/export\s*\{[^}]*\}\s*;?/g, '');
-  cjs = cjs.replace(/export\s+(function|const|let|var)\s/g, '$1 ');
-  return cjs;
-}
-
-function _buildGrouperInlineSource() {
-  const raw = _getKeyframeGrouperSource();
-  return _convertEsmToCjs(raw);
-}
-
-function _generateTestScript({ url, filters, maxScreenshots }) {
-  const extractorBundle = _getExtractorBundleSource();
-  const grouperSource = _buildGrouperInlineSource();
-  const configOverrides = JSON.stringify({
-    extraction: {
-      batchHardCapMs: 30,
-      maxElements: 10_000,
-      skipInvisible: true,
-      stabilityWindowMs: 500,
-      hardTimeoutMs: 20_000
-    }
-  });
-  const filtersJson = filters ? JSON.stringify(filters) : 'null';
-  const maxKf = maxScreenshots || 200;
-
-  return `const { test } = require('@playwright/test');
-const fs = require('fs');
-const path = require('path');
-
-const EXTRACTOR_BUNDLE = ${JSON.stringify(extractorBundle)};
-
-const FILTERS = ${filtersJson};
-const CONFIG_OVERRIDES = ${configOverrides};
-const MAX_KEYFRAMES = ${maxKf};
-
-function buildSelectorFromFilters(filters) {
-  if (!filters) return null;
-  const parts = [];
-  if (filters.class) {
-    const groups = filters.class.trim().split(/[\\s,]+/).filter(Boolean)
-      .map((g) => g.trim().split(/\\s+/).filter(Boolean).map((c) => '.' + c.replace(/^\\./, '')).join('')).filter(Boolean);
-    if (groups.length) parts.push(groups.join(','));
-  }
-  if (filters.id) {
-    const ids = filters.id.trim().split(/\\s+/).filter(Boolean).map((id) => '#' + id.replace(/^#/, ''));
-    if (ids.length) parts.push(ids.join(','));
-  }
-  if (filters.tag) {
-    const tags = filters.tag.trim().split(/\\s+/).filter(Boolean);
-    if (tags.length) parts.push(tags.join(','));
-  }
-  return parts.length > 0 ? parts.join(',') : null;
-}
-
-${grouperSource}
-
-test('extract', async ({ page }) => {
-  const url = ${JSON.stringify(url)};
-  await page.goto(url, { waitUntil: 'load', timeout: 60000 });
-
-  const compoundSelector = buildSelectorFromFilters(FILTERS);
-  let waitSelector = compoundSelector;
-
-  if (waitSelector) {
-    await page.waitForSelector(waitSelector, { timeout: 30000, state: 'visible' }).catch(() => {});
-    await page.waitForFunction(
-      (sel) => {
-        const count = document.querySelectorAll(sel + ' *').length;
-        if (window.__vdiff_prev_desc_count === undefined) { window.__vdiff_prev_desc_count = count; return false; }
-        if (window.__vdiff_prev_desc_count !== count) { window.__vdiff_prev_desc_count = count; return false; }
-        return count > 0;
-      },
-      waitSelector,
-      { timeout: 30000, polling: 750 }
-    ).catch(() => {});
-  } else {
-    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-    await page.waitForFunction(
-      () => document.readyState === 'complete' && document.querySelectorAll('*').length > 100,
-      { timeout: 10000 }
-    ).catch(() => {});
-  }
-
-  await page.addScriptTag({ content: EXTRACTOR_BUNDLE });
-
-  const report = await page.evaluate(
-    ({ filters, cfg }) => window.__uiCompare.extractWithConfig(filters, cfg),
-    { filters: compoundSelector ? FILTERS : null, cfg: CONFIG_OVERRIDES }
-  );
-
-  fs.writeFileSync('extraction-result.json', JSON.stringify(report));
-
-  const elements = report.elements || [];
-  if (elements.length === 0) return;
-
-  const viewport = await page.evaluate(() => ({
-    width: window.innerWidth,
-    height: window.innerHeight,
-    documentHeight: Math.max(document.body.scrollHeight, document.documentElement.scrollHeight),
-  }));
-
-  const selectorPairs = elements
-    .filter((el) => el.cssSelector)
-    .map((el) => ({ id: el.hpid, selector: el.cssSelector }));
-
-  const rects = await page.evaluate((pairs) => {
-    return pairs.map((p) => {
-      const els = document.querySelectorAll(p.selector);
-      if (els.length === 0) return { id: p.id, found: false };
-      const el = els[0];
-      const rect = el.getBoundingClientRect();
-      const scrollY = window.scrollY;
-      return {
-        id: p.id,
-        found: true,
-        usable: rect.width > 0 && rect.height > 0,
-        documentY: rect.top + scrollY,
-        height: rect.height,
-        width: rect.width,
-        viewportX: rect.left,
-        viewportY: rect.top,
-      };
-    });
-  }, selectorPairs);
-
-  const validRects = rects.filter((r) => r.found && r.usable);
-  if (validRects.length === 0) {
-    fs.writeFileSync('screenshots-manifest.json', JSON.stringify({ keyframes: [], elementKeyframeMap: {} }));
-    return;
-  }
-
-  let keyframes = groupIntoKeyframes(validRects, viewport.height, viewport.width, viewport.documentHeight);
-
-  if (keyframes.length > MAX_KEYFRAMES) {
-    keyframes.sort((a, b) => b.elementIds.length - a.elementIds.length);
-    keyframes = keyframes.slice(0, MAX_KEYFRAMES);
-    keyframes.sort((a, b) => a.scrollY - b.scrollY);
-    for (let i = 0; i < keyframes.length; i++) {
-      keyframes[i].id = 'kf_' + i;
-    }
-  }
-
-  const elementKeyframeMap = {};
-  for (const kf of keyframes) {
-    for (const elId of kf.elementIds) {
-      elementKeyframeMap[elId] = kf.id;
-    }
-  }
-
-  const freezeStyle = \`*, *::before, *::after { animation-play-state: paused !important; transition-duration: 0s !important; scroll-behavior: auto !important; }\`;
-  await page.evaluate((css) => {
-    const style = document.createElement('style');
-    style.id = 'vdiff-freeze-styles';
-    style.textContent = css;
-    document.head.appendChild(style);
-  }, freezeStyle);
-
-  for (let i = 0; i < keyframes.length; i++) {
-    const kf = keyframes[i];
-    await page.evaluate((y) => window.scrollTo(0, y), kf.scrollY);
-    await page.waitForTimeout(300);
-    const screenshot = await page.screenshot({ type: 'webp', quality: 85, fullPage: false });
-    fs.writeFileSync('keyframe-' + i + '.webp', screenshot);
-  }
-
-  fs.writeFileSync('screenshots-manifest.json', JSON.stringify({
-    keyframes: keyframes.map((kf, i) => ({
-      id: kf.id,
-      scrollY: kf.scrollY,
-      viewportWidth: kf.viewportWidth,
-      viewportHeight: kf.viewportHeight,
-      elementIds: kf.elementIds,
-      filename: 'keyframe-' + i + '.webp',
-    })),
-    elementKeyframeMap,
-  }));
-});
-`;
-}
 
 function _tmpDir(jobId) {
   return path.join(os.tmpdir(), 'ui-comparison-saucelabs', jobId);
@@ -701,39 +588,118 @@ function _interruptibleSleep(ms, ...signals) {
   });
 }
 
-async function _downloadArtifact({ username, accessKey, region, sessionId, filename, destPath }) {
-  const host = _regionHost(region);
-  const auth = _basicAuth(username, accessKey);
+// Forward to the symlink-safe walker in src/core/saucelabs-bridge. Wrapped
+// here so call sites stay readable and the warning hook routes through
+// electron-log with the manager's standard component prefix.
+function _walkerWarn(info) {
+  if (info.kind === 'depth-cap') {
+    log.warn('[SauceManager] artifact walker depth cap hit', info);
+  } else if (info.kind === 'node-cap') {
+    log.warn('[SauceManager] artifact walker node-count cap hit', info);
+  }
+}
 
-  const response = await _requestBinary({
-    hostname: host,
-    path: `/rest/v1/${encodeURIComponent(username)}/jobs/${sessionId}/assets/${encodeURIComponent(filename)}`,
-    method: 'GET',
-    headers: {
-      'Authorization': `Basic ${auth}`,
-      'User-Agent': 'ui-comparison-desktop'
+function _findArtifactRecursive(rootDir, filename) {
+  return findFirstByName(rootDir, filename, { onWarn: _walkerWarn });
+}
+
+function _findKeyframesRecursive(rootDir) {
+  return findAllMatchingPattern(rootDir, /^keyframe-\d+\.jpg$/, { onWarn: _walkerWarn });
+}
+
+function _collectLocalArtifacts({ configDir, destDir }) {
+  fs.mkdirSync(destDir, { recursive: true });
+
+  const extractionDest = path.join(destDir, 'extraction-result.json');
+  const manifestDest = path.join(destDir, 'screenshots-manifest.json');
+  const artifactsRoot = configDir ? path.join(configDir, 'artifacts') : null;
+
+  if (!fs.existsSync(extractionDest)) {
+    const src = _findArtifactRecursive(artifactsRoot, 'extraction-result.json');
+    if (!src) {
+      throw new Error('extraction-result.json not found in saucectl artifacts directory');
     }
-  });
-
-  if (response.statusCode !== 200) {
-    throw new Error(`Artifact download failed: HTTP ${response.statusCode} for ${filename}`);
+    fs.copyFileSync(src, extractionDest);
   }
 
-  if (!response.buffer || response.buffer.length === 0) {
-    throw new Error(`Artifact empty: ${filename}`);
+  if (!fs.existsSync(manifestDest)) {
+    const src = _findArtifactRecursive(artifactsRoot, 'screenshots-manifest.json');
+    if (src) fs.copyFileSync(src, manifestDest);
   }
 
-  fs.mkdirSync(path.dirname(destPath), { recursive: true });
-  fs.writeFileSync(destPath, response.buffer);
-  return destPath;
+  // Parse + validate at the trust boundary. A schema failure means the spec
+  // wrote a payload this main version can't consume — fail loud with the
+  // exact field path(s) that are wrong, so the user can see whether it's a
+  // build skew, a saucectl change, or a runner regression.
+  let extractionRaw;
+  try {
+    extractionRaw = fs.readFileSync(extractionDest, 'utf8');
+  } catch (err) {
+    throw new Error(`Failed to read extraction-result.json: ${err.message}`);
+  }
+  let report;
+  try {
+    report = JSON.parse(extractionRaw);
+  } catch (err) {
+    throw new Error(`extraction-result.json is not valid JSON: ${err.message}`);
+  }
+  try {
+    validateExtractionResult(report);
+  } catch (err) {
+    if (err instanceof SchemaValidationError) {
+      log.error('[SauceManager] extraction-result schema invalid', { errors: err.errors });
+    }
+    throw err;
+  }
+
+  let manifest = null;
+  if (fs.existsSync(manifestDest)) {
+    let raw;
+    try {
+      raw = JSON.parse(fs.readFileSync(manifestDest, 'utf8'));
+    } catch (err) {
+      throw new Error(`screenshots-manifest.json is not valid JSON: ${err.message}`);
+    }
+    try {
+      validateScreenshotsManifest(raw);
+      manifest = raw;
+    } catch (err) {
+      if (err instanceof SchemaValidationError) {
+        log.error('[SauceManager] screenshots-manifest schema invalid', { errors: err.errors });
+      }
+      throw err;
+    }
+
+    if (manifest.keyframes && manifest.keyframes.length > 0) {
+      const byName = _findKeyframesRecursive(artifactsRoot);
+      for (const kf of manifest.keyframes) {
+        if (!kf.filename) continue;
+        const dest = path.join(destDir, kf.filename);
+        if (fs.existsSync(dest)) continue;
+        const src = byName.get(kf.filename);
+        if (src) {
+          try {
+            fs.copyFileSync(src, dest);
+          } catch (err) {
+            log.warn('[SauceManager] keyframe copy failed', { filename: kf.filename, error: err.message });
+          }
+        } else {
+          log.warn('[SauceManager] keyframe missing in saucectl artifacts', { filename: kf.filename });
+        }
+      }
+    }
+  }
+
+  return { report, manifest };
 }
 
 async function _spawnSaucectl({ binPath, configDir, username, accessKey, jobId }) {
   return new Promise((resolve, reject) => {
-    const { executable, prefixArgs } = sauceBinaryManager.resolveSpawnCommand(binPath);
+    const { executable, prefixArgs, env: extraEnv } = sauceBinaryManager.resolveSpawnCommand(binPath);
     const proc = spawn(executable, [...prefixArgs, 'run', '--config', path.join(configDir, '.sauce', 'config.yml')], {
       env: {
         ...process.env,
+        ...(extraEnv || {}),
         SAUCE_USERNAME: username,
         SAUCE_ACCESS_KEY: accessKey
       },
@@ -842,10 +808,7 @@ async function submitExtraction({ jobId: providedJobId, username, accessKey, reg
   }
 
   const tmpBase = _tmpDir(jobId);
-  const sauceDir = path.join(tmpBase, '.sauce');
-  const testsDir = path.join(tmpBase, 'tests');
-  fs.mkdirSync(sauceDir, { recursive: true });
-  fs.mkdirSync(testsDir, { recursive: true });
+  const { sauceDir } = _stageRunnerProject(tmpBase, { url, filters, maxScreenshots });
 
   const yaml = _generateYaml({
     platform,
@@ -856,9 +819,6 @@ async function submitExtraction({ jobId: providedJobId, username, accessKey, reg
     suiteName: `extract-${jobId.slice(0, 8)}`
   });
   fs.writeFileSync(path.join(sauceDir, 'config.yml'), yaml);
-
-  const testScript = _generateTestScript({ url, filters, maxScreenshots });
-  fs.writeFileSync(path.join(testsDir, 'extract.spec.js'), testScript);
 
   log.info('[SauceManager] submitting extraction', { jobId, url, platform, browserName });
   onProgress?.({ phase: 'submitted', jobId });
@@ -910,67 +870,25 @@ async function submitExtraction({ jobId: providedJobId, username, accessKey, reg
     jobId
   });
 
-  _cleanupTmp(tmpBase);
-
   if (pollResult.status === 'cancelled') {
+    _cleanupTmp(tmpBase);
     throw new JobCancelledError(jobId);
   }
 
   if (pollResult.status !== 'complete') {
+    _cleanupTmp(tmpBase);
     throw new Error(pollResult.error || `Session ended with status: ${pollResult.status}`);
   }
 
   onProgress?.({ phase: 'downloading', jobId, sessionId });
 
   const artifactsDir = _artifactDir(jobId);
-  fs.mkdirSync(artifactsDir, { recursive: true });
-
-  const extractionPath = path.join(artifactsDir, 'extraction-result.json');
-  await _downloadArtifact({
-    username, accessKey, region, sessionId,
-    filename: 'extraction-result.json',
-    destPath: extractionPath
-  });
-
-  let manifestPath = null;
+  let report, manifest;
   try {
-    manifestPath = path.join(artifactsDir, 'screenshots-manifest.json');
-    await _downloadArtifact({
-      username, accessKey, region, sessionId,
-      filename: 'screenshots-manifest.json',
-      destPath: manifestPath
-    });
-  } catch {
-    manifestPath = null;
+    ({ report, manifest } = _collectLocalArtifacts({ configDir: tmpBase, destDir: artifactsDir }));
+  } finally {
+    _cleanupTmp(tmpBase);
   }
-
-  let manifest = null;
-  if (manifestPath) {
-    try {
-      manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-      if (manifest.keyframes && manifest.keyframes.length > 0) {
-        for (const kf of manifest.keyframes) {
-          if (kf.filename) {
-            try {
-              await _downloadArtifact({
-                username, accessKey, region, sessionId,
-                filename: kf.filename,
-                destPath: path.join(artifactsDir, kf.filename)
-              });
-            } catch (err) {
-              log.warn('[SauceManager] keyframe download failed', { filename: kf.filename, error: err.message });
-            }
-          }
-        }
-      }
-    } catch (err) {
-      log.warn('[SauceManager] manifest parse failed', { error: err.message });
-      manifest = null;
-    }
-  }
-
-  const extractionRaw = fs.readFileSync(extractionPath, 'utf8');
-  const report = JSON.parse(extractionRaw);
 
   report.id = crypto.randomUUID();
   report.engine = browserName;
@@ -1010,24 +928,38 @@ function cleanupArtifacts(jobId) {
   }
 }
 
+// Cleans up tmp dirs from previous app sessions. Multi-instance-safe via
+// process-lock.js: live-PID dirs are preserved; dead-PID and aged-no-lock
+// dirs are removed. See isStaleTmpDir for the full decision rule.
 function cleanupOrphanedTmpDirs() {
   const baseDir = path.join(os.tmpdir(), 'ui-comparison-saucelabs');
+  let entries;
   try {
     if (!fs.existsSync(baseDir)) return;
-    const entries = fs.readdirSync(baseDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        const fullPath = path.join(baseDir, entry.name);
-        try {
-          fs.rmSync(fullPath, { recursive: true, force: true });
-          log.info('[SauceManager] cleaned orphaned tmp', { dir: entry.name });
-        } catch {
-          void 0;
-        }
-      }
-    }
+    entries = fs.readdirSync(baseDir, { withFileTypes: true });
   } catch {
-    void 0;
+    return;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const fullPath = path.join(baseDir, entry.name);
+
+    const decision = isStaleTmpDir(fullPath);
+    if (!decision.stale) {
+      log.info('[SauceManager] skipping tmp dir', {
+        dir: entry.name, reason: decision.reason, pid: decision.pid
+      });
+      continue;
+    }
+    log.info('[SauceManager] cleaning tmp dir', {
+      dir: entry.name, reason: decision.reason, pid: decision.pid, ageMs: decision.ageMs
+    });
+    try {
+      fs.rmSync(fullPath, { recursive: true, force: true });
+    } catch (err) {
+      log.warn('[SauceManager] orphan cleanup failed', { dir: entry.name, error: err.message });
+    }
   }
 }
 
@@ -1041,10 +973,7 @@ async function _submitSingleSession({ username, accessKey, region, url, platform
   }
 
   const tmpBase = path.join(_tmpDir(jobId), side);
-  const sauceDir = path.join(tmpBase, '.sauce');
-  const testsDir = path.join(tmpBase, 'tests');
-  fs.mkdirSync(sauceDir, { recursive: true });
-  fs.mkdirSync(testsDir, { recursive: true });
+  const { sauceDir } = _stageRunnerProject(tmpBase, { url, filters, maxScreenshots });
 
   const yaml = _generateYaml({
     platform,
@@ -1055,9 +984,6 @@ async function _submitSingleSession({ username, accessKey, region, url, platform
     suiteName: `${side}-${jobId.slice(0, 8)}`
   });
   fs.writeFileSync(path.join(sauceDir, 'config.yml'), yaml);
-
-  const testScript = _generateTestScript({ url, filters, maxScreenshots });
-  fs.writeFileSync(path.join(testsDir, 'extract.spec.js'), testScript);
 
   let sessionId;
   try {
@@ -1091,64 +1017,28 @@ async function _submitSingleSession({ username, accessKey, region, url, platform
     throw err;
   }
 
-  _cleanupTmp(tmpBase);
-  return { sessionId, pollTimeoutMs };
+  return { sessionId, pollTimeoutMs, configDir: tmpBase };
 }
 
-async function _downloadSessionArtifacts({ username, accessKey, region, sessionId, destDir }) {
-  fs.mkdirSync(destDir, { recursive: true });
+function _readSessionArtifacts({ configDir, destDir }) {
+  return _collectLocalArtifacts({ configDir, destDir });
+}
 
+function _readPersistedArtifacts(destDir) {
   const extractionPath = path.join(destDir, 'extraction-result.json');
   if (!fs.existsSync(extractionPath)) {
-    await _downloadArtifact({
-      username, accessKey, region, sessionId,
-      filename: 'extraction-result.json',
-      destPath: extractionPath
-    });
+    throw new Error(`extraction-result.json not found at ${destDir}`);
   }
-
+  const report = JSON.parse(fs.readFileSync(extractionPath, 'utf8'));
   let manifest = null;
   const manifestPath = path.join(destDir, 'screenshots-manifest.json');
-  if (!fs.existsSync(manifestPath)) {
-    try {
-      await _downloadArtifact({
-        username, accessKey, region, sessionId,
-        filename: 'screenshots-manifest.json',
-        destPath: manifestPath
-      });
-    } catch {
-      log.warn('[SauceManager] manifest download failed, continuing without screenshots');
-    }
-  }
-
   if (fs.existsSync(manifestPath)) {
     try {
       manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-      if (manifest.keyframes && manifest.keyframes.length > 0) {
-        for (const kf of manifest.keyframes) {
-          if (kf.filename) {
-            const kfPath = path.join(destDir, kf.filename);
-            if (!fs.existsSync(kfPath)) {
-              try {
-                await _downloadArtifact({
-                  username, accessKey, region, sessionId,
-                  filename: kf.filename,
-                  destPath: kfPath
-                });
-              } catch (err) {
-                log.warn('[SauceManager] keyframe download failed', { filename: kf.filename, error: err.message });
-              }
-            }
-          }
-        }
-      }
     } catch (err) {
-      log.warn('[SauceManager] manifest parse failed', { error: err.message });
-      manifest = null;
+      log.warn('[SauceManager] persisted manifest parse failed', { error: err.message });
     }
   }
-
-  const report = JSON.parse(fs.readFileSync(extractionPath, 'utf8'));
   return { report, manifest };
 }
 
@@ -1186,13 +1076,16 @@ async function submitComparison({ jobId: providedJobId, username, accessKey, reg
   const sessionArgs = { username, accessKey, region, platform, browserName, screenResolution, tunnelName, filters, jobId };
 
   let baselineSessionId, compareSessionId;
+  let baselineConfigDir, compareConfigDir;
   try {
     const [baselineResult, compareResult] = await Promise.all([
-    _submitSingleSession({ ...sessionArgs, url: baselineUrl, side: 'baseline' }),
-    _submitSingleSession({ ...sessionArgs, url: compareUrl, side: 'compare' })]
+    _submitSingleSession({ ...sessionArgs, url: baselineUrl, side: SIDE.BASELINE }),
+    _submitSingleSession({ ...sessionArgs, url: compareUrl, side: SIDE.COMPARE })]
     );
     baselineSessionId = baselineResult.sessionId;
     compareSessionId = compareResult.sessionId;
+    baselineConfigDir = baselineResult.configDir;
+    compareConfigDir = compareResult.configDir;
   } catch (err) {
     if (err._sauceKnownFailure || err._sauceJobCancelled) throw err;
     throw new Error(`Session submission failed: ${err.message}`);
@@ -1221,19 +1114,25 @@ async function submitComparison({ jobId: providedJobId, username, accessKey, reg
   });
 
   const [baselinePoll, comparePoll] = await Promise.all([
-  wrapPoll(baselineSessionId, 'baseline'),
-  wrapPoll(compareSessionId, 'compare')]
+  wrapPoll(baselineSessionId, SIDE.BASELINE),
+  wrapPoll(compareSessionId, SIDE.COMPARE)]
   );
 
   const baselineStatus = baselinePoll.status;
   const compareStatus = comparePoll.status;
 
-  if (baselineStatus === 'cancelled' || compareStatus === 'cancelled') {
-    _throwIfCancelled(jobId);
+  const baselineArtifactDir = path.join(_artifactDir(jobId), SIDE.BASELINE);
+  const compareArtifactDir = path.join(_artifactDir(jobId), SIDE.COMPARE);
 
+  if (baselineStatus === 'cancelled' || compareStatus === 'cancelled') {
+    _cleanupTmp(baselineConfigDir);
+    _cleanupTmp(compareConfigDir);
+    _throwIfCancelled(jobId);
   }
 
   if (baselineStatus !== 'complete' && compareStatus !== 'complete') {
+    _cleanupTmp(baselineConfigDir);
+    _cleanupTmp(compareConfigDir);
     throw Object.assign(
       new Error(`Both sessions failed: baseline=${baselinePoll.error}, compare=${comparePoll.error}`),
       { baselineStatus, compareStatus, jobId }
@@ -1241,8 +1140,20 @@ async function submitComparison({ jobId: providedJobId, username, accessKey, reg
   }
 
   if (baselineStatus !== 'complete' || compareStatus !== 'complete') {
-    const failedSide = baselineStatus !== 'complete' ? 'baseline' : 'compare';
-    const failedError = failedSide === 'baseline' ? baselinePoll.error : comparePoll.error;
+    const failedSide = baselineStatus !== 'complete' ? SIDE.BASELINE : SIDE.COMPARE;
+    const failedError = failedSide === SIDE.BASELINE ? baselinePoll.error : comparePoll.error;
+
+    const successSide = oppositeSide(failedSide);
+    const successConfigDir = successSide === SIDE.BASELINE ? baselineConfigDir : compareConfigDir;
+    const successArtifactDir = successSide === SIDE.BASELINE ? baselineArtifactDir : compareArtifactDir;
+    try {
+      _readSessionArtifacts({ configDir: successConfigDir, destDir: successArtifactDir });
+    } catch (err) {
+      log.warn('[SauceManager] partial-success artifact read failed', { side: successSide, error: err.message });
+    }
+    _cleanupTmp(baselineConfigDir);
+    _cleanupTmp(compareConfigDir);
+
     throw Object.assign(
       new Error(`${failedSide} session failed: ${failedError}`),
       {
@@ -1259,13 +1170,14 @@ async function submitComparison({ jobId: providedJobId, username, accessKey, reg
 
   onProgress?.({ phase: 'downloading', jobId });
 
-  const baselineArtifactDir = path.join(_artifactDir(jobId), 'baseline');
-  const compareArtifactDir = path.join(_artifactDir(jobId), 'compare');
-
-  const [baselineData, compareData] = await Promise.all([
-  _downloadSessionArtifacts({ username, accessKey, region, sessionId: baselineSessionId, destDir: baselineArtifactDir }),
-  _downloadSessionArtifacts({ username, accessKey, region, sessionId: compareSessionId, destDir: compareArtifactDir })]
-  );
+  let baselineData, compareData;
+  try {
+    baselineData = _readSessionArtifacts({ configDir: baselineConfigDir, destDir: baselineArtifactDir });
+    compareData = _readSessionArtifacts({ configDir: compareConfigDir, destDir: compareArtifactDir });
+  } finally {
+    _cleanupTmp(baselineConfigDir);
+    _cleanupTmp(compareConfigDir);
+  }
 
   const baselineReport = baselineData.report;
   baselineReport.id = crypto.randomUUID();
@@ -1300,12 +1212,12 @@ async function submitComparison({ jobId: providedJobId, username, accessKey, reg
 
 async function retryFailedSession({ username, accessKey, region, failedSide, failedSideUrl, successSideSessionId, platform, browserName, screenResolution, tunnelName, filters, jobId, onProgress }) {
   _registerJob(jobId, { username, accessKey, region });
-  const successSide = failedSide === 'baseline' ? 'compare' : 'baseline';
+  const successSide = oppositeSide(failedSide);
 
   log.info('[SauceManager] retryFailedSession', { jobId, failedSide, failedSideUrl });
   onProgress?.({ phase: 'running', jobId, side: failedSide });
 
-  const { sessionId, pollTimeoutMs } = await _submitSingleSession({
+  const { sessionId, pollTimeoutMs, configDir: retriedConfigDir } = await _submitSingleSession({
     username, accessKey, region,
     url: failedSideUrl,
     platform: platform || 'Windows 11',
@@ -1327,10 +1239,12 @@ async function retryFailedSession({ username, accessKey, region, failedSide, fai
   });
 
   if (pollResult.status === 'cancelled') {
+    _cleanupTmp(retriedConfigDir);
     throw new JobCancelledError(jobId);
   }
 
   if (pollResult.status !== 'complete') {
+    _cleanupTmp(retriedConfigDir);
     throw Object.assign(
       new Error(`Retry session failed: ${pollResult.error || pollResult.status}`),
       { partiallyFailed: true, partiallyFailedSession: failedSide, jobId }
@@ -1342,10 +1256,13 @@ async function retryFailedSession({ username, accessKey, region, failedSide, fai
   const retriedArtifactDir = path.join(_artifactDir(jobId), failedSide);
   const successArtifactDir = path.join(_artifactDir(jobId), successSide);
 
-  const [retriedData, successData] = await Promise.all([
-  _downloadSessionArtifacts({ username, accessKey, region, sessionId, destDir: retriedArtifactDir }),
-  _downloadSessionArtifacts({ username, accessKey, region, sessionId: successSideSessionId, destDir: successArtifactDir })]
-  );
+  let retriedData, successData;
+  try {
+    retriedData = _readSessionArtifacts({ configDir: retriedConfigDir, destDir: retriedArtifactDir });
+    successData = _readPersistedArtifacts(successArtifactDir);
+  } finally {
+    _cleanupTmp(retriedConfigDir);
+  }
 
   const retriedReport = retriedData.report;
   retriedReport.id = crypto.randomUUID();
@@ -1363,23 +1280,23 @@ async function retryFailedSession({ username, accessKey, region, failedSide, fai
 
   onProgress?.({ phase: 'comparing', jobId });
 
-  const baselineReport = failedSide === 'baseline' ? retriedReport : successReport;
-  const compareReport = failedSide === 'compare' ? retriedReport : successReport;
-  const baselineManifest = failedSide === 'baseline' ? retriedData.manifest : successData.manifest;
-  const compareManifest = failedSide === 'compare' ? retriedData.manifest : successData.manifest;
+  const baselineReport = failedSide === SIDE.BASELINE ? retriedReport : successReport;
+  const compareReport = failedSide === SIDE.COMPARE ? retriedReport : successReport;
+  const baselineManifest = failedSide === SIDE.BASELINE ? retriedData.manifest : successData.manifest;
+  const compareManifest = failedSide === SIDE.COMPARE ? retriedData.manifest : successData.manifest;
 
   log.info('[SauceManager] retryFailedSession complete', { jobId, sessionId });
 
   return {
     jobId,
-    baselineSessionId: failedSide === 'baseline' ? sessionId : successSideSessionId,
-    compareSessionId: failedSide === 'compare' ? sessionId : successSideSessionId,
+    baselineSessionId: failedSide === SIDE.BASELINE ? sessionId : successSideSessionId,
+    compareSessionId: failedSide === SIDE.COMPARE ? sessionId : successSideSessionId,
     baselineReport,
     compareReport,
     baselineManifest,
     compareManifest,
-    baselineArtifactDir: path.join(_artifactDir(jobId), 'baseline'),
-    compareArtifactDir: path.join(_artifactDir(jobId), 'compare')
+    baselineArtifactDir: path.join(_artifactDir(jobId), SIDE.BASELINE),
+    compareArtifactDir: path.join(_artifactDir(jobId), SIDE.COMPARE)
   };
 }
 

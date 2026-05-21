@@ -31,7 +31,7 @@ suites:
 artifacts:
   download:
     when: always
-    match: ["extraction-result.json", "screenshots-manifest.json", "keyframe-*.webp"]
+    match: ["extraction-result.json", "screenshots-manifest.json", "keyframe-*.jpg"]
     directory: ./artifacts/
 `;
 }
@@ -107,7 +107,7 @@ describe('YAML generation', () => {
     expect(yaml).toContain('artifacts:');
     expect(yaml).toContain('extraction-result.json');
     expect(yaml).toContain('screenshots-manifest.json');
-    expect(yaml).toContain('keyframe-*.webp');
+    expect(yaml).toContain('keyframe-*.jpg');
   });
 
   it('sets Playwright version to 1.52.0', () => {

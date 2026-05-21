@@ -64,17 +64,31 @@ function _resolveCmdTarget(cmdPath) {
     const content = fs.readFileSync(cmdPath, 'utf8');
     const cmdDir = path.dirname(cmdPath);
 
+    // npm-shim .cmd files reference `%dp0%\node.exe` (the Node interpreter)
+    // *before* they reference the actual JS entry point. We want the script,
+    // not the interpreter, so collect every dp0-relative reference and pick the
+    // one most likely to be a Node script.
+    const candidates = [];
     const dp0Matches = content.matchAll(/%(?:~dp0|dp0)%[\\/]([^"*?<>|%\r\n]+)/gi);
     for (const m of dp0Matches) {
       const relPath = m[1].replace(/"/g, '').trim();
       const resolved = path.resolve(cmdDir, relPath);
-      if (fs.existsSync(resolved)) return resolved;
-      if (!path.extname(resolved) && fs.existsSync(resolved + '.js')) return resolved + '.js';
+      if (fs.existsSync(resolved)) {
+        candidates.push(resolved);
+      } else if (!path.extname(resolved) && fs.existsSync(resolved + '.js')) {
+        candidates.push(resolved + '.js');
+      }
     }
 
-    const nodeMatch = content.match(/node\s+"([^"]+)"/i);
+    const isInterpreter = (p) => /[\\/](?:node|electron|deno|bun)\.exe$/i.test(p);
+    const jsCandidate = candidates.find((c) => c.toLowerCase().endsWith('.js'));
+    if (jsCandidate) return jsCandidate;
+    const scriptCandidate = candidates.find((c) => !isInterpreter(c));
+    if (scriptCandidate) return scriptCandidate;
+
+    const nodeMatch = content.match(/node(?:\.exe)?["']?\s+["']([^"']+)["']/i);
     if (nodeMatch) {
-      const scriptPath = nodeMatch[1];
+      const scriptPath = nodeMatch[1].replace(/^%(?:~dp0|dp0)%[\\/]?/i, '');
       const resolved = path.isAbsolute(scriptPath) ? scriptPath : path.resolve(cmdDir, scriptPath);
       if (fs.existsSync(resolved)) return resolved;
     }
@@ -85,36 +99,83 @@ function _resolveCmdTarget(cmdPath) {
   }
 }
 
+function _findNativeBinaryNearJsTarget(jsTarget) {
+  // The npm `saucectl` package downloads the real binary to <pkgRoot>/bin/saucectl(.exe)
+  // at install time. Walk up from the JS target looking for it.
+  let dir = path.dirname(jsTarget);
+  for (let i = 0; i < 4; i++) {
+    const candidate = path.join(dir, 'bin', PLATFORM_BINARY);
+    try {
+      fs.accessSync(candidate, fs.constants.F_OK);
+      return candidate;
+    } catch {
+      void 0;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
 function _resolveSpawnCommand(binPath) {
   if (process.platform !== 'win32') {
-    return { executable: binPath, prefixArgs: [] };
+    return { executable: binPath, prefixArgs: [], env: null };
   }
 
   const ext = path.extname(binPath).toLowerCase();
 
   if (ext === '.exe') {
-    return { executable: binPath, prefixArgs: [] };
+    return { executable: binPath, prefixArgs: [], env: null };
   }
 
   if (ext === '.cmd' || ext === '.bat') {
     const target = _resolveCmdTarget(binPath);
     if (target) {
-      return { executable: process.execPath, prefixArgs: [target] };
+      // If the .cmd is just a Node-based wrapper around a real native saucectl
+      // binary (the case when installed via `npm install -g saucectl`), prefer
+      // running the native binary directly.
+      const native = _findNativeBinaryNearJsTarget(target);
+      if (native) {
+        return { executable: native, prefixArgs: [], env: null };
+      }
+      return {
+        executable: process.execPath,
+        prefixArgs: [target],
+        env: { ELECTRON_RUN_AS_NODE: '1' }
+      };
     }
     const cmdDir = path.dirname(binPath);
     const fallbacks = [
+      path.join(cmdDir, 'node_modules', 'saucectl', 'bin', PLATFORM_BINARY),
       path.join(cmdDir, 'node_modules', 'saucectl', 'bin', 'saucectl.js'),
       path.join(cmdDir, 'node_modules', 'saucectl', 'index.js'),
+      path.join(cmdDir, '..', 'lib', 'node_modules', 'saucectl', 'bin', PLATFORM_BINARY),
       path.join(cmdDir, '..', 'lib', 'node_modules', 'saucectl', 'bin', 'saucectl.js')
     ];
     for (const fb of fallbacks) {
       if (fs.existsSync(fb)) {
-        return { executable: process.execPath, prefixArgs: [fb] };
+        if (fb.toLowerCase().endsWith('.exe')) {
+          return { executable: fb, prefixArgs: [], env: null };
+        }
+        return {
+          executable: process.execPath,
+          prefixArgs: [fb],
+          env: { ELECTRON_RUN_AS_NODE: '1' }
+        };
       }
     }
   }
 
-  return { executable: binPath, prefixArgs: [] };
+  if (ext === '.ps1') {
+    return {
+      executable: 'powershell.exe',
+      prefixArgs: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', binPath],
+      env: null
+    };
+  }
+
+  return { executable: binPath, prefixArgs: [], env: null };
 }
 
 function _getVersionFromBinary(binPath, timeoutMs) {
@@ -122,11 +183,12 @@ function _getVersionFromBinary(binPath, timeoutMs) {
     let output = '';
     let killed = false;
 
-    const { executable, prefixArgs } = _resolveSpawnCommand(binPath);
+    const { executable, prefixArgs, env: extraEnv } = _resolveSpawnCommand(binPath);
     const proc = spawn(executable, [...prefixArgs, '--version'], {
       timeout: timeoutMs,
-      stdio: ['ignore', 'pipe', 'ignore'],
-      windowsHide: true
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+      env: extraEnv ? { ...process.env, ...extraEnv } : process.env
     });
 
     const timer = setTimeout(() => {
@@ -138,6 +200,7 @@ function _getVersionFromBinary(binPath, timeoutMs) {
     proc.stdout.on('data', (chunk) => {
       output += chunk.toString();
     });
+    proc.stderr.on('data', () => { void 0; });
 
     proc.on('error', () => {
       clearTimeout(timer);

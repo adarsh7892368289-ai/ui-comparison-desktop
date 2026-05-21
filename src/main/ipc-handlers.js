@@ -566,6 +566,15 @@ function _registerBulkHandlers() {
 }
 
 function _registerSauceHandlers() {
+  // Multi-instance-safe cleanup of stale tmp dirs from previous runs. Lock
+  // files (written by _registerJob) ensure we don't touch dirs owned by
+  // another live app instance.
+  try {
+    sauceManager.cleanupOrphanedTmpDirs();
+  } catch (err) {
+    log.warn('[SauceHandler] cleanupOrphanedTmpDirs failed', { error: err?.message });
+  }
+
   ipcMain.handle(CH.SAUCE_VALIDATE_CREDENTIALS, async (event, payload = {}) => {
     const { username, accessKey, region } = payload;
     const timeoutMs = defaultsConfig?.saucelabs?.versionCheckTimeoutMs ?? 5000;
@@ -764,7 +773,7 @@ function _registerSauceHandlers() {
 
 
 
-    if (typeof filename !== 'string' || !/^keyframe-\d+\.webp$/.test(filename)) {
+    if (typeof filename !== 'string' || !/^keyframe-\d+\.jpg$/.test(filename)) {
       return { success: false, error: 'Invalid filename' };
     }
 
@@ -778,7 +787,7 @@ function _registerSauceHandlers() {
     const filePath = path.join(resolvedDir, filename);
     try {
       const buffer = await fs.promises.readFile(filePath);
-      return { success: true, base64: buffer.toString('base64'), mimeType: 'image/webp' };
+      return { success: true, base64: buffer.toString('base64'), mimeType: 'image/jpeg' };
     } catch (err) {
       log.warn('SAUCE_READ_KEYFRAME read failed', { filePath, error: err.message, code: err.code });
       return { success: false, error: err.code === 'ENOENT' ? 'Keyframe file not found' : err.message };

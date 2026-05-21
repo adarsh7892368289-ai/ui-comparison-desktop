@@ -3,7 +3,28 @@
 import { dispatch, getState } from '../state.js';
 import storage, { buildPairKey } from '../../infrastructure/idb-repository.js';
 import { loadAndRenderReports } from './report-manager.js';
+import { loadComparisonFromCacheByPairIds } from './compare-workflow.js';
 import { Comparator } from '@core/comparison/comparator.js';
+import {
+  buildCompareHpidRemap,
+  computeDiffKeyframeIds,
+  buildSauceRectRecords
+} from '@core/saucelabs-bridge/visual-records.js';
+import {
+  SchemaValidationError,
+  validateScreenshotsManifest,
+  validateExtractionResult
+} from '@core/saucelabs-bridge/schemas.js';
+import {
+  PhaseTimer,
+  PersistenceTally,
+  OUTCOME
+} from '@core/saucelabs-bridge/metrics.js';
+import {
+  SIDE,
+  DEFAULT_SAUCE_COMPARISON_MODE,
+  oppositeSide
+} from '@core/saucelabs-bridge/constants.js';
 
 const api = window.electronAPI;
 
@@ -353,9 +374,9 @@ export async function retrySauceJob(jobId) {
   }
 
   const failedSide = storedJob.partiallyFailedSession;
-  const successSide = failedSide === 'baseline' ? 'compare' : 'baseline';
-  const failedSideUrl = failedSide === 'baseline' ? storedJob.baselineUrl : storedJob.compareUrl;
-  const successSideSessionId = successSide === 'baseline' ?
+  const successSide = oppositeSide(failedSide);
+  const failedSideUrl = failedSide === SIDE.BASELINE ? storedJob.baselineUrl : storedJob.compareUrl;
+  const successSideSessionId = successSide === SIDE.BASELINE ?
   storedJob.baselineSessionId :
   storedJob.compareSessionId;
 
@@ -399,6 +420,42 @@ export function resetSauceJob() {
   dispatch('SAUCE_JOB_RESET');
 }
 
+// Hydrates the inline result panel for a previously-completed comparison job.
+// Used when the user clicks Dismiss-and-restore or reopens the SauceLabs tab
+// after the in-memory state was cleared. Returns null if not loadable.
+export async function loadSauceComparisonResult(jobId) {
+  if (!jobId) return null;
+  let storedJob = null;
+  try {
+    storedJob = await storage.loadSauceJob(jobId);
+  } catch (err) {
+    console.error('[sauce-workflow] loadSauceJob failed', err);
+    return null;
+  }
+  if (!storedJob || storedJob.kind !== 'comparison') return null;
+  if (!storedJob.baselineReportId || !storedJob.compareReportId) return null;
+
+  try {
+    const loaded = await loadComparisonFromCacheByPairIds(
+      storedJob.baselineReportId,
+      storedJob.compareReportId,
+      DEFAULT_SAUCE_COMPARISON_MODE
+    );
+    if (!loaded) return null;
+    dispatch('SAUCE_COMPARISON_RESULT', {
+      jobId,
+      comparisonId: storedJob.comparisonId ?? loaded.result.id,
+      result: loaded.result,
+      cachedAt: loaded.cachedAt,
+      fromCache: true
+    });
+    return loaded.result;
+  } catch (err) {
+    console.error('[sauce-workflow] loadSauceComparisonResult failed', err);
+    return null;
+  }
+}
+
 async function _resumeInFlightJobs() {
   if (typeof storage.loadSauceJobsByStatus !== 'function') return;
 
@@ -435,6 +492,15 @@ async function _resumeInFlightJobs() {
 }
 
 async function _handleExtractionComplete(data) {
+  // Validate at the trust boundary before anything is persisted. A schema
+  // failure means saucectl returned a payload our downstream consumers can't
+  // safely handle — fail loud now instead of saving broken IDB rows.
+  if (!_validateBoundary({
+    label: 'extraction',
+    jobId: data.jobId,
+    extractionResult: data.report
+  })) return;
+
   try {
     await _persistReport(data.report);
   } catch (err) {
@@ -446,36 +512,94 @@ async function _handleExtractionComplete(data) {
   });
 }
 
+// Runs schema validation on payloads from the SauceLabs IPC boundary.
+// Returns true if all valid; on failure dispatches SAUCE_JOB_FAILED with an
+// actionable error and persists the failure to the job record. Returns false.
+function _validateBoundary({ label, jobId, extractionResult, manifest, manifestSide }) {
+  const issues = [];
+
+  if (extractionResult !== undefined) {
+    try {
+      validateExtractionResult(extractionResult, `${label} extraction-result.json`);
+    } catch (err) {
+      if (err instanceof SchemaValidationError) issues.push(err);
+      else throw err;
+    }
+  }
+
+  if (manifest !== undefined) {
+    try {
+      validateScreenshotsManifest(manifest, `${manifestSide ?? label} screenshots-manifest.json`);
+    } catch (err) {
+      if (err instanceof SchemaValidationError) issues.push(err);
+      else throw err;
+    }
+  }
+
+  if (issues.length === 0) return true;
+
+  const summary = issues.map((i) => i.message).join('\n\n');
+  console.error('[sauce-workflow] boundary schema validation failed', {
+    jobId,
+    issues: issues.flatMap((i) => i.errors.map((e) => ({ label: i.label, ...e })))
+  });
+  dispatch('SAUCE_JOB_FAILED', {
+    jobId,
+    error: `SauceLabs returned a payload this build cannot consume:\n${summary}`
+  });
+  if (jobId) {
+    void _updateJobStatus(jobId, 'failed', {
+      error: `Schema validation failed: ${issues[0].message.split('\n')[0]}`,
+      completedAt: Date.now()
+    });
+  }
+  return false;
+}
+
 async function _handleComparisonComplete(data) {
   const { baselineReport, compareReport, baselineManifest, compareManifest, jobId } = data;
 
+  // Validate both sides at the boundary. Failure here means the spec's output
+  // shape drifted from what this build can consume — fail loud, save nothing.
+  if (!_validateBoundary({ label: SIDE.BASELINE, jobId, extractionResult: baselineReport, manifest: baselineManifest, manifestSide: SIDE.BASELINE })) return;
+  if (!_validateBoundary({ label: SIDE.COMPARE, jobId, extractionResult: compareReport, manifest: compareManifest, manifestSide: SIDE.COMPARE })) return;
+
+  // Phase-timed observability for the renderer-side pipeline. Each phase
+  // emits a structured electron-log entry tagged with this jobId.
+  const timer = new PhaseTimer({ jobId, logger: console, component: 'sauce-workflow' });
+
   try {
-    await _persistReport(baselineReport);
-    await _persistReport(compareReport);
+    await timer.time('persistReports', async () => {
+      await _persistReport(baselineReport);
+      await _persistReport(compareReport);
+    });
   } catch (err) {
     console.error('[sauce-workflow] report persistence failed', err);
   }
 
   let comparisonId = null;
+  let persistenceResult = null;
   try {
     const comparator = new Comparator();
     const baselineInput = { ...baselineReport, elements: baselineReport.elements ?? [] };
     const compareInput = { ...compareReport, elements: compareReport.elements ?? [] };
 
     let comparisonResult = null;
-    const gen = comparator.compare(baselineInput, compareInput, 'dynamic');
-    for await (const frame of gen) {
-      if (frame.type === 'result') {
-        comparisonResult = frame.payload;
+    await timer.time('compare', async () => {
+      const gen = comparator.compare(baselineInput, compareInput, DEFAULT_SAUCE_COMPARISON_MODE);
+      for await (const frame of gen) {
+        if (frame.type === 'result') {
+          comparisonResult = frame.payload;
+        }
       }
-    }
+    });
 
     if (comparisonResult) {
       comparisonId = crypto.randomUUID();
-      const mode = 'dynamic';
+      const mode = DEFAULT_SAUCE_COMPARISON_MODE;
       const pairKey = buildPairKey(baselineReport.id, compareReport.id, mode);
 
-      const diffKeyframeIds = _computeDiffKeyframeIds(
+      const diffKeyframeIds = computeDiffKeyframeIds(
         comparisonResult.comparison?.results ?? [],
         baselineManifest,
         compareManifest
@@ -494,23 +618,25 @@ async function _handleComparisonComplete(data) {
         timestamp: new Date().toISOString(),
         sauceJobId: jobId,
         visualDiffStatus: null,
-
-
-
         visualSessionId: comparisonId
       };
 
-      await storage.saveComparison(meta, comparisonResult.comparison?.results ?? []);
+      await timer.time('saveComparison', () =>
+        storage.saveComparison(meta, comparisonResult.comparison?.results ?? [])
+      );
 
-      await _persistFilteredVisualData({
-        jobId,
-        comparisonId,
-        baselineManifest,
-        compareManifest,
-        diffKeyframeIds,
-        baselineArtifactDir: data.baselineArtifactDir,
-        compareArtifactDir: data.compareArtifactDir
-      });
+      persistenceResult = await timer.time('persistVisualData', () =>
+        _persistFilteredVisualData({
+          jobId,
+          comparisonId,
+          baselineManifest,
+          compareManifest,
+          diffKeyframeIds,
+          comparisonResults: comparisonResult.comparison?.results ?? [],
+          baselineArtifactDir: data.baselineArtifactDir,
+          compareArtifactDir: data.compareArtifactDir
+        })
+      );
 
       await _updateJobStatus(jobId, 'done', {
         comparisonId,
@@ -518,18 +644,69 @@ async function _handleComparisonComplete(data) {
         compareReportId: compareReport.id,
         baselineArtifactDir: data.baselineArtifactDir,
         compareArtifactDir: data.compareArtifactDir,
-        completedAt: Date.now()
+        completedAt: Date.now(),
+        persistenceIncomplete: !!persistenceResult?.anyFailed,
+        persistenceSummary: persistenceResult?.summary ?? null
       });
     }
   } catch (err) {
     console.error('[sauce-workflow] comparison failed', err);
   }
 
+  // Surface partial persistence failures so the user knows the report may be
+  // missing screenshots or rect data — without flipping the job to "failed"
+  // (the comparison itself succeeded; only ancillary visual records dropped).
+  if (persistenceResult?.anyFailed) {
+    dispatch('SAUCE_PERSISTENCE_INCOMPLETE', {
+      jobId,
+      comparisonId,
+      summary: persistenceResult.summary,
+      failedSteps: persistenceResult.failedSteps,
+      steps: persistenceResult.steps
+    });
+  }
+
+  // Total wallclock for the renderer pipeline — useful for understanding
+  // where time is spent on slow comparisons.
+  console.info('[sauce-workflow] handleComparisonComplete done', {
+    event: 'sauce.comparison.summary',
+    jobId,
+    comparisonId,
+    totalRendererDurationMs: timer.totalDurationMs(),
+    phases: timer.snapshot(),
+    persistenceIncomplete: !!persistenceResult?.anyFailed
+  });
+
   dispatch('SAUCE_JOB_COMPLETE', {
     comparisonId,
     baselineReportId: baselineReport.id,
     compareReportId: compareReport.id
   });
+
+  // Load the freshly-persisted comparison from IDB and surface the rebuilt
+  // result to the SauceLabs panel. We deliberately do NOT dispatch
+  // COMPARISON_COMPLETE — that event is owned by the Compare tab. SauceLabs
+  // owns its own dedicated state slot via SAUCE_COMPARISON_RESULT.
+  if (comparisonId && baselineReport?.id && compareReport?.id) {
+    try {
+      const loaded = await loadComparisonFromCacheByPairIds(
+        baselineReport.id,
+        compareReport.id,
+        DEFAULT_SAUCE_COMPARISON_MODE
+      );
+      if (loaded) {
+        dispatch('SAUCE_COMPARISON_RESULT', {
+          jobId,
+          comparisonId,
+          result: loaded.result,
+          cachedAt: loaded.cachedAt,
+          fromCache: false
+        });
+      }
+    } catch (err) {
+      console.error('[sauce-workflow] loadComparisonFromCacheByPairIds failed', err);
+    }
+  }
 
   try {await loadAndRenderReports();} catch {void 0;}
 }
@@ -550,107 +727,148 @@ function _handlePartialFailure(data) {
   });
 }
 
-function _computeDiffKeyframeIds(comparisonResults, baselineManifest, compareManifest) {
-  const diffHpids = new Set();
-  for (const r of comparisonResults ?? []) {
-    if ((r.totalDifferences ?? 0) > 0) {
-      const hpid = r.baselineElement?.hpid ?? null;
-      if (hpid) diffHpids.add(hpid);
-    }
-  }
-
-  const diffKeyframeIds = new Set();
-  const baseMap = baselineManifest?.elementKeyframeMap ?? {};
-  const compMap = compareManifest?.elementKeyframeMap ?? {};
-
-  for (const hpid of diffHpids) {
-    if (baseMap[hpid]) diffKeyframeIds.add(baseMap[hpid]);
-    if (compMap[hpid]) diffKeyframeIds.add(compMap[hpid]);
-  }
-
-  return diffKeyframeIds;
-}
-
+// Persists keyframes, screenshot blobs, and per-element rect records for a
+// SauceLabs comparison. Schema mirrors the local Compare flow (see
+// playwright-manager.prefixKeyframes / buildElementRectRecords) so that the
+// shared rebuild path (compare-workflow._rebuildVisualDiffsFromSession) and
+// the HTML exporter (html-exporter.loadBlobData) find blobs at the expected
+// keys: `${comparisonId}:${sessionId}_${role}_${kfRawId}`.
+//
+// Returns a finalized PersistenceTally result so the caller can decide
+// whether to surface a "partial failure" event to the user.
 async function _persistFilteredVisualData({
+  jobId,
   comparisonId,
   baselineManifest,
   compareManifest,
   diffKeyframeIds,
+  comparisonResults,
   baselineArtifactDir,
   compareArtifactDir
 }) {
-  if (!diffKeyframeIds || diffKeyframeIds.size === 0) return;
+  const tally = new PersistenceTally({ jobId, logger: console, component: 'sauce-workflow' });
+  if (!diffKeyframeIds || diffKeyframeIds.size === 0) return tally.finalize();
+
+  // Use comparisonId as visualSessionId — matches the meta record above and
+  // is what loadKeyframesBySession / loadElementRectsBySession query against.
+  const sessionId = comparisonId;
+
+  const compareHpidRemap = buildCompareHpidRemap(comparisonResults);
 
   const sides = [
-  { manifest: baselineManifest, role: 'baseline', artifactDir: baselineArtifactDir },
-  { manifest: compareManifest, role: 'compare', artifactDir: compareArtifactDir }];
+  { manifest: baselineManifest, role: SIDE.BASELINE, artifactDir: baselineArtifactDir, hpidRemap: null },
+  { manifest: compareManifest, role: SIDE.COMPARE, artifactDir: compareArtifactDir, hpidRemap: compareHpidRemap }];
 
-
-  for (const { manifest, role, artifactDir } of sides) {
+  for (const { manifest, role, artifactDir, hpidRemap } of sides) {
     const keyframes = manifest?.keyframes ?? [];
+
+    // Build a rawKfId -> prefixedKfId map for this side, restricted to diff keyframes.
+    const prefixById = new Map();
     for (const kf of keyframes) {
       if (!diffKeyframeIds.has(kf.id)) continue;
+      prefixById.set(kf.id, `${sessionId}_${role}_${kf.id}`);
+    }
+    if (prefixById.size === 0) continue;
+
+    // 1. Save keyframe records (one per diff keyframe).
+    for (const kf of keyframes) {
+      const prefixedId = prefixById.get(kf.id);
+      if (!prefixedId) continue;
 
       const keyframeRecord = {
-        id: `${comparisonId}:${kf.id}:${role}`,
-        sessionId: comparisonId,
-        keyframeId: kf.id,
+        id: prefixedId,
+        sessionId,
+        keyframeId: prefixedId,
         scrollY: kf.scrollY ?? 0,
         viewportWidth: kf.viewportWidth ?? 0,
         viewportHeight: kf.viewportHeight ?? 0,
         tabRole: role,
         elementIds: kf.elementIds ?? []
       };
-
       try {
         await storage.saveVisualKeyframe(keyframeRecord);
+        tally.record('saveVisualKeyframe', OUTCOME.OK);
       } catch (err) {
+        tally.record('saveVisualKeyframe', OUTCOME.FAILED, { id: prefixedId, error: err?.message });
         console.error('[sauce-workflow] saveVisualKeyframe failed', err);
       }
+    }
 
-
-
-
-      if (!artifactDir || !kf.filename || typeof api?.sauceReadKeyframe !== 'function') {
-        continue;
+    // 2. Build and persist real per-element rect records using the per-keyframe
+    //    remeasure data emitted by the SauceLabs test script.
+    const rectRecords = buildSauceRectRecords(manifest, sessionId, role, prefixById, hpidRemap);
+    if (rectRecords.length > 0 && typeof storage.saveVisualElementRects === 'function') {
+      try {
+        await storage.saveVisualElementRects(rectRecords);
+        tally.record('saveVisualElementRects', OUTCOME.OK, { count: rectRecords.length });
+      } catch (err) {
+        tally.record('saveVisualElementRects', OUTCOME.FAILED, { count: rectRecords.length, error: err?.message });
+        console.error('[sauce-workflow] saveVisualElementRects failed', err);
       }
+    }
+
+    // 3. Read screenshot bytes from the saucectl artifacts dir and persist
+    //    blobs at the same comparisonId:keyframeId scheme used by local Compare.
+    if (!artifactDir || typeof api?.sauceReadKeyframe !== 'function') {
+      // Track that we skipped blob persistence so the user knows screenshots
+      // won't be in the report (e.g., IPC API not available in this build).
+      for (const kf of keyframes) {
+        if (prefixById.has(kf.id) && kf.filename) {
+          tally.record('saveVisualBlob', OUTCOME.SKIPPED, { reason: 'no-artifact-dir-or-ipc' });
+        }
+      }
+      continue;
+    }
+
+    for (const kf of keyframes) {
+      const prefixedId = prefixById.get(kf.id);
+      if (!prefixedId || !kf.filename) continue;
 
       let res;
       try {
         res = await api.sauceReadKeyframe({ artifactDir, filename: kf.filename });
       } catch (err) {
+        tally.record('sauceReadKeyframe', OUTCOME.FAILED, { filename: kf.filename, error: err?.message });
         console.error('[sauce-workflow] sauceReadKeyframe IPC failed', err);
         continue;
       }
       if (!res?.success || !res.base64) {
+        tally.record('sauceReadKeyframe', OUTCOME.FAILED, { filename: kf.filename, error: res?.error ?? 'no-data' });
         console.warn('[sauce-workflow] keyframe read returned no data', { filename: kf.filename, error: res?.error });
         continue;
       }
+      tally.record('sauceReadKeyframe', OUTCOME.OK);
 
-
-
-      const blobId = `${comparisonId}:${kf.id}_${role}`;
-      const mimeType = res.mimeType || 'image/webp';
+      const blobId = `${comparisonId}:${prefixedId}`;
+      const mimeType = res.mimeType || 'image/jpeg';
 
       try {
         const u8 = _base64ToUint8Array(res.base64);
         const blob = new Blob([u8], { type: mimeType });
         if (typeof storage.saveVisualBlob === 'function') {
           await storage.saveVisualBlob(blobId, blob, comparisonId);
+          tally.record('saveVisualBlob', OUTCOME.OK, { bytes: u8.length });
+        } else {
+          tally.record('saveVisualBlob', OUTCOME.SKIPPED, { reason: 'no-storage-api' });
         }
       } catch (err) {
+        tally.record('saveVisualBlob', OUTCOME.FAILED, { blobId, error: err?.message });
         console.error('[sauce-workflow] saveVisualBlob failed', err);
       }
 
       if (typeof api.registerBlob === 'function') {
         try {
           await api.registerBlob({ blobId, base64: res.base64, mimeType });
+          tally.record('registerBlob', OUTCOME.OK);
         } catch (err) {
+          tally.record('registerBlob', OUTCOME.FAILED, { blobId, error: err?.message });
           console.error('[sauce-workflow] registerBlob failed', err);
         }
       }
     }
   }
+
+  return tally.finalize();
 }
 
 function _base64ToUint8Array(base64) {

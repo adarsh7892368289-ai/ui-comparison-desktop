@@ -250,6 +250,36 @@ async function handleExport() {
   Toast.error(`Unknown format: ${format}`);
 }
 
+// SauceLabs panel uses its own dedicated full-report opener so it always
+// renders the SauceLabs result regardless of what's loaded in Compare/Bulk.
+async function handleSauceFullReport() {
+  const state = getState();
+  const capturedResult = state.sauceComparisonResult?.result ?? null;
+  if (!capturedResult) { Toast.error('No SauceLabs comparison result to export'); return; }
+  return _openFullReport(capturedResult);
+}
+
+async function _openFullReport(capturedResult) {
+  try {
+    const normResult = normalizeComparisonResult(capturedResult);
+    const html = await exportToHTML(normResult);
+    if (html.trim().length < 100) {
+      throw new Error('Generated report is empty or invalid — IDB blob load may have failed');
+    }
+    if (html.length > 50_000_000) {
+      Toast.warning('Report is very large — this may take a moment');
+    }
+    const res = await api.openReport({ htmlContent: html });
+    if (res.success) {
+      Toast.success('Report opened in new window');
+    } else {
+      Toast.error(res.error ?? 'Failed to open report');
+    }
+  } catch (err) {
+    Toast.error(err.message ?? 'Failed to generate report');
+  }
+}
+
 async function handleFullReport() {
   const capturedResult = _getActiveComparison(getState());
   if (!capturedResult) { Toast.error('No comparison result to export'); return; }
@@ -288,6 +318,7 @@ export {
   handleExportAllReports,
   handleExport,
   handleFullReport,
+  handleSauceFullReport,
   getBulkExportFormat,
   setBulkExportFormat,
 };

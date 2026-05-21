@@ -12,6 +12,7 @@ files:
 asar: true
 asarUnpack:
   - dist/extractor-bundle.js
+  - dist/saucelabs-runner/**
   - "**/node_modules/playwright/**"
   - "**/*.node"
 extraResources:
