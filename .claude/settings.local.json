@@ -64,7 +64,20 @@
       "Bash(node --check dist/saucelabs-runner/extract.spec.js)",
       "Bash(awk 'NR==338{p=1} NR==623{p=0; next} !p' src/main/saucelabs-manager.js)",
       "Bash(sed -n '335,345p' src/main/saucelabs-manager.js)",
-      "Bash(node -e \"const s = require\\('./dist/saucelabs-runner/schemas'\\); console.log\\('exports:', Object.keys\\(s\\)\\); s.validateJobConfig\\({ url: 'https://example.com', maxScreenshots: 100, testTimeoutMs: 600000 }\\); console.log\\('OK valid'\\); try { s.validateJobConfig\\({ url: 'not a url', maxScreenshots: -1, testTimeoutMs: 0 }\\); } catch \\(e\\) { console.log\\('OK fail:', e.message.split\\('\\\\n'\\)[0]\\); }\")"
+      "Bash(node -e \"const s = require\\('./dist/saucelabs-runner/schemas'\\); console.log\\('exports:', Object.keys\\(s\\)\\); s.validateJobConfig\\({ url: 'https://example.com', maxScreenshots: 100, testTimeoutMs: 600000 }\\); console.log\\('OK valid'\\); try { s.validateJobConfig\\({ url: 'not a url', maxScreenshots: -1, testTimeoutMs: 0 }\\); } catch \\(e\\) { console.log\\('OK fail:', e.message.split\\('\\\\n'\\)[0]\\); }\")",
+      "WebFetch(domain:vercel.com)",
+      "WebFetch(domain:atlassian.design)",
+      "WebFetch(domain:carbondesignsystem.com)",
+      "Bash(xargs head -50)",
+      "WebFetch(domain:applitools.com)",
+      "WebFetch(domain:www.electronjs.org)",
+      "WebFetch(domain:www.chromatic.com)",
+      "WebFetch(domain:m2.material.io)",
+      "WebFetch(domain:www.w3.org)",
+      "WebFetch(domain:docs.percy.io)",
+      "WebFetch(domain:csstriggers.com)",
+      "Bash(ls -la c:/Projects/ui-comparison-desktop/.claude/ 2>/dev/null; ls -la C:/Users/adarshbm.gowda/.claude/projects/c--Projects-ui-comparison-desktop/ 2>/dev/null | head -30)",
+      "Read(//c/Users/adarshbm.gowda/.claude/projects/c--Projects-ui-comparison-desktop/**)"
     ],
     "additionalDirectories": [
       "c:\\Projects\\ui-comparison-desktop"

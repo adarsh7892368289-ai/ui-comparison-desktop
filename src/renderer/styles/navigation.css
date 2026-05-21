@@ -93,7 +93,7 @@
   transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
 }
 
-#left-panel.left-panel--collapsed .panel-toggle-btn {
+[data-panel="left"][data-collapsed="true"] .panel-toggle-btn {
   width: var(--space-8);
   height: var(--space-8);
   min-width: var(--space-8);
@@ -118,11 +118,11 @@
   transition: transform var(--sidebar-transition-duration) var(--sidebar-transition-easing);
 }
 
-#left-panel:not(.left-panel--collapsed) .panel-toggle-btn svg {
+[data-panel="left"][data-collapsed="false"] .panel-toggle-btn svg {
   transform: rotate(0deg);
 }
 
-#left-panel.left-panel--collapsed .panel-toggle-btn svg {
+[data-panel="left"][data-collapsed="true"] .panel-toggle-btn svg {
   transform: rotate(180deg);
 }
 

@@ -39,7 +39,7 @@
 }
 
 .saucelabs-panel__status--error {
-  color: var(--color-error);
+  color: var(--color-destructive);
 }
 
 .saucelabs-panel__filter-error {
@@ -109,23 +109,23 @@
 }
 
 .sauce-job__badge--submitted {
-  background: var(--color-surface-secondary);
+  background: var(--color-surface-overlay);
   color: var(--color-text-secondary);
 }
 
 .sauce-job__badge--running {
-  background: var(--color-info-bg, rgba(59, 130, 246, 0.1));
-  color: var(--color-info, #3b82f6);
+  background: var(--color-brand-subtle);
+  color: var(--color-brand);
 }
 
 .sauce-job__badge--done {
-  background: var(--color-success-bg, rgba(34, 197, 94, 0.1));
+  background: var(--color-success-subtle);
   color: var(--color-success);
 }
 
 .sauce-job__badge--failed {
-  background: var(--color-error-bg, rgba(239, 68, 68, 0.1));
-  color: var(--color-error);
+  background: var(--color-destructive-subtle);
+  color: var(--color-destructive);
 }
 
 .sauce-job__details {
@@ -150,8 +150,8 @@
   margin-top: var(--space-2);
   padding: var(--space-2);
   border-radius: var(--radius-sm);
-  background: var(--color-error-bg, rgba(239, 68, 68, 0.05));
-  color: var(--color-error);
+  background: var(--color-destructive-subtle);
+  color: var(--color-destructive);
   font-size: var(--text-xs);
 }
 
@@ -159,8 +159,8 @@
   margin-top: var(--space-2);
   padding: var(--space-2);
   border-radius: var(--radius-sm);
-  background: var(--color-warning-bg, rgba(234, 179, 8, 0.08));
-  color: var(--color-warning-fg, var(--color-text-secondary));
+  background: var(--color-warning-subtle);
+  color: var(--color-warning-fg);
   font-size: var(--text-xs);
 }
 

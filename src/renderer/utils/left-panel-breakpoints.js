@@ -10,7 +10,7 @@ function _finitePositive(n) {
 
 export function getLeftPanelRailWidthPx() {
   const panel = document.getElementById('left-panel');
-  if (!panel || panel.classList.contains('left-panel--collapsed')) {
+  if (!panel || panel.dataset.collapsed === 'true') {
     return null;
   }
   const w = panel.getBoundingClientRect().width;
@@ -22,7 +22,7 @@ export function syncLeftPanelRailState() {
   if (!panel) {
     return;
   }
-  if (panel.classList.contains('left-panel--collapsed')) {
+  if (panel.dataset.collapsed === 'true') {
     delete panel.dataset.railState;
     return;
   }

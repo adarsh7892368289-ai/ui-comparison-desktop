@@ -73,7 +73,7 @@ export class AppShell {
       collapsed = localStorage.getItem('sidebar-collapsed') === '1';
     } catch { void 0; }
     this._collapsed = collapsed;
-    panel.classList.toggle('left-panel--collapsed', collapsed);
+    panel.dataset.collapsed = collapsed ? 'true' : 'false';
     if (collapsed) {
       root.style.setProperty('--sidebar-width', `${this._railWidthPx()}px`);
     } else {
@@ -206,7 +206,7 @@ export class AppShell {
     this._clearSidebarTransitionEnd(root);
 
     this._collapsed = !this._collapsed;
-    panel.classList.toggle('left-panel--collapsed', this._collapsed);
+    panel.dataset.collapsed = this._collapsed ? 'true' : 'false';
 
     if (this._collapsed) {
       root.style.setProperty('--sidebar-width', `${this._railWidthPx()}px`);
@@ -312,7 +312,7 @@ export class AppShell {
     handle.addEventListener('mousedown', (e) => {
       e.preventDefault();
       const panel = panelEl();
-      if (!panel || panel.classList.contains('left-panel--collapsed')) { return; }
+      if (!panel || panel.dataset.collapsed === 'true') { return; }
       const startX = e.clientX;
       const startW = parseInt(getComputedStyle(panel).width, 10);
       root.style.setProperty('transition', 'none');
@@ -359,7 +359,7 @@ export class AppShell {
 
     handle.addEventListener('keydown', (e) => {
       const panel = panelEl();
-      if (!panel || panel.classList.contains('left-panel--collapsed')) { return; }
+      if (!panel || panel.dataset.collapsed === 'true') { return; }
       const current = parseInt(getComputedStyle(panel).width, 10);
       const step = e.shiftKey ? 50 : 10;
       if (e.key === 'ArrowRight') { e.preventDefault(); setWidth(current + step); }

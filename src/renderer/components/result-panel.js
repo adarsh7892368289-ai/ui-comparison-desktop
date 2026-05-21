@@ -37,7 +37,7 @@ function shortenUrl(url) {
 
 function getMatchRateColor(pct) {
   if (pct >= 75) {return 'var(--color-success)';}
-  if (pct >= 60) {return 'hsl(25 85% 52%)';}
+  if (pct >= 60) {return 'var(--color-sev-high)';}
   return 'var(--color-destructive)';
 }
 

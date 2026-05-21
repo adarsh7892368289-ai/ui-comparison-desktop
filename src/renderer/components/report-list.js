@@ -197,9 +197,8 @@ export class ReportList {
   _updateDensityClass() {
     const panel = document.getElementById('left-panel');
     if (!panel) return;
-    panel.classList.remove('density-compact', 'density-comfortable');
-    if (this._config.density === 'compact') panel.classList.add('density-compact');
-    if (this._config.density === 'comfortable') panel.classList.add('density-comfortable');
+    const d = this._config.density;
+    panel.dataset.density = (d === 'compact' || d === 'comfortable') ? d : 'default';
   }
 
   _cardHeight() {

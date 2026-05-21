@@ -1,6 +1,21 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('ui-theme');
+        if (!t) {
+          t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)
+            ? 'dark'
+            : 'light';
+        }
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (_) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>UI Comparison</title>
@@ -29,7 +44,7 @@
 
     <div id="system-banner-slot" aria-live="assertive"></div>
 
-    <div id="left-panel" role="complementary" aria-label="Reports" data-rail-state="full">
+    <div id="left-panel" role="complementary" aria-label="Reports" data-panel="left" data-rail-state="full" data-collapsed="false" data-density="default">
       <div class="left-panel__top">
         <button type="button" class="panel-toggle-btn" id="panel-toggle-btn" aria-controls="left-panel" aria-label="Collapse sidebar" aria-expanded="true"></button>
 
@@ -305,7 +320,22 @@
     <div id="status-bar" role="contentinfo" aria-label="Application status">
       <div class="status-left"></div>
       <div class="status-center" aria-live="polite" role="status"></div>
-      <div class="status-right"></div>
+      <div class="status-right">
+        <button type="button" id="theme-toggle" class="theme-toggle"
+                aria-label="Switch to light theme" aria-pressed="false" title="Toggle theme">
+          <svg class="theme-toggle__icon theme-toggle__icon--moon" width="14" height="14"
+               viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+          <svg class="theme-toggle__icon theme-toggle__icon--sun" width="14" height="14"
+               viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+          </svg>
+        </button>
+      </div>
     </div>
 
   </div>

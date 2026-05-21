@@ -8,10 +8,9 @@ import {
   submitComparison,
   cancelSauceJob,
   retrySauceJob,
-  initSauceListeners,
   resetSauceJob,
   loadSauceComparisonResult,
-  detectAndResumeSauceJobs } from
+} from
 '../application/saucelabs-workflow.js';
 import { handleSauceFullReport } from '../application/export-workflow.js';
 import { relativeTime } from '../utils/time.js';
@@ -413,9 +412,6 @@ export function createSauceLabsPanel(hostEl) {
     regionSelect.value = existingCreds.region;
   }
 
-  initSauceListeners();
-  void detectAndResumeSauceJobs();
-
   // When a stored comparison job finishes loading and is in 'done' state but
   // we don't yet have its result in state, hydrate it from IDB.
   let lastHydratedJobId = null;
@@ -427,7 +423,6 @@ export function createSauceLabsPanel(hostEl) {
     lastHydratedJobId = job.jobId;
     void loadSauceComparisonResult(job.jobId);
   }
-
   const unsubscribe = subscribe((state) => {
     renderCredentialStatus(state);
     renderJobStatus(state);

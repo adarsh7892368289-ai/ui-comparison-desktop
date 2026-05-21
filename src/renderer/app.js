@@ -47,6 +47,10 @@ import {
   initBulkListeners,
   detectAndOfferResume } from
 './application/bulk-workflow.js';
+import {
+  initSauceListeners,
+  detectAndResumeSauceJobs } from
+'./application/saucelabs-workflow.js';
 import { createBrowserSelector } from './components/browser-selector.js';
 import { createAppShell } from './components/app-shell.js';
 import { SystemBanner } from './components/system-banner.js';
@@ -85,6 +89,29 @@ if (!api) {
 
 api.setWindowTitle?.('UI Comparison');
 
+function toggleTheme() {
+  const current = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+  const next = current === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  try {
+    localStorage.setItem('ui-theme', next);
+  } catch {
+    void 0;
+  }
+  return next;
+}
+
+function syncThemeToggleButton() {
+  const btn = document.getElementById('theme-toggle');
+  if (!btn) return;
+  const isDark = document.documentElement.dataset.theme !== 'light';
+  btn.setAttribute('aria-pressed', String(!isDark));
+  btn.setAttribute(
+    'aria-label',
+    isDark ? 'Switch to light theme' : 'Switch to dark theme'
+  );
+}
+
 if (typeof api.onAppNotification === 'function') {
   api.onAppNotification((payload) => {
     if (!payload || typeof payload !== 'object') return;
@@ -118,7 +145,7 @@ function initSidebarLayoutObservers() {
   const flush = () => {
     requestAnimationFrame(() => {
       syncLeftPanelRailState();
-      if (!row || !panel || panel.classList.contains('left-panel--collapsed')) {
+      if (!row || !panel || panel.dataset.collapsed === 'true') {
         row?.removeAttribute('data-compact');
         return;
       }
@@ -426,7 +453,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
+  initSauceListeners();
+
   await initializeApp(_statusBar);
+
+  void detectAndResumeSauceJobs();
 
   const _bulkListenersCleanup = initBulkListeners();
   const _bulkPanelHost = document.getElementById('bulk-panel-root');
@@ -521,6 +552,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('panel-toggle-btn')?.
   addEventListener('click', () => _appShell.toggleLeftPanel());
 
+  const themeToggleBtn = document.getElementById('theme-toggle');
+  if (themeToggleBtn) {
+    syncThemeToggleButton();
+    themeToggleBtn.addEventListener('click', () => {
+      toggleTheme();
+      syncThemeToggleButton();
+    });
+    attachTooltip(themeToggleBtn, () => themeToggleBtn.getAttribute('aria-label') || '');
+  }
+
   _appShell.activateSection('extract');
 
   document.getElementById('url-input')?.addEventListener('keydown', (e) => {
@@ -546,7 +587,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         _appShell &&
         panel &&
         panel.contains(document.activeElement) &&
-        !panel.classList.contains('left-panel--collapsed'))
+        panel.dataset.collapsed !== 'true')
         {
           e.preventDefault();
           e.stopPropagation();
