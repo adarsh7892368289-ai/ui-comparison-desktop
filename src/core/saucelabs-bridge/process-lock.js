@@ -1,15 +1,5 @@
 'use strict';
 
-// Cross-instance lock files for SauceLabs tmp dirs.
-//
-// Each in-flight job writes a small JSON lock file at the root of its tmp
-// dir containing { pid, startedAt }. cleanupOrphanedTmpDirs() reads the lock
-// before deleting; if the PID is still alive AND it's not us, we leave the
-// dir alone. This keeps two app instances from racing each other's state
-// during simultaneous startup.
-//
-// Pure helpers — accept fs/process injection for testability. The default
-// closure uses the real `fs` and `process`.
 
 const fsDefault = require('fs');
 const path = require('path');
@@ -19,11 +9,9 @@ const LOCK_FILE_NAME = '.sauce-job.lock';
 function _isProcessAliveDefault(pid) {
   if (typeof pid !== 'number' || pid <= 0) return false;
   try {
-    // kill(pid, 0) checks existence without sending a signal.
     process.kill(pid, 0);
     return true;
   } catch (err) {
-    // ESRCH = no such process; EPERM = exists but unsignalable (still alive).
     return err.code === 'EPERM';
   }
 }
@@ -71,11 +59,6 @@ function isProcessAlive(pid, opts = {}) {
   return checker(pid);
 }
 
-// Decision rule for cleanup. Returns true if the dir is safe to delete.
-//   - If the lock points to a live PID that isn't us, NOT safe.
-//   - If the lock points to a dead PID OR our own PID (previous run), safe.
-//   - If no lock and dir mtime is older than staleThresholdMs, safe.
-//   - If no lock and dir is recent, NOT safe (might be mid-write by another instance).
 function isStaleTmpDir(dir, opts = {}) {
   const fs = opts.fs ?? fsDefault;
   const ourPid = opts.ourPid ?? process.pid;

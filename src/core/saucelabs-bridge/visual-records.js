@@ -1,23 +1,6 @@
 'use strict';
 
-// Pure data transforms that bridge SauceLabs runner output to the IDB record
-// shape the local Compare flow consumes. Kept dependency-free so they can be
-// unit-tested in isolation and called from either main or renderer contexts.
-//
-// All inputs/outputs are plain JS objects:
-//   - manifest: shape emitted by src/saucelabs-runner/extract.spec.js as
-//     screenshots-manifest.json (keyframes, elementKeyframeMap, documentYById,
-//     keyframeMeasurements, etc.).
-//   - rect record: shape consumed by playwright-manager.buildElementRectRecords
-//     and src/renderer/application/compare-workflow._rebuildVisualDiffsFromSession.
 
-// Builds the compareHpid → baselineHpid translation map from comparator output.
-// Used to re-key compare-side rect records under the baseline hpid so the
-// rebuild path pairs both sides for the same logical element.
-//
-// Comparator results are an array of rows; each matched row has both
-// baselineElement.hpid and compareElement.hpid. Unmatched rows (added/removed
-// elements) have only one side and don't appear in the remap.
 function buildCompareHpidRemap(comparisonResults) {
   const remap = new Map();
   for (const row of comparisonResults ?? []) {
@@ -29,10 +12,6 @@ function buildCompareHpidRemap(comparisonResults) {
   return remap;
 }
 
-// Returns the set of keyframe ids (rawKfId, e.g. "kf_0") that contain at
-// least one element with a non-zero comparison diff. Used to limit visual
-// persistence to "interesting" keyframes (per Scenario C filter). Considers
-// both manifests since a diff'd element may live on either side.
 function computeDiffKeyframeIds(comparisonResults, baselineManifest, compareManifest) {
   const diffHpids = new Set();
   for (const row of comparisonResults ?? []) {
@@ -54,19 +33,6 @@ function computeDiffKeyframeIds(comparisonResults, baselineManifest, compareMani
   return diffKeyframeIds;
 }
 
-// Builds element-level rect records from saucectl's enriched manifest.
-// Mirrors playwright-manager.buildManifestFromRemeasured + buildElementRectRecords
-// so the HTML exporter and visual-diff overlays receive the same record shape
-// the local Compare flow produces.
-//
-// Parameters:
-//   manifest:    screenshots-manifest.json contents (per side)
-//   sessionId:   comparisonId — used as visualSessionId for IDB indexing
-//   role:        'baseline' | 'compare'
-//   prefixById:  Map<rawKfId, prefixedKfId> ; prefixed = `${sessionId}_${role}_${rawKfId}`
-//   hpidRemap:   optional Map<sourceHpid, unifiedKey>. For compare side, this
-//                translates each compare-page hpid to the matched baseline hpid;
-//                pass null on baseline side.
 function buildSauceRectRecords(manifest, sessionId, role, prefixById, hpidRemap = null) {
   const records = [];
   const elementKeyframeMap = manifest?.elementKeyframeMap ?? {};

@@ -6,9 +6,6 @@ import {
   validateExtractionResult
 } from '@core/saucelabs-bridge/schemas.js';
 
-// ---------------------------------------------------------------------------
-// validateJobConfig — main → spec contract.
-// ---------------------------------------------------------------------------
 
 describe('validateJobConfig', () => {
   function valid() {
@@ -90,7 +87,6 @@ describe('validateJobConfig', () => {
   it('reports all errors at once (not just the first)', () => {
     const bad = { url: 42, maxScreenshots: -1, testTimeoutMs: 0 };
     const err = expectThrows(() => validateJobConfig(bad));
-    // All three should be reported.
     expect(err.errors.length).toBeGreaterThanOrEqual(3);
     const paths = err.errors.map((e) => e.path);
     expect(paths).toContain('$.url');
@@ -99,9 +95,57 @@ describe('validateJobConfig', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// validateScreenshotsManifest — spec → renderer contract.
-// ---------------------------------------------------------------------------
+
+describe('validateJobConfig — device (mobile emulation)', () => {
+  function valid() {
+    return {
+      url: 'https://example.com',
+      filters: null,
+      maxScreenshots: 200,
+      testTimeoutMs: 600_000
+    };
+  }
+
+  it('accepts device: null', () => {
+    expect(() => validateJobConfig({ ...valid(), device: null })).not.toThrow();
+  });
+
+  it('accepts device: undefined / absent (back-compat with desktop-only jobs)', () => {
+    expect(() => validateJobConfig(valid())).not.toThrow();
+  });
+
+  it('accepts a valid device object', () => {
+    expect(() => validateJobConfig({ ...valid(), device: { name: 'iPhone 13' } })).not.toThrow();
+  });
+
+  it('rejects device without a name', () => {
+    let caught;
+    try { validateJobConfig({ ...valid(), device: {} }); } catch (e) { caught = e; }
+    expect(caught).toBeInstanceOf(SchemaValidationError);
+    expect(caught.errors.some((e) => e.path === '$.device.name')).toBe(true);
+  });
+
+  it('rejects device with empty / whitespace name', () => {
+    let caught;
+    try { validateJobConfig({ ...valid(), device: { name: '   ' } }); } catch (e) { caught = e; }
+    expect(caught).toBeInstanceOf(SchemaValidationError);
+    expect(caught.errors.some((e) => /name/.test(e.path))).toBe(true);
+  });
+
+  it('rejects device with non-string name', () => {
+    let caught;
+    try { validateJobConfig({ ...valid(), device: { name: 123 } }); } catch (e) { caught = e; }
+    expect(caught).toBeInstanceOf(SchemaValidationError);
+  });
+
+  it('rejects non-object device (e.g., a string)', () => {
+    let caught;
+    try { validateJobConfig({ ...valid(), device: 'iPhone 13' }); } catch (e) { caught = e; }
+    expect(caught).toBeInstanceOf(SchemaValidationError);
+    expect(caught.errors.some((e) => e.path === '$.device')).toBe(true);
+  });
+});
+
 
 describe('validateScreenshotsManifest', () => {
   function fullManifest() {
@@ -191,15 +235,12 @@ describe('validateScreenshotsManifest', () => {
 
   it('reports paths with array indices', () => {
     const m = fullManifest();
-    m.keyframes[0].id = 42; // wrong type
+    m.keyframes[0].id = 42;
     const err = expectThrows(() => validateScreenshotsManifest(m));
     expect(err.errors.some((e) => e.path === '$.keyframes[0].id')).toBe(true);
   });
 });
 
-// ---------------------------------------------------------------------------
-// validateExtractionResult — defensive top-level shape only.
-// ---------------------------------------------------------------------------
 
 describe('validateExtractionResult', () => {
   it('accepts a minimal valid extraction result', () => {
@@ -227,9 +268,6 @@ describe('validateExtractionResult', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// SchemaValidationError formatting
-// ---------------------------------------------------------------------------
 
 describe('SchemaValidationError', () => {
   it('formats every error path in the message', () => {
@@ -271,7 +309,6 @@ describe('SchemaValidationError', () => {
   });
 });
 
-// Helper.
 function expectThrows(fn) {
   let caught;
   try { fn(); } catch (e) { caught = e; }

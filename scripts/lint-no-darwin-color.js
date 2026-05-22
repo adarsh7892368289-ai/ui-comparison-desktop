@@ -1,15 +1,6 @@
 #!/usr/bin/env node
 'use strict';
 
-/**
- * no-darwin-color: enforces UI_REDESIGN_PLAN.md §0.2.
- *
- * `html.platform-darwin` is layout-only by contract. Any rule that
- * targets it and sets a color/background/border/fill/stroke/shadow
- * property collides on specificity with `[data-theme="*"]` and silently
- * overrides theme tokens depending on stylesheet load order. This
- * linter blocks that class of regression at PR time.
- */
 
 const fs = require('node:fs');
 const path = require('node:path');

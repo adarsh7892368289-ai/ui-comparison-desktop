@@ -27,7 +27,6 @@ function mk(...parts) {
 }
 
 function trySymlink(target, linkPath) {
-  // Symlinks may require admin on Windows; skip the test if it fails.
   try {
     fs.symlinkSync(target, linkPath, 'dir');
     return true;
@@ -102,7 +101,7 @@ describe('walkFiles — symlink safety', () => {
   it('skips symlinked files', () => {
     const real = mk('real.txt');
     const linkPath = path.join(tmpRoot, 'link.txt');
-    if (!trySymlink(real, linkPath)) return; // skip if symlinks unavailable
+    if (!trySymlink(real, linkPath)) return;
 
     const names = [];
     walkFiles(tmpRoot, (full, entry) => names.push(entry.name));
@@ -113,20 +112,16 @@ describe('walkFiles — symlink safety', () => {
   it('does not follow symlinked directories (no infinite loop)', () => {
     mk('dir-a', 'inside-a.txt');
     const linkPath = path.join(tmpRoot, 'dir-a', 'loop');
-    // loop -> .. (parent of dir-a, i.e. tmpRoot itself).
-    if (!trySymlink(tmpRoot, linkPath)) return; // skip on Windows non-admin
+    if (!trySymlink(tmpRoot, linkPath)) return;
 
     let nodeCount = 0;
     walkFiles(tmpRoot, () => {
       if (++nodeCount > 100) throw new Error('walker did not terminate');
     });
-    // Without symlink protection, this would loop forever or hit MAX_WALK_NODES.
-    // We expect it to find inside-a.txt exactly once and not chase the loop.
     expect(nodeCount).toBeLessThan(50);
   });
 
   it('does not follow symlinks to absolute external dirs', () => {
-    // Create a "secret" outside the walk root.
     const externalRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'sauce-walker-external-'));
     try {
       fs.writeFileSync(path.join(externalRoot, 'secret.txt'), '');
@@ -187,7 +182,6 @@ describe('findFirstByName', () => {
 
   it('stops walking after first match (perf)', () => {
     mk('first', 'wanted.json');
-    // Many siblings; STOP_WALK should prevent visiting all of them.
     for (let i = 0; i < 100; i++) mk(`bystander-${i}.txt`);
 
     let visitCount = 0;
@@ -196,9 +190,6 @@ describe('findFirstByName', () => {
 
     visitCount = 0;
     findFirstByName(tmpRoot, 'wanted.json');
-    // We don't know exactly how many nodes were visited (depends on traversal
-    // order), but it should be less than the total — STOP_WALK fired.
-    // This assertion is informational; the contract is "returns first match".
     expect(totalNodes).toBeGreaterThan(0);
   });
 });
@@ -208,7 +199,7 @@ describe('findAllMatchingPattern', () => {
     const a = mk('keyframe-0.jpg');
     const b = mk('sub', 'keyframe-1.jpg');
     mk('not-a-keyframe.jpg');
-    mk('keyframe-0.jpg.tmp'); // doesn't match (tail not .jpg)
+    mk('keyframe-0.jpg.tmp');
 
     const matches = findAllMatchingPattern(tmpRoot, /^keyframe-\d+\.jpg$/);
     expect(matches.size).toBe(2);
@@ -217,8 +208,6 @@ describe('findAllMatchingPattern', () => {
   });
 
   it('keeps the first match for duplicate basenames', () => {
-    // Saucectl actually emits duplicate basenames in different subdirs
-    // (canonical + attached copy). The walker keeps whichever it sees first.
     mk('sub-a', 'keyframe-0.jpg');
     mk('sub-b', 'keyframe-0.jpg');
     const matches = findAllMatchingPattern(tmpRoot, /^keyframe-\d+\.jpg$/);

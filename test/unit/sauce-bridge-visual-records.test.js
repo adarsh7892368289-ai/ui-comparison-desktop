@@ -5,11 +5,6 @@ import {
   buildSauceRectRecords
 } from '@core/saucelabs-bridge/visual-records.js';
 
-// ---------------------------------------------------------------------------
-// buildCompareHpidRemap — translates compareHpid → baselineHpid using the
-// comparator's matched-element rows. Fed into buildSauceRectRecords on the
-// compare side so both sides' rect records key off the baseline hpid.
-// ---------------------------------------------------------------------------
 
 describe('buildCompareHpidRemap', () => {
   it('returns an empty map for empty input', () => {
@@ -22,7 +17,7 @@ describe('buildCompareHpidRemap', () => {
     const rows = [
       { baselineElement: { hpid: 'b.1' }, compareElement: { hpid: 'c.1' } },
       { baselineElement: { hpid: 'b.2' }, compareElement: { hpid: 'c.2' } },
-      { baselineElement: { hpid: 'b.3' }, compareElement: { hpid: 'b.3' } } // identical hpids
+      { baselineElement: { hpid: 'b.3' }, compareElement: { hpid: 'b.3' } }
     ];
     const remap = buildCompareHpidRemap(rows);
     expect(remap.get('c.1')).toBe('b.1');
@@ -33,9 +28,9 @@ describe('buildCompareHpidRemap', () => {
 
   it('skips rows missing either baseline or compare hpid (added/removed elements)', () => {
     const rows = [
-      { baselineElement: { hpid: 'b.1' }, compareElement: null }, // removed
-      { baselineElement: null, compareElement: { hpid: 'c.2' } }, // added
-      { baselineElement: { hpid: 'b.3' }, compareElement: { hpid: 'c.3' } } // matched
+      { baselineElement: { hpid: 'b.1' }, compareElement: null },
+      { baselineElement: null, compareElement: { hpid: 'c.2' } },
+      { baselineElement: { hpid: 'b.3' }, compareElement: { hpid: 'c.3' } }
     ];
     const remap = buildCompareHpidRemap(rows);
     expect(remap.size).toBe(1);
@@ -47,7 +42,7 @@ describe('buildCompareHpidRemap', () => {
       null,
       undefined,
       {},
-      { baselineElement: {} }, // hpid missing
+      { baselineElement: {} },
       { compareElement: {} }
     ];
     expect(() => buildCompareHpidRemap(rows)).not.toThrow();
@@ -55,10 +50,6 @@ describe('buildCompareHpidRemap', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// computeDiffKeyframeIds — Scenario C filter: which keyframe ids contain
-// at least one element that has comparison differences.
-// ---------------------------------------------------------------------------
 
 describe('computeDiffKeyframeIds', () => {
   it('returns empty set when no rows have differences', () => {
@@ -84,8 +75,6 @@ describe('computeDiffKeyframeIds', () => {
   });
 
   it('unions keyframe ids across both manifests', () => {
-    // Same diff hpid lands in different keyframes per side (e.g., element
-    // moved between scroll positions).
     const rows = [{ baselineElement: { hpid: 'h1' }, totalDifferences: 1 }];
     const baselineManifest = { elementKeyframeMap: { h1: 'kf_0' } };
     const compareManifest = { elementKeyframeMap: { h1: 'kf_5' } };
@@ -96,16 +85,10 @@ describe('computeDiffKeyframeIds', () => {
   it('handles missing elements/manifests gracefully', () => {
     expect(computeDiffKeyframeIds(null, null, null).size).toBe(0);
     expect(computeDiffKeyframeIds([], {}, {}).size).toBe(0);
-    expect(computeDiffKeyframeIds([{ totalDifferences: 5 }], {}, {}).size).toBe(0); // no hpid
+    expect(computeDiffKeyframeIds([{ totalDifferences: 5 }], {}, {}).size).toBe(0);
   });
 });
 
-// ---------------------------------------------------------------------------
-// buildSauceRectRecords — the heaviest piece. Mirrors local Compare's
-// buildManifestFromRemeasured + buildElementRectRecords. Tests the schema
-// contract, viewport clipping math, hpid remap, pseudo-element handling,
-// and degraded-input fallbacks.
-// ---------------------------------------------------------------------------
 
 function makeManifest({
   elementKeyframeMap = {},
@@ -168,7 +151,6 @@ describe('buildSauceRectRecords — schema contract', () => {
 
 describe('buildSauceRectRecords — viewport clipping', () => {
   it('clips a rect that extends below the viewport bottom', () => {
-    // Element: y=900, h=300 → bottom=1200, viewport=1080 → clipped height = 180
     const manifest = makeManifest({
       elementKeyframeMap: { 'h.tall': 'kf_0' },
       viewportHeight: 1080,
@@ -186,7 +168,6 @@ describe('buildSauceRectRecords — viewport clipping', () => {
   });
 
   it('clips a rect that extends above the viewport top', () => {
-    // Element: y=-50, h=200 → clippedY=0, clipped height = 200 - 50 = 150
     const manifest = makeManifest({
       elementKeyframeMap: { 'h.up': 'kf_0' },
       viewportHeight: 1080,
@@ -206,11 +187,6 @@ describe('buildSauceRectRecords — viewport clipping', () => {
   });
 
   it('marks a rect entirely below the viewport as misaligned (clipped-below-fold)', () => {
-    // Element: y=2000, h=100 → bottom=2100, viewport=1080 — but actualY > vpH
-    // means clippedBottom = min(2100, 1080) = 1080, clippedY = max(0, 2000) = 2000
-    // → clippedBottom (1080) <= clippedY (2000) is impossible since clippedH = max(1, ...)
-    // The "clipped-below-fold" path triggers when clippedBottom <= 0, which means
-    // viewportY + height < 0. Test that explicitly.
     const manifest = makeManifest({
       elementKeyframeMap: { 'h.above': 'kf_0' },
       viewportHeight: 1080,
@@ -233,7 +209,7 @@ describe('buildSauceRectRecords — element-not-found / degraded', () => {
   it('emits a misaligned record when the element is not in the keyframe measurement', () => {
     const manifest = makeManifest({
       elementKeyframeMap: { 'h.missing': 'kf_0' },
-      keyframeMeasurements: [makeMeasurement('kf_0', [/* no rect for h.missing */])]
+      keyframeMeasurements: [makeMeasurement('kf_0', [])]
     });
     const prefix = new Map([['kf_0', 'p']]);
     const [r] = buildSauceRectRecords(manifest, SESSION, ROLE, prefix);
@@ -259,12 +235,8 @@ describe('buildSauceRectRecords — element-not-found / degraded', () => {
   });
 
   it('falls back to defaults when manifest has no remeasure data at all', () => {
-    // Backwards-compat case: an old SauceLabs job (pre-milestone-1) has only
-    // elementKeyframeMap and no keyframeMeasurements. Should still produce
-    // records (with null rects) so the rebuild doesn't crash.
     const manifest = {
       elementKeyframeMap: { 'h.legacy': 'kf_0' }
-      // no documentYById, no keyframeMeasurements, no actualDPR
     };
     const prefix = new Map([['kf_0', 'p']]);
     const [r] = buildSauceRectRecords(manifest, SESSION, ROLE, prefix);
@@ -274,15 +246,13 @@ describe('buildSauceRectRecords — element-not-found / degraded', () => {
   });
 
   it('skips elements whose keyframe is not in the prefix map (filtered out)', () => {
-    // diffKeyframeIds filtering excluded kf_1 — those elements should not
-    // produce records.
     const manifest = makeManifest({
       elementKeyframeMap: { 'h.in': 'kf_0', 'h.out': 'kf_1' },
       keyframeMeasurements: [
         makeMeasurement('kf_0', [{ id: 'h.in', found: true, inViewport: true, viewportX: 0, viewportY: 0, width: 10, height: 10 }])
       ]
     });
-    const prefix = new Map([['kf_0', 'p0']]); // kf_1 absent
+    const prefix = new Map([['kf_0', 'p0']]);
     const records = buildSauceRectRecords(manifest, SESSION, ROLE, prefix);
     expect(records).toHaveLength(1);
     expect(records[0].elementKey).toBe('h.in');
@@ -292,7 +262,7 @@ describe('buildSauceRectRecords — element-not-found / degraded', () => {
 describe('buildSauceRectRecords — hpid remap (compare side)', () => {
   it('rekeys compare-side records under the matched baseline hpid', () => {
     const manifest = makeManifest({
-      elementKeyframeMap: { 'c.42': 'kf_0' }, // compare-side hpid
+      elementKeyframeMap: { 'c.42': 'kf_0' },
       keyframeMeasurements: [
         makeMeasurement('kf_0', [
           { id: 'c.42', found: true, inViewport: true, viewportX: 5, viewportY: 5, width: 10, height: 10 }
@@ -300,12 +270,10 @@ describe('buildSauceRectRecords — hpid remap (compare side)', () => {
       ]
     });
     const prefix = new Map([['kf_0', `${SESSION}_compare_kf_0`]]);
-    const remap = new Map([['c.42', 'b.42']]); // compare → baseline
+    const remap = new Map([['c.42', 'b.42']]);
     const [r] = buildSauceRectRecords(manifest, SESSION, 'compare', prefix, remap);
     expect(r.elementKey).toBe('b.42');
     expect(r.id).toBe(`${SESSION}_compare_rect_b.42`);
-    // The id is keyed under the unified hpid; the rect data is still pulled
-    // from the source-side measurement (i.e., looked up by 'c.42').
     expect(r.rect).toEqual({ x: 5, y: 5, width: 10, height: 10 });
   });
 

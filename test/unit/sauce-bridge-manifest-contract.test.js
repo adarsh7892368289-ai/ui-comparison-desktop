@@ -6,26 +6,11 @@ import {
   computeDiffKeyframeIds
 } from '@core/saucelabs-bridge/visual-records.js';
 
-// ---------------------------------------------------------------------------
-// Contract test: the SauceLabs runner spec (src/saucelabs-runner/extract.spec.js)
-// emits a screenshots-manifest.json with a specific shape. The renderer's
-// bridge functions (visual-records.js) parse that shape. If either side drifts
-// without the other, screenshots silently disappear from the HTML report.
-//
-// This test asserts that the field names the spec writes are the same field
-// names the bridge reads. We do this by:
-//   1. Statically grepping the spec source for the keys it emits into manifest.
-//   2. Confirming each expected key is present.
-//   3. Constructing a minimal manifest with that exact shape and pushing it
-//      through the bridge — verifying it produces a valid record.
-// ---------------------------------------------------------------------------
 
 const SPEC_PATH = resolve(__dirname, '../../src/saucelabs-runner/extract.spec.js');
 const specSource = readFileSync(SPEC_PATH, 'utf8');
 
 describe('SauceLabs manifest schema contract', () => {
-  // Top-level manifest fields the spec writes inside `const manifest = { ... }`.
-  // These are the exact keys the bridge reads via manifest?.<key>.
   const REQUIRED_TOP_LEVEL_KEYS = [
     'keyframes',
     'elementKeyframeMap',
@@ -38,13 +23,11 @@ describe('SauceLabs manifest schema contract', () => {
 
   for (const key of REQUIRED_TOP_LEVEL_KEYS) {
     it(`spec emits manifest.${key}`, () => {
-      // Match `key:`, `key,`, or `key` at end-of-line (shorthand property syntax).
       const re = new RegExp(`\\b${key}\\b(?:\\s*[,:]|\\s*$)`, 'm');
       expect(re.test(specSource)).toBe(true);
     });
   }
 
-  // Per-keyframe fields the renderer reads off the keyframes[] array.
   const KEYFRAME_FIELDS = ['id', 'scrollY', 'viewportWidth', 'viewportHeight', 'elementIds', 'filename'];
   for (const field of KEYFRAME_FIELDS) {
     it(`spec emits keyframes[].${field}`, () => {
@@ -53,7 +36,6 @@ describe('SauceLabs manifest schema contract', () => {
     });
   }
 
-  // Per-keyframe-measurement fields the renderer reads off keyframeMeasurements[].
   const MEASUREMENT_FIELDS = ['keyframeId', 'actualScrollY', 'rects', 'pseudoStyles'];
   for (const field of MEASUREMENT_FIELDS) {
     it(`spec emits keyframeMeasurements[].${field}`, () => {
@@ -62,13 +44,9 @@ describe('SauceLabs manifest schema contract', () => {
     });
   }
 
-  // Per-rect fields the bridge reads off keyframeMeasurements[].rects[].
-  // The remeasure function constructs these inline; we look for them in the
-  // spec source as object keys produced by inPageRemeasureRects.
   const RECT_FIELDS = ['id', 'found', 'inViewport', 'viewportX', 'viewportY', 'width', 'height', 'misalignReason', 'selectorAmbiguous', 'selectorMatchCount'];
   for (const field of RECT_FIELDS) {
     it(`spec emits keyframeMeasurements[].rects[].${field}`, () => {
-      // Permit either `field:` or `field,` (shorthand property).
       const re = new RegExp(`\\b${field}\\b\\s*[,:]`);
       expect(re.test(specSource)).toBe(true);
     });
@@ -76,9 +54,6 @@ describe('SauceLabs manifest schema contract', () => {
 });
 
 describe('SauceLabs manifest end-to-end roundtrip', () => {
-  // A full "happy path" manifest in the exact shape the spec writes.
-  // Push it through the bridge and verify the output record shape is what
-  // the local Compare flow's _rebuildVisualDiffsFromSession expects.
   function makeRealisticManifest() {
     return {
       keyframes: [
@@ -144,7 +119,6 @@ describe('SauceLabs manifest end-to-end roundtrip', () => {
     const records = buildSauceRectRecords(manifest, sessionId, role, prefixById);
     expect(records).toHaveLength(3);
 
-    // Locate the element-with-pseudo to confirm pseudo wiring.
     const withPseudo = records.find((r) => r.elementKey === '1.2.4');
     expect(withPseudo.pseudoBefore).toMatchObject({
       content: '"›"',
@@ -152,9 +126,6 @@ describe('SauceLabs manifest end-to-end roundtrip', () => {
       pseudoType: 'before'
     });
 
-    // The rebuild path (compare-workflow.js _rebuildVisualDiffsFromSession's
-    // toEntry function) reads exactly these fields. If any is missing, the
-    // rendered diff entries will be malformed.
     for (const r of records) {
       expect(r).toHaveProperty('keyframeId');
       expect(r).toHaveProperty('rect');
@@ -177,9 +148,9 @@ describe('SauceLabs manifest end-to-end roundtrip', () => {
   it('Scenario C filter selects only diff keyframes from a realistic manifest', () => {
     const manifest = makeRealisticManifest();
     const comparisonResults = [
-      { baselineElement: { hpid: '1.2.3' }, totalDifferences: 2 }, // diff in kf_0
-      { baselineElement: { hpid: '1.2.4' }, totalDifferences: 0 }, // unchanged
-      { baselineElement: { hpid: '1.5.1' }, totalDifferences: 5 }  // diff in kf_1
+      { baselineElement: { hpid: '1.2.3' }, totalDifferences: 2 },
+      { baselineElement: { hpid: '1.2.4' }, totalDifferences: 0 },
+      { baselineElement: { hpid: '1.5.1' }, totalDifferences: 5 }
     ];
     const ids = computeDiffKeyframeIds(comparisonResults, manifest, manifest);
     expect([...ids].sort()).toEqual(['kf_0', 'kf_1']);

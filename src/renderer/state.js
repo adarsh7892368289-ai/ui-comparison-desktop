@@ -767,10 +767,6 @@ function reduce(state, type, payload) {
       };
 
     case 'SAUCE_PERSISTENCE_INCOMPLETE':
-      // Partial failure during keyframe / rect / blob persistence. The job
-      // itself completed; we just want the user to know the report may be
-      // missing some visual data. Stored on the existing sauceJob slot as
-      // a non-fatal warning.
       if (!state.sauceJob) return state;
       return {
         ...state,

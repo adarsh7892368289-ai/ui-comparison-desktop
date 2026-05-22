@@ -5,9 +5,6 @@ function fakeLogger() {
   return { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 }
 
-// ---------------------------------------------------------------------------
-// PhaseTimer
-// ---------------------------------------------------------------------------
 
 describe('PhaseTimer', () => {
   it('measures elapsed wallclock and emits a structured log entry on end()', () => {
@@ -74,7 +71,6 @@ describe('PhaseTimer', () => {
   it('totalDurationMs() sums every completed phase', () => {
     const timer = new PhaseTimer({ jobId: 'j5', logger: fakeLogger() });
     timer.start('a');
-    // Force a non-zero duration without sleeping the test.
     timer._completed.push({ phase: 'forced-1', durationMs: 100 });
     timer._completed.push({ phase: 'forced-2', durationMs: 250 });
     expect(timer.totalDurationMs()).toBe(350);
@@ -87,9 +83,6 @@ describe('PhaseTimer', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// PersistenceTally
-// ---------------------------------------------------------------------------
 
 describe('PersistenceTally', () => {
   it('counts ok/skipped/failed per step', () => {
@@ -164,7 +157,7 @@ describe('PersistenceTally', () => {
     }
     const result = tally.finalize();
     expect(result.steps.a.failed).toBe(50);
-    expect(result.steps.a.errors.length).toBe(10); // cap
+    expect(result.steps.a.errors.length).toBe(10);
   });
 
   it('throws on unknown outcome (programmer error)', () => {
@@ -179,9 +172,6 @@ describe('PersistenceTally', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// OUTCOME constants
-// ---------------------------------------------------------------------------
 
 describe('OUTCOME', () => {
   it('exposes the three valid values', () => {

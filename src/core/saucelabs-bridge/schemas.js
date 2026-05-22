@@ -1,21 +1,5 @@
 'use strict';
 
-// Schema validators for the SauceLabs trust boundary.
-//
-// Two formats cross the boundary between the renderer/main process and the
-// SauceLabs VM:
-//   1. job.json — written by main, read by the spec inside the VM.
-//   2. screenshots-manifest.json + extraction-result.json — written by the
-//      spec, read by the renderer after saucectl downloads them.
-//
-// We validate at the boundary so type / shape errors fail loud with
-// actionable messages instead of silently producing broken IDB records that
-// surface hours later as "no screenshots in the report."
-//
-// No external schema-lib dependency: the runtime ships inside the VM where
-// node_modules is constrained, and the validation rules are simple enough
-// to express directly. The validator collects ALL errors before throwing
-// so a single failure surfaces every drift point at once.
 
 class SchemaValidationError extends Error {
   constructor(label, errors) {
@@ -33,8 +17,6 @@ function _typeOf(v) {
   return typeof v;
 }
 
-// Lightweight assertion-collecting validator. Each rule is a function that
-// receives (value, errors, path) and pushes errors when invalid.
 function _check(value, path, rules, errors) {
   for (const rule of rules) {
     rule(value, errors, path);
@@ -46,7 +28,7 @@ const required = (msg = 'is required') => (v, errors, path) => {
 };
 
 const isType = (expected) => (v, errors, path) => {
-  if (v === undefined) return; // skipped; required handles undefined
+  if (v === undefined) return;
   const got = _typeOf(v);
   if (got !== expected) {
     errors.push({ path, message: `expected ${expected}, got ${got}` });
@@ -90,9 +72,6 @@ const recordOf = (valueValidator) => (v, errors, path) => {
   }
 };
 
-// ---------------------------------------------------------------------------
-// job.json (main → spec)
-// ---------------------------------------------------------------------------
 
 function validateJobConfig(raw, label = 'job.json') {
   const errors = [];
@@ -122,6 +101,14 @@ function validateJobConfig(raw, label = 'job.json') {
     if (raw.filters.tag !== undefined) _check(raw.filters.tag, '$.filters.tag', [isType('string')], errors);
   }
 
+  _check(raw.device, '$.device', [isOneOf('object', 'null', 'undefined')], errors);
+  if (raw.device && _typeOf(raw.device) === 'object') {
+    _check(raw.device.name, '$.device.name', [required(), isType('string')], errors);
+    if (typeof raw.device.name === 'string' && raw.device.name.trim() === '') {
+      errors.push({ path: '$.device.name', message: 'must be non-empty' });
+    }
+  }
+
   _check(raw.maxScreenshots, '$.maxScreenshots', [required(), isFiniteNumber()], errors);
   if (typeof raw.maxScreenshots === 'number' && (raw.maxScreenshots <= 0 || !Number.isInteger(raw.maxScreenshots))) {
     errors.push({ path: '$.maxScreenshots', message: 'must be a positive integer' });
@@ -138,9 +125,6 @@ function validateJobConfig(raw, label = 'job.json') {
   return raw;
 }
 
-// ---------------------------------------------------------------------------
-// screenshots-manifest.json (spec → renderer)
-// ---------------------------------------------------------------------------
 
 function _validateKeyframe(kf, errors, path) {
   if (_typeOf(kf) !== 'object') {
@@ -181,14 +165,11 @@ function _validateKeyframeMeasurement(m, errors, path) {
   _check(m.keyframeId, `${path}.keyframeId`, [required(), isType('string')], errors);
   _check(m.actualScrollY, `${path}.actualScrollY`, [required(), isFiniteNumber()], errors);
   _check(m.rects, `${path}.rects`, [required(), arrayOf(_validateRect)], errors);
-  // pseudoStyles is optional but if present must be an array.
   if (m.pseudoStyles !== undefined) {
     _check(m.pseudoStyles, `${path}.pseudoStyles`, [isType('array')], errors);
   }
 }
 
-// Required fields are the contract. Missing fields → throw. Extra fields are
-// allowed (forward-compat: future spec versions may add fields).
 function validateScreenshotsManifest(raw, label = 'screenshots-manifest.json') {
   const errors = [];
 
@@ -201,9 +182,6 @@ function validateScreenshotsManifest(raw, label = 'screenshots-manifest.json') {
   _check(raw.keyframes, '$.keyframes', [required(), arrayOf(_validateKeyframe)], errors);
   _check(raw.elementKeyframeMap, '$.elementKeyframeMap', [required(), recordOf(isType('string'))], errors);
 
-  // The "empty page" path produces a degenerate manifest with no measurements.
-  // That's valid: the renderer falls back gracefully. Otherwise the new fields
-  // (added in milestone #1) must all be present and well-typed.
   const isDegenerate = Array.isArray(raw.keyframes) && raw.keyframes.length === 0;
   if (!isDegenerate) {
     _check(raw.documentYById, '$.documentYById', [required(), recordOf(isFiniteNumber())], errors);
@@ -218,14 +196,6 @@ function validateScreenshotsManifest(raw, label = 'screenshots-manifest.json') {
   return raw;
 }
 
-// ---------------------------------------------------------------------------
-// extraction-result.json (spec → renderer)
-//
-// This file's body is the output of __uiCompare.extractWithConfig — owned by
-// the local extractor bundle, which is the same code that runs locally. We
-// don't re-validate the entire extractor schema here (that's enforced
-// elsewhere); we only assert the top-level shape used by the SauceLabs flow.
-// ---------------------------------------------------------------------------
 
 function validateExtractionResult(raw, label = 'extraction-result.json') {
   const errors = [];
@@ -235,7 +205,6 @@ function validateExtractionResult(raw, label = 'extraction-result.json') {
     ]);
   }
   _check(raw.elements, '$.elements', [arrayOf(isType('object'))], errors);
-  // url/title/totalElements are optional — main fills them in if missing.
   if (errors.length > 0) throw new SchemaValidationError(label, errors);
   return raw;
 }

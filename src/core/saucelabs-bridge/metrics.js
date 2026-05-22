@@ -1,21 +1,5 @@
 'use strict';
 
-// Structured observability helpers for the SauceLabs feature.
-//
-// Two primitives:
-//
-//   1. PhaseTimer — measures elapsed wallclock per named phase. Emits one
-//      structured log entry on `.end()` with shape:
-//         { event: 'sauce.phase', jobId, phase, durationMs, ...extra }
-//      so log lines for a single jobId can be grep'd / aggregated.
-//
-//   2. PersistenceTally — accumulates per-step success/failure counts during
-//      keyframe + rect + blob persistence. At the end, emits a single summary
-//      log entry and returns a result that tells the caller whether to
-//      surface a "partial failure" event to the user.
-//
-// Both are dependency-free and accept an injected `logger` so they work in
-// main (electron-log), renderer (console), or tests (a fake).
 
 class PhaseTimer {
   constructor({ jobId, logger, component = 'sauce.metrics' }) {
@@ -48,8 +32,6 @@ class PhaseTimer {
     return entry;
   }
 
-  // Wraps an async function, timing it under `phase` and emitting on success
-  // OR failure. Re-throws on failure so callers don't change control flow.
   async time(phase, fn, extra = {}) {
     this.start(phase);
     try {
@@ -62,18 +44,15 @@ class PhaseTimer {
     }
   }
 
-  // Snapshot of every phase that completed (in order).
   snapshot() {
     return [...this._completed];
   }
 
-  // Total wallclock spent across all completed phases.
   totalDurationMs() {
     return this._completed.reduce((sum, e) => sum + (e.durationMs ?? 0), 0);
   }
 }
 
-// Outcome categories used by callers to record per-item results.
 const OUTCOME = Object.freeze({
   OK: 'ok',
   SKIPPED: 'skipped',
@@ -85,7 +64,7 @@ class PersistenceTally {
     this.jobId = jobId;
     this.logger = logger;
     this.component = component;
-    this._steps = {}; // step -> { ok, skipped, failed, errors[] }
+    this._steps = {};
   }
 
   _bucket(step) {
@@ -102,7 +81,6 @@ class PersistenceTally {
     else if (outcome === OUTCOME.FAILED) {
       b.failed += 1;
       if (detail) {
-        // Cap error capture to avoid runaway memory.
         if (b.errors.length < 10) b.errors.push(detail);
       }
     } else {
@@ -110,8 +88,6 @@ class PersistenceTally {
     }
   }
 
-  // Final accounting. Returns `{ steps, anyFailed, summary }`. Emits one
-  // summary log entry with the per-step counts.
   finalize() {
     const steps = {};
     let anyFailed = false;

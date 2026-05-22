@@ -4,6 +4,22 @@
   gap: var(--space-4);
 }
 
+.saucelabs-panel select.input {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 28px;
+  background-repeat: no-repeat;
+  background-position: right var(--space-2) center;
+}
+
+[data-theme="dark"] .saucelabs-panel select.input {
+  background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%237E8FA6' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+[data-theme="light"] .saucelabs-panel select.input {
+  background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2364748B' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
 .saucelabs-panel__credentials {
   display: flex;
   flex-direction: column;
@@ -23,7 +39,7 @@
 }
 
 .saucelabs-panel__status {
-  min-height: 20px;
+  min-height: var(--space-5);
   font-size: var(--text-sm);
   display: flex;
   align-items: center;
@@ -43,13 +59,45 @@
 }
 
 .saucelabs-panel__filter-error {
-  font-size: var(--font-size-sm);
-  color: var(--color-error);
+  font-size: var(--text-sm);
+  color: var(--color-destructive);
   margin-top: var(--space-2);
+}
+
+.saucelabs-panel__form-factor {
+  border: none;
+  padding: 0;
+  margin: 0 0 var(--space-3) 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.saucelabs-panel__form-factor > legend {
+  margin-bottom: var(--space-1);
+}
+
+.saucelabs-panel__radio {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-right: var(--space-4);
+  cursor: pointer;
+  font-size: var(--text-sm);
+}
+
+.saucelabs-panel__radio input[type="radio"] {
+  margin: 0;
+  cursor: pointer;
 }
 
 .saucelabs-panel__result-section {
   padding: var(--space-4);
+}
+
+.sauce-result-panel__full-report-btn {
+  width: auto;
+  padding: 0 var(--space-5);
 }
 
 .saucelabs-panel__result-section .sauce-result-panel {
@@ -100,10 +148,10 @@
 .sauce-job__badge {
   display: inline-flex;
   align-items: center;
-  padding: 2px 8px;
+  padding: 2px var(--space-2);
   border-radius: var(--radius-sm);
   font-size: var(--text-xs);
-  font-weight: 500;
+  font-weight: var(--weight-medium);
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }

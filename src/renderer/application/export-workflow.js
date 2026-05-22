@@ -250,8 +250,6 @@ async function handleExport() {
   Toast.error(`Unknown format: ${format}`);
 }
 
-// SauceLabs panel uses its own dedicated full-report opener so it always
-// renders the SauceLabs result regardless of what's loaded in Compare/Bulk.
 async function handleSauceFullReport() {
   const state = getState();
   const capturedResult = state.sauceComparisonResult?.result ?? null;

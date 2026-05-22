@@ -825,8 +825,17 @@ async function handleDeleteAllReports() {
 }
 
 async function initializeApp(statusBar) {
+  console.log('[report-manager] initializeApp START');
   _statusBar = statusBar ?? null;
-  await storage.applyPendingOperations();
+  try {
+    await Promise.race([
+      storage.applyPendingOperations(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('IDB init timeout')), 3000))
+    ]);
+    console.log('[report-manager] applyPendingOperations done');
+  } catch (err) {
+    console.warn('[report-manager] applyPendingOperations failed or timed out, continuing init', err);
+  }
 
   const listContainer = document.getElementById('reports-list');
   if (listContainer) {
@@ -930,7 +939,9 @@ async function initializeApp(statusBar) {
     _syncJobMeta(state);
   });
 
+  console.log('[report-manager] injecting sidebar control icons');
   _injectSidebarControlIcons();
+  console.log('[report-manager] wiring event listeners');
 
   document.getElementById('sort-control-btn')?.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -984,11 +995,13 @@ async function initializeApp(statusBar) {
 
   wireEmptyClearSearchButton();
 
+  console.log('[report-manager] syncing controls');
   _syncSortControl();
   _syncGroupControl();
   _syncDensityCycleButton();
   _syncSearchClearVisibility();
   _wireSidebarTooltips();
+  console.log('[report-manager] controls synced, loading reports');
 
   const baselineSelect = document.getElementById('baseline-report');
   const compareSelect = document.getElementById('compare-report');
@@ -996,6 +1009,7 @@ async function initializeApp(statusBar) {
   if (compareSelect) {wireReportSelect(compareSelect);}
 
   await loadAndRenderReports();
+  console.log('[report-manager] initializeApp END');
 }
 
 export {

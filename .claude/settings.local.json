@@ -77,7 +77,10 @@
       "WebFetch(domain:docs.percy.io)",
       "WebFetch(domain:csstriggers.com)",
       "Bash(ls -la c:/Projects/ui-comparison-desktop/.claude/ 2>/dev/null; ls -la C:/Users/adarshbm.gowda/.claude/projects/c--Projects-ui-comparison-desktop/ 2>/dev/null | head -30)",
-      "Read(//c/Users/adarshbm.gowda/.claude/projects/c--Projects-ui-comparison-desktop/**)"
+      "Read(//c/Users/adarshbm.gowda/.claude/projects/c--Projects-ui-comparison-desktop/**)",
+      "Bash(node --check test/unit/sauce-bridge-constants.test.js)",
+      "Bash(saucectl --help)",
+      "Bash(saucectl playwright *)"
     ],
     "additionalDirectories": [
       "c:\\Projects\\ui-comparison-desktop"

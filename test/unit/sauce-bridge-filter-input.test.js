@@ -60,7 +60,7 @@ describe('collectFilters — id field', () => {
   });
 
   it('rejects ids with invalid characters', () => {
-    expect(collectFilters({ id: 'my id' }).ok).toBe(true); // splits to ['my', 'id'] — both valid
+    expect(collectFilters({ id: 'my id' }).ok).toBe(true);
     expect(collectFilters({ id: 'my id$' }).ok).toBe(false);
     expect(collectFilters({ id: 'a.b' }).ok).toBe(false);
   });
@@ -76,7 +76,7 @@ describe('collectFilters — tag field', () => {
   it('rejects tags that don\'t start with a letter', () => {
     expect(collectFilters({ tag: '1div' }).ok).toBe(false);
     expect(collectFilters({ tag: '-foo' }).ok).toBe(false);
-    expect(collectFilters({ tag: '_foo' }).ok).toBe(false); // tags must start letter, not underscore
+    expect(collectFilters({ tag: '_foo' }).ok).toBe(false);
   });
 
   it('accepts hyphenated custom-element tags', () => {
@@ -98,7 +98,6 @@ describe('collectFilters — combined fields', () => {
   });
 
   it('returns the first encountered error (class > id > tag), short-circuiting', () => {
-    // Order in source: class first, then id, then tag.
     const result = collectFilters({ class: 'bad>token', id: 'also$bad', tag: '1bad' });
     expect(result.ok).toBe(false);
     expect(result.error).toContain('Invalid class name');

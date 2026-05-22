@@ -1,14 +1,11 @@
 'use strict';
 
-const { test } = require('@playwright/test');
+const { test, devices } = require('@playwright/test');
 const fs = require('fs');
 const path = require('path');
 const { groupIntoKeyframes } = require('./keyframe-grouper');
 const { validateJobConfig } = require('./schemas');
 
-// Per-job config and extractor bundle live alongside the spec inside tests/.
-// Co-locating avoids surprises with saucectl's .sauceignore filtering of
-// dotted top-level directories.
 const JOB_CONFIG_PATH = path.join(__dirname, 'job.json');
 const EXTRACTOR_BUNDLE_PATH = path.join(__dirname, 'extractor-bundle.js');
 
@@ -28,9 +25,6 @@ function loadJobConfig() {
   } catch (err) {
     throw new Error(`Failed to load SauceLabs job config from ${JOB_CONFIG_PATH}: ${err.message}`);
   }
-  // Validate before the test runner spins up. A malformed job.json means the
-  // main process and this spec are out of sync (build skew or upgrade race);
-  // failing here surfaces the exact field, not a downstream undefined access.
   validateJobConfig(parsed, JOB_CONFIG_PATH);
   return parsed;
 }
@@ -67,14 +61,11 @@ function buildSelectorFromFilters(filters) {
 }
 
 function writeArtifact(testInfo, name, body) {
-  // sauce-playwright-runner uploads testInfo.outputDir contents as job assets,
-  // which saucectl's artifacts.download.match then surfaces as downloadable files.
   const outPath = path.join(testInfo.outputDir, name);
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   fs.writeFileSync(outPath, body);
 }
 
-// In-page: per-keyframe element measurement after scroll.
 function inPageRemeasureRects(pairs) {
   const actualScrollY = Math.round(window.scrollY);
   const vpH = window.innerHeight;
@@ -135,6 +126,16 @@ const job = loadJobConfig();
 const EXTRACTOR_BUNDLE = loadExtractorBundle();
 
 test.setTimeout(job.testTimeoutMs ?? 600_000);
+
+if (job.device && job.device.name) {
+  const descriptor = devices[job.device.name];
+  if (descriptor) {
+    test.use(descriptor);
+  } else {
+    // eslint-disable-next-line no-console
+    console.warn(`[saucelabs-runner] Unknown Playwright device "${job.device.name}" — running with default desktop context.`);
+  }
+}
 
 test('extract', async ({ page }, testInfo) => {
   await page.goto(job.url, { waitUntil: 'load', timeout: 60_000 });

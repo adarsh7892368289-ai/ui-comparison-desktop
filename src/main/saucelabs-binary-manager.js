@@ -64,10 +64,6 @@ function _resolveCmdTarget(cmdPath) {
     const content = fs.readFileSync(cmdPath, 'utf8');
     const cmdDir = path.dirname(cmdPath);
 
-    // npm-shim .cmd files reference `%dp0%\node.exe` (the Node interpreter)
-    // *before* they reference the actual JS entry point. We want the script,
-    // not the interpreter, so collect every dp0-relative reference and pick the
-    // one most likely to be a Node script.
     const candidates = [];
     const dp0Matches = content.matchAll(/%(?:~dp0|dp0)%[\\/]([^"*?<>|%\r\n]+)/gi);
     for (const m of dp0Matches) {
@@ -100,8 +96,6 @@ function _resolveCmdTarget(cmdPath) {
 }
 
 function _findNativeBinaryNearJsTarget(jsTarget) {
-  // The npm `saucectl` package downloads the real binary to <pkgRoot>/bin/saucectl(.exe)
-  // at install time. Walk up from the JS target looking for it.
   let dir = path.dirname(jsTarget);
   for (let i = 0; i < 4; i++) {
     const candidate = path.join(dir, 'bin', PLATFORM_BINARY);
@@ -132,9 +126,6 @@ function _resolveSpawnCommand(binPath) {
   if (ext === '.cmd' || ext === '.bat') {
     const target = _resolveCmdTarget(binPath);
     if (target) {
-      // If the .cmd is just a Node-based wrapper around a real native saucectl
-      // binary (the case when installed via `npm install -g saucectl`), prefer
-      // running the native binary directly.
       const native = _findNativeBinaryNearJsTarget(target);
       if (native) {
         return { executable: native, prefixArgs: [], env: null };

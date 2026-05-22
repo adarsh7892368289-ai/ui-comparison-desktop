@@ -6,9 +6,9 @@
       try {
         var t = localStorage.getItem('ui-theme');
         if (!t) {
-          t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)
-            ? 'dark'
-            : 'light';
+          var prefersLight = window.matchMedia
+            && window.matchMedia('(prefers-color-scheme: light)').matches;
+          t = prefersLight ? 'light' : 'dark';
         }
         document.documentElement.setAttribute('data-theme', t);
       } catch (_) {
@@ -321,6 +321,7 @@
       <div class="status-left"></div>
       <div class="status-center" aria-live="polite" role="status"></div>
       <div class="status-right">
+        <div class="status-right__hint" aria-live="polite"></div>
         <button type="button" id="theme-toggle" class="theme-toggle"
                 aria-label="Switch to light theme" aria-pressed="false" title="Toggle theme">
           <svg class="theme-toggle__icon theme-toggle__icon--moon" width="14" height="14"

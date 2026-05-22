@@ -105,7 +105,7 @@ export function initSauceListeners() {
   }
 }
 
-export async function submitExtraction({ url, platform, browserName, screenResolution, tunnelName, filters }) {
+export async function submitExtraction({ url, platform, browserName, screenResolution, tunnelName, filters, device }) {
   if (!_creds) {
     dispatch('SAUCE_JOB_FAILED', { error: 'Credentials not available — validate first', url });
     return null;
@@ -127,7 +127,8 @@ export async function submitExtraction({ url, platform, browserName, screenResol
       browserName,
       screenResolution,
       tunnelName: tunnelName || null,
-      filters: filters || null
+      filters: filters || null,
+      device: device || null
     });
   } catch (err) {
     dispatch('SAUCE_JOB_FAILED', { error: err?.message || 'Submission request failed', url, platform, browserName });
@@ -156,6 +157,7 @@ export async function submitExtraction({ url, platform, browserName, screenResol
     region: _creds.region,
     tunnelName: tunnelName || null,
     filters: filters || null,
+    device: device || null,
     baselineSessionId: null,
     compareSessionId: null,
     sessionId: null,
@@ -199,7 +201,7 @@ export async function submitExtraction({ url, platform, browserName, screenResol
   return result.jobId;
 }
 
-export async function submitComparison({ baselineUrl, compareUrl, platform, browserName, screenResolution, tunnelName, filters }) {
+export async function submitComparison({ baselineUrl, compareUrl, platform, browserName, screenResolution, tunnelName, filters, device }) {
   if (!_creds) {
     dispatch('SAUCE_JOB_FAILED', { error: 'Credentials not available — validate first', baselineUrl, compareUrl });
     return null;
@@ -222,7 +224,8 @@ export async function submitComparison({ baselineUrl, compareUrl, platform, brow
       browserName,
       screenResolution,
       tunnelName: tunnelName || null,
-      filters: filters || null
+      filters: filters || null,
+      device: device || null
     });
   } catch (err) {
     dispatch('SAUCE_JOB_FAILED', { error: err?.message || 'Submission request failed', baselineUrl, compareUrl, platform, browserName });
@@ -248,6 +251,7 @@ export async function submitComparison({ baselineUrl, compareUrl, platform, brow
     region: _creds.region,
     tunnelName: tunnelName || null,
     filters: filters || null,
+    device: device || null,
     baselineSessionId: null,
     compareSessionId: null,
     baselineArtifactDir: null,
@@ -401,7 +405,8 @@ export async function retrySauceJob(jobId) {
       browserName: storedJob.browserName,
       screenResolution: storedJob.screenResolution,
       tunnelName: storedJob.tunnelName || null,
-      filters: storedJob.filters ?? null
+      filters: storedJob.filters ?? null,
+      device: storedJob.device ?? null
     });
   } catch (err) {
     dispatch('SAUCE_JOB_FAILED', { error: err?.message || 'Retry request failed', jobId });
@@ -420,9 +425,6 @@ export function resetSauceJob() {
   dispatch('SAUCE_JOB_RESET');
 }
 
-// Hydrates the inline result panel for a previously-completed comparison job.
-// Used when the user clicks Dismiss-and-restore or reopens the SauceLabs tab
-// after the in-memory state was cleared. Returns null if not loadable.
 export async function loadSauceComparisonResult(jobId) {
   if (!jobId) return null;
   let storedJob = null;
@@ -492,9 +494,6 @@ async function _resumeInFlightJobs() {
 }
 
 async function _handleExtractionComplete(data) {
-  // Validate at the trust boundary before anything is persisted. A schema
-  // failure means saucectl returned a payload our downstream consumers can't
-  // safely handle — fail loud now instead of saving broken IDB rows.
   if (!_validateBoundary({
     label: 'extraction',
     jobId: data.jobId,
@@ -512,9 +511,6 @@ async function _handleExtractionComplete(data) {
   });
 }
 
-// Runs schema validation on payloads from the SauceLabs IPC boundary.
-// Returns true if all valid; on failure dispatches SAUCE_JOB_FAILED with an
-// actionable error and persists the failure to the job record. Returns false.
 function _validateBoundary({ label, jobId, extractionResult, manifest, manifestSide }) {
   const issues = [];
 
@@ -559,13 +555,9 @@ function _validateBoundary({ label, jobId, extractionResult, manifest, manifestS
 async function _handleComparisonComplete(data) {
   const { baselineReport, compareReport, baselineManifest, compareManifest, jobId } = data;
 
-  // Validate both sides at the boundary. Failure here means the spec's output
-  // shape drifted from what this build can consume — fail loud, save nothing.
   if (!_validateBoundary({ label: SIDE.BASELINE, jobId, extractionResult: baselineReport, manifest: baselineManifest, manifestSide: SIDE.BASELINE })) return;
   if (!_validateBoundary({ label: SIDE.COMPARE, jobId, extractionResult: compareReport, manifest: compareManifest, manifestSide: SIDE.COMPARE })) return;
 
-  // Phase-timed observability for the renderer-side pipeline. Each phase
-  // emits a structured electron-log entry tagged with this jobId.
   const timer = new PhaseTimer({ jobId, logger: console, component: 'sauce-workflow' });
 
   try {
@@ -653,9 +645,6 @@ async function _handleComparisonComplete(data) {
     console.error('[sauce-workflow] comparison failed', err);
   }
 
-  // Surface partial persistence failures so the user knows the report may be
-  // missing screenshots or rect data — without flipping the job to "failed"
-  // (the comparison itself succeeded; only ancillary visual records dropped).
   if (persistenceResult?.anyFailed) {
     dispatch('SAUCE_PERSISTENCE_INCOMPLETE', {
       jobId,
@@ -666,8 +655,6 @@ async function _handleComparisonComplete(data) {
     });
   }
 
-  // Total wallclock for the renderer pipeline — useful for understanding
-  // where time is spent on slow comparisons.
   console.info('[sauce-workflow] handleComparisonComplete done', {
     event: 'sauce.comparison.summary',
     jobId,
@@ -683,10 +670,6 @@ async function _handleComparisonComplete(data) {
     compareReportId: compareReport.id
   });
 
-  // Load the freshly-persisted comparison from IDB and surface the rebuilt
-  // result to the SauceLabs panel. We deliberately do NOT dispatch
-  // COMPARISON_COMPLETE — that event is owned by the Compare tab. SauceLabs
-  // owns its own dedicated state slot via SAUCE_COMPARISON_RESULT.
   if (comparisonId && baselineReport?.id && compareReport?.id) {
     try {
       const loaded = await loadComparisonFromCacheByPairIds(
@@ -727,15 +710,6 @@ function _handlePartialFailure(data) {
   });
 }
 
-// Persists keyframes, screenshot blobs, and per-element rect records for a
-// SauceLabs comparison. Schema mirrors the local Compare flow (see
-// playwright-manager.prefixKeyframes / buildElementRectRecords) so that the
-// shared rebuild path (compare-workflow._rebuildVisualDiffsFromSession) and
-// the HTML exporter (html-exporter.loadBlobData) find blobs at the expected
-// keys: `${comparisonId}:${sessionId}_${role}_${kfRawId}`.
-//
-// Returns a finalized PersistenceTally result so the caller can decide
-// whether to surface a "partial failure" event to the user.
 async function _persistFilteredVisualData({
   jobId,
   comparisonId,
@@ -749,8 +723,6 @@ async function _persistFilteredVisualData({
   const tally = new PersistenceTally({ jobId, logger: console, component: 'sauce-workflow' });
   if (!diffKeyframeIds || diffKeyframeIds.size === 0) return tally.finalize();
 
-  // Use comparisonId as visualSessionId — matches the meta record above and
-  // is what loadKeyframesBySession / loadElementRectsBySession query against.
   const sessionId = comparisonId;
 
   const compareHpidRemap = buildCompareHpidRemap(comparisonResults);
@@ -762,7 +734,6 @@ async function _persistFilteredVisualData({
   for (const { manifest, role, artifactDir, hpidRemap } of sides) {
     const keyframes = manifest?.keyframes ?? [];
 
-    // Build a rawKfId -> prefixedKfId map for this side, restricted to diff keyframes.
     const prefixById = new Map();
     for (const kf of keyframes) {
       if (!diffKeyframeIds.has(kf.id)) continue;
@@ -770,7 +741,6 @@ async function _persistFilteredVisualData({
     }
     if (prefixById.size === 0) continue;
 
-    // 1. Save keyframe records (one per diff keyframe).
     for (const kf of keyframes) {
       const prefixedId = prefixById.get(kf.id);
       if (!prefixedId) continue;
@@ -794,8 +764,6 @@ async function _persistFilteredVisualData({
       }
     }
 
-    // 2. Build and persist real per-element rect records using the per-keyframe
-    //    remeasure data emitted by the SauceLabs test script.
     const rectRecords = buildSauceRectRecords(manifest, sessionId, role, prefixById, hpidRemap);
     if (rectRecords.length > 0 && typeof storage.saveVisualElementRects === 'function') {
       try {
@@ -807,11 +775,7 @@ async function _persistFilteredVisualData({
       }
     }
 
-    // 3. Read screenshot bytes from the saucectl artifacts dir and persist
-    //    blobs at the same comparisonId:keyframeId scheme used by local Compare.
     if (!artifactDir || typeof api?.sauceReadKeyframe !== 'function') {
-      // Track that we skipped blob persistence so the user knows screenshots
-      // won't be in the report (e.g., IPC API not available in this build).
       for (const kf of keyframes) {
         if (prefixById.has(kf.id) && kf.filename) {
           tally.record('saveVisualBlob', OUTCOME.SKIPPED, { reason: 'no-artifact-dir-or-ipc' });

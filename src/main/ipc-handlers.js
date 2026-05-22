@@ -566,9 +566,6 @@ function _registerBulkHandlers() {
 }
 
 function _registerSauceHandlers() {
-  // Multi-instance-safe cleanup of stale tmp dirs from previous runs. Lock
-  // files (written by _registerJob) ensure we don't touch dirs owned by
-  // another live app instance.
   try {
     sauceManager.cleanupOrphanedTmpDirs();
   } catch (err) {
@@ -602,7 +599,7 @@ function _registerSauceHandlers() {
     const {
       username, accessKey, region,
       url, platform, browserName, screenResolution,
-      tunnelName, filters
+      tunnelName, filters, device
     } = payload;
 
     if (!username || !accessKey || !url) {
@@ -622,6 +619,7 @@ function _registerSauceHandlers() {
       screenResolution: screenResolution || '1920x1080',
       tunnelName: tunnelName || null,
       filters: filters || null,
+      device: device || null,
       onProgress: (progress) => {
         _pushToWindow(CH.SAUCE_JOB_PROGRESS, { jobId, ...progress });
       }
@@ -656,7 +654,7 @@ function _registerSauceHandlers() {
       username, accessKey, region,
       baselineUrl, compareUrl,
       platform, browserName, screenResolution,
-      tunnelName, filters
+      tunnelName, filters, device
     } = payload;
 
     if (!username || !accessKey || !baselineUrl || !compareUrl) {
@@ -677,6 +675,7 @@ function _registerSauceHandlers() {
       screenResolution: screenResolution || '1920x1080',
       tunnelName: tunnelName || null,
       filters: filters || null,
+      device: device || null,
       onProgress: (progress) => {
         _pushToWindow(CH.SAUCE_JOB_PROGRESS, { jobId, ...progress });
       },
@@ -798,7 +797,7 @@ function _registerSauceHandlers() {
     const {
       username, accessKey, region,
       jobId, failedSide, failedSideUrl, successSideSessionId,
-      platform, browserName, screenResolution, tunnelName, filters
+      platform, browserName, screenResolution, tunnelName, filters, device
     } = payload;
 
     if (!username || !accessKey || !jobId || !failedSide || !failedSideUrl || !successSideSessionId) {
@@ -817,6 +816,7 @@ function _registerSauceHandlers() {
       screenResolution: screenResolution || '1920x1080',
       tunnelName: tunnelName || null,
       filters: filters || null,
+      device: device || null,
       jobId,
       onProgress: (progress) => {
         _pushToWindow(CH.SAUCE_JOB_PROGRESS, { jobId, ...progress });

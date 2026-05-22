@@ -15,6 +15,16 @@ import {
 import { handleSauceFullReport } from '../application/export-workflow.js';
 import { relativeTime } from '../utils/time.js';
 import { collectFilters } from '@core/saucelabs-bridge/filter-input.js';
+import {
+  FORM_FACTOR,
+  MOBILE_DEVICES,
+  SAUCE_DEFAULT_VIEWPORT,
+  SAUCE_DEFAULT_PLATFORM_BY_ENGINE,
+  SAUCE_DEFAULT_RESOLUTION_BY_ENGINE,
+  platformsForEngine,
+  resolutionsForEngine,
+  findMobileDevice
+} from '@core/saucelabs-bridge/constants.js';
 
 const REGIONS = [
 { value: 'us-west-1', label: 'US West 1' },
@@ -22,21 +32,11 @@ const REGIONS = [
 { value: 'eu-central-1', label: 'EU Central 1' }];
 
 
-const PLATFORMS = [
-'Windows 10', 'Windows 11',
-'macOS 12', 'macOS 13', 'macOS 14', 'macOS 15'];
-
-
 const BROWSERS = [
 { value: 'chromium', label: 'Chromium' },
-{ value: 'chrome', label: 'Chrome' },
 { value: 'firefox', label: 'Firefox' },
 { value: 'webkit', label: 'WebKit' }];
 
-
-const RESOLUTIONS = [
-'1024x768', '1280x960', '1280x1024', '1440x900',
-'1600x1200', '1680x1050', '1920x1080', '1920x1200'];
 
 
 export function createSauceLabsPanel(hostEl) {
@@ -85,6 +85,18 @@ export function createSauceLabsPanel(hostEl) {
         <input class="input" id="sauce-compare-url" type="url" placeholder="https://compare.example.com" autocomplete="off">
       </div>
 
+      <fieldset class="saucelabs-panel__form-factor">
+        <legend class="label">Device type</legend>
+        <label class="saucelabs-panel__radio">
+          <input type="radio" name="sauce-form-factor" value="desktop" checked>
+          <span>Desktop</span>
+        </label>
+        <label class="saucelabs-panel__radio">
+          <input type="radio" name="sauce-form-factor" value="mobile">
+          <span>Mobile (emulated)</span>
+        </label>
+      </fieldset>
+
       <div class="form-row">
         <div class="form-field form-field--half">
           <label class="label" for="sauce-platform">Platform</label>
@@ -97,9 +109,13 @@ export function createSauceLabsPanel(hostEl) {
       </div>
 
       <div class="form-row">
-        <div class="form-field form-field--half">
+        <div class="form-field form-field--half" id="sauce-resolution-field">
           <label class="label" for="sauce-resolution">Resolution</label>
           <select class="input" id="sauce-resolution"></select>
+        </div>
+        <div class="form-field form-field--half" id="sauce-device-field" hidden>
+          <label class="label" for="sauce-device">Device</label>
+          <select class="input" id="sauce-device"></select>
         </div>
         <div class="form-field form-field--half">
           <label class="label" for="sauce-tunnel">Tunnel (optional)</label>
@@ -154,13 +170,6 @@ export function createSauceLabsPanel(hostEl) {
   }
 
   const platformSelect = panel.querySelector('#sauce-platform');
-  for (const p of PLATFORMS) {
-    const opt = document.createElement('option');
-    opt.value = p;
-    opt.textContent = p;
-    if (p === 'Windows 11') opt.selected = true;
-    platformSelect.appendChild(opt);
-  }
 
   const browserSelect = panel.querySelector('#sauce-browser');
   for (const b of BROWSERS) {
@@ -171,12 +180,172 @@ export function createSauceLabsPanel(hostEl) {
   }
 
   const resolutionSelect = panel.querySelector('#sauce-resolution');
-  for (const r of RESOLUTIONS) {
-    const opt = document.createElement('option');
-    opt.value = r;
-    opt.textContent = r;
-    if (r === '1920x1080') opt.selected = true;
-    resolutionSelect.appendChild(opt);
+  function _repopulateResolutionDropdown(engine, preferredValue) {
+    const allowed = resolutionsForEngine(engine);
+    const previousValue = resolutionSelect.value;
+    while (resolutionSelect.firstChild) resolutionSelect.removeChild(resolutionSelect.firstChild);
+    for (const r of allowed) {
+      const opt = document.createElement('option');
+      opt.value = r;
+      opt.textContent = r;
+      resolutionSelect.appendChild(opt);
+    }
+    const def = SAUCE_DEFAULT_RESOLUTION_BY_ENGINE[engine] ?? allowed[0];
+    if (preferredValue && allowed.includes(preferredValue)) {
+      resolutionSelect.value = preferredValue;
+    } else if (allowed.includes(previousValue)) {
+      resolutionSelect.value = previousValue;
+    } else {
+      resolutionSelect.value = def;
+    }
+  }
+  _repopulateResolutionDropdown(browserSelect.value);
+
+  const deviceSelect = panel.querySelector('#sauce-device');
+  const _devicesByOs = MOBILE_DEVICES.reduce((acc, d) => {
+    if (!acc[d.os]) acc[d.os] = [];
+    acc[d.os].push(d);
+    return acc;
+  }, {});
+  for (const [osName, list] of Object.entries(_devicesByOs)) {
+    const grp = document.createElement('optgroup');
+    grp.label = osName;
+    for (const d of list) {
+      const opt = document.createElement('option');
+      opt.value = d.name;
+      opt.textContent = d.label;
+      grp.appendChild(opt);
+    }
+    deviceSelect.appendChild(grp);
+  }
+
+  const resolutionField = panel.querySelector('#sauce-resolution-field');
+  const deviceField = panel.querySelector('#sauce-device-field');
+  const formFactorRadios = panel.querySelectorAll('input[name="sauce-form-factor"]');
+
+  function _currentFormFactor() {
+    for (const r of formFactorRadios) {
+      if (r.checked) return r.value;
+    }
+    return FORM_FACTOR.DESKTOP;
+  }
+
+  let _userBrowserChoice = null;
+  let _userPlatformChoice = null;
+  let _userResolutionChoice = null;
+
+  function _repopulatePlatformDropdown(allowedPlatforms, preferredValue) {
+    const previousValue = platformSelect.value;
+    while (platformSelect.firstChild) platformSelect.removeChild(platformSelect.firstChild);
+    for (const p of allowedPlatforms) {
+      const opt = document.createElement('option');
+      opt.value = p;
+      opt.textContent = p;
+      platformSelect.appendChild(opt);
+    }
+    if (preferredValue && allowedPlatforms.includes(preferredValue)) {
+      platformSelect.value = preferredValue;
+    } else if (allowedPlatforms.includes(previousValue)) {
+      platformSelect.value = previousValue;
+    } else {
+      platformSelect.value = allowedPlatforms[0];
+    }
+  }
+
+  function _lockBrowserToDevice(deviceMeta) {
+    if (!deviceMeta?.browserEngine) return;
+    if (_userBrowserChoice === null) {
+      _userBrowserChoice = browserSelect.value;
+    }
+    if (_userPlatformChoice === null) {
+      _userPlatformChoice = platformSelect.value;
+    }
+    if (_userResolutionChoice === null) {
+      _userResolutionChoice = resolutionSelect.value;
+    }
+    const engine = deviceMeta.browserEngine;
+    const opt = Array.from(browserSelect.options).find((o) => o.value === engine);
+    if (opt) {
+      browserSelect.value = engine;
+    }
+    browserSelect.disabled = true;
+    browserSelect.title = `Locked to ${engine} for ${deviceMeta.label}`;
+
+    const allowedPlatforms = platformsForEngine(engine);
+    const preferredPlatform = SAUCE_DEFAULT_PLATFORM_BY_ENGINE[engine] ?? allowedPlatforms[0];
+    _repopulatePlatformDropdown(allowedPlatforms, preferredPlatform);
+
+    _repopulateResolutionDropdown(engine, deviceMeta.viewportLabel);
+  }
+
+  function _unlockBrowser() {
+    if (_userBrowserChoice !== null) {
+      browserSelect.value = _userBrowserChoice;
+      _userBrowserChoice = null;
+    }
+    browserSelect.disabled = false;
+    browserSelect.title = '';
+    const engine = browserSelect.value;
+    const allowedPlatforms = platformsForEngine(engine);
+    _repopulatePlatformDropdown(allowedPlatforms, _userPlatformChoice);
+    _userPlatformChoice = null;
+    _repopulateResolutionDropdown(engine, _userResolutionChoice);
+    _userResolutionChoice = null;
+  }
+
+  function _syncFormFactorUI() {
+    const isMobile = _currentFormFactor() === FORM_FACTOR.MOBILE;
+    resolutionField.hidden = isMobile;
+    deviceField.hidden = !isMobile;
+    resolutionSelect.disabled = isMobile;
+    deviceSelect.disabled = !isMobile;
+    if (isMobile) {
+      _lockBrowserToDevice(findMobileDevice(deviceSelect.value));
+    } else {
+      _unlockBrowser();
+    }
+  }
+
+  for (const r of formFactorRadios) {
+    r.addEventListener('change', _syncFormFactorUI);
+  }
+  browserSelect.addEventListener('change', () => {
+    if (_currentFormFactor() !== FORM_FACTOR.MOBILE) {
+      const engine = browserSelect.value;
+      _repopulatePlatformDropdown(
+        platformsForEngine(engine),
+        SAUCE_DEFAULT_PLATFORM_BY_ENGINE[engine]
+      );
+      _repopulateResolutionDropdown(engine);
+    }
+  });
+  deviceSelect.addEventListener('change', () => {
+    if (_currentFormFactor() === FORM_FACTOR.MOBILE) {
+      _lockBrowserToDevice(findMobileDevice(deviceSelect.value));
+    }
+  });
+  {
+    const initialEngine = browserSelect.value;
+    _repopulatePlatformDropdown(
+      platformsForEngine(initialEngine),
+      SAUCE_DEFAULT_PLATFORM_BY_ENGINE[initialEngine]
+    );
+  }
+  _syncFormFactorUI();
+
+  function _collectDeviceSelection() {
+    if (_currentFormFactor() === FORM_FACTOR.MOBILE) {
+      const name = deviceSelect.value;
+      const meta = findMobileDevice(name);
+      return {
+        device: { name },
+        screenResolution: meta?.viewportLabel ?? SAUCE_DEFAULT_VIEWPORT
+      };
+    }
+    return {
+      device: null,
+      screenResolution: resolutionSelect.value
+    };
   }
 
   const usernameInput = panel.querySelector('#sauce-username');
@@ -289,9 +458,6 @@ export function createSauceLabsPanel(hostEl) {
     }
   }
 
-  // Renders the SauceLabs comparison result inline in the SauceLabs tab.
-  // Mirrors the Compare tab's result-panel visual structure but is fully
-  // owned by SauceLabs (no DOM-id collisions, no shared state.comparison).
   function renderSauceResult(state) {
     const sauceResult = state.sauceComparisonResult;
     if (!sauceResult || !sauceResult.result) {
@@ -338,7 +504,6 @@ export function createSauceLabsPanel(hostEl) {
     });
   }
 
-  // Clear the inline error as soon as the user edits any filter input.
   for (const el of [filterClassInput, filterIdInput, filterTagInput]) {
     el.addEventListener('input', () => _showFilterError(null));
   }
@@ -371,14 +536,16 @@ export function createSauceLabsPanel(hostEl) {
 
     compareBtn.disabled = true;
     extractBtn.disabled = true;
+    const { device, screenResolution } = _collectDeviceSelection();
     void submitComparison({
       baselineUrl,
       compareUrl,
       platform: platformSelect.value,
       browserName: browserSelect.value,
-      screenResolution: resolutionSelect.value,
+      screenResolution,
       tunnelName: tunnelInput.value.trim() || null,
-      filters: filterResult.filters
+      filters: filterResult.filters,
+      device
     });
   });
 
@@ -395,13 +562,15 @@ export function createSauceLabsPanel(hostEl) {
 
     compareBtn.disabled = true;
     extractBtn.disabled = true;
+    const { device, screenResolution } = _collectDeviceSelection();
     void submitExtraction({
       url,
       platform: platformSelect.value,
       browserName: browserSelect.value,
-      screenResolution: resolutionSelect.value,
+      screenResolution,
       tunnelName: tunnelInput.value.trim() || null,
-      filters: filterResult.filters
+      filters: filterResult.filters,
+      device
     });
   });
 
@@ -412,8 +581,6 @@ export function createSauceLabsPanel(hostEl) {
     regionSelect.value = existingCreds.region;
   }
 
-  // When a stored comparison job finishes loading and is in 'done' state but
-  // we don't yet have its result in state, hydrate it from IDB.
   let lastHydratedJobId = null;
   function maybeHydrateResult(state) {
     const job = state.sauceJob;
@@ -476,9 +643,6 @@ function _escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// Inline SauceLabs result panel — visually parallels Compare's ResultPanel
-// but is fully self-contained: no DOM-id collisions with the Compare tab,
-// and the Full Report button always opens the SauceLabs comparison.
 function _buildSauceResultPanel(sauceResult) {
   const { result, cachedAt, fromCache } = sauceResult;
   const matching = result.matching ?? {};
@@ -505,14 +669,12 @@ function _buildSauceResultPanel(sauceResult) {
   const root = document.createElement('div');
   root.className = 'result-panel sauce-result-panel';
 
-  // Summary bar with match-rate donut.
   root.appendChild(_buildSauceSummaryBar({
     matching, mode, duration, cachedAt, fromCache,
     baselineUrl: result.baselineUrl ?? '',
     compareUrl: result.compareUrl ?? ''
   }));
 
-  // Coverage section.
   const coverage = document.createElement('section');
   coverage.className = 'result-section coverage-section';
   const coverageTitle = document.createElement('div');
@@ -522,10 +684,6 @@ function _buildSauceResultPanel(sauceResult) {
 
   const stats = document.createElement('div');
   stats.className = 'coverage-stats';
-  stats.style.display = 'grid';
-  stats.style.gridTemplateColumns = 'repeat(auto-fit, minmax(110px, 1fr))';
-  stats.style.gap = 'var(--space-2)';
-  stats.style.marginTop = 'var(--space-2)';
   stats.append(
     _buildStat('Matched', matched),
     _buildStat('Modified', modified),
@@ -536,7 +694,6 @@ function _buildSauceResultPanel(sauceResult) {
   coverage.appendChild(stats);
   root.appendChild(coverage);
 
-  // Severity section (only if any property differences).
   if (totalDifferences > 0) {
     const sevSection = document.createElement('section');
     sevSection.className = 'result-section';
@@ -556,15 +713,12 @@ function _buildSauceResultPanel(sauceResult) {
     root.appendChild(noDiffs);
   }
 
-  // Action bar — own button id (sauce-view-report-btn) so it never collides
-  // with the Compare tab's view-report-btn.
   const actions = document.createElement('div');
   actions.className = 'result-actions';
   const fullReportBtn = document.createElement('button');
   fullReportBtn.type = 'button';
   fullReportBtn.id = 'sauce-view-report-btn';
-  fullReportBtn.className = 'btn-primary';
-  fullReportBtn.style.padding = '0 var(--space-5)';
+  fullReportBtn.className = 'btn-primary sauce-result-panel__full-report-btn';
   fullReportBtn.textContent = 'Full Report';
   fullReportBtn.addEventListener('click', async () => {
     fullReportBtn.disabled = true;
@@ -596,7 +750,7 @@ function _buildSauceSummaryBar({ matching, mode, duration, cachedAt, fromCache, 
   const gap = circ - filled;
 
   const arcColor = pct >= 75 ? 'var(--color-success)'
-    : pct >= 60 ? 'hsl(25 85% 52%)'
+    : pct >= 60 ? 'var(--color-sev-high)'
       : 'var(--color-destructive)';
 
   const svgNS = 'http://www.w3.org/2000/svg';
@@ -686,16 +840,12 @@ function _buildSauceSummaryBar({ matching, mode, duration, cachedAt, fromCache, 
 
 function _buildStat(label, value) {
   const wrap = document.createElement('div');
-  wrap.style.padding = 'var(--space-2) var(--space-3)';
-  wrap.style.background = 'var(--color-surface-raised)';
-  wrap.style.borderRadius = 'var(--radius-md, 6px)';
+  wrap.className = 'coverage-stat';
   const v = document.createElement('div');
-  v.style.fontSize = 'var(--font-size-lg)';
-  v.style.fontWeight = '600';
+  v.className = 'coverage-stat__value';
   v.textContent = String(value);
   const l = document.createElement('div');
-  l.style.fontSize = 'var(--font-size-sm)';
-  l.style.color = 'var(--color-text-muted)';
+  l.className = 'coverage-stat__label';
   l.textContent = label;
   wrap.append(v, l);
   return wrap;

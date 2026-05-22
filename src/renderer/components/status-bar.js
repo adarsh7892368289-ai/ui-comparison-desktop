@@ -6,7 +6,7 @@ export class StatusBar {
   constructor() {
     this._left   = document.querySelector('#status-bar .status-left');
     this._center = document.querySelector('#status-bar .status-center');
-    this._right  = document.querySelector('#status-bar .status-right');
+    this._right  = document.querySelector('#status-bar .status-right__hint');
     this._successTimer = null;
 
     if (this._right) {

@@ -353,6 +353,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     importToolbarBtn.insertAdjacentHTML('afterbegin', iconArrowUp(13));
   }
 
+  console.log('[app] pre-initializeApp: injecting icons');
   insertReportListSkeletonOverlay();
   _statusBar = createStatusBar();
   _statusBar.updatePhase(getState());
@@ -455,7 +456,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   initSauceListeners();
 
+  console.log('[app] calling initializeApp...');
   await initializeApp(_statusBar);
+  console.log('[app] initializeApp completed');
 
   void detectAndResumeSauceJobs();
 
@@ -540,9 +543,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
+  console.log('[app] creating appShell...');
   _appShell = createAppShell();
   initSidebarLayoutObservers();
   wireToolbarDiscoveryTooltips();
+  console.log('[app] appShell created, activating extract');
 
   const panelToggleBtn = document.getElementById('panel-toggle-btn');
   if (panelToggleBtn) {

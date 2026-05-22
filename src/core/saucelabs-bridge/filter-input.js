@@ -1,15 +1,5 @@
 'use strict';
 
-// Validates and normalizes raw filter input from the SauceLabs panel.
-// The result feeds into the generated test script's buildSelectorFromFilters,
-// so any token that produces a syntactically broken CSS selector is rejected
-// here — failing in the renderer is much cheaper than failing inside a
-// SauceLabs VM (which costs a concurrent-session slot and minutes of wallclock).
-//
-// Returns one of:
-//   { ok: true, filters: null }                    — all-empty (no filtering)
-//   { ok: true, filters: { class?, id?, tag? } }   — at least one valid token
-//   { ok: false, error: '<actionable message>' }   — at least one invalid token
 
 const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_-]*$/;
 const TAG_RE = /^[A-Za-z][A-Za-z0-9-]*$/;

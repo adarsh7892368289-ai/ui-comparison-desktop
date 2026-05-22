@@ -20,9 +20,6 @@ afterEach(() => {
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
 });
 
-// ---------------------------------------------------------------------------
-// writeLockFile / readLockFile / removeLockFile — round trip
-// ---------------------------------------------------------------------------
 
 describe('writeLockFile + readLockFile', () => {
   it('writes a JSON lock with our pid+startedAt and reads it back', () => {
@@ -79,9 +76,6 @@ describe('removeLockFile', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// isStaleTmpDir — multi-instance decision logic
-// ---------------------------------------------------------------------------
 
 describe('isStaleTmpDir', () => {
   it('returns NOT stale when the lock points to a live other-instance PID', () => {
@@ -110,8 +104,6 @@ describe('isStaleTmpDir', () => {
     writeLockFile(tmpDir, { pid: 55555 });
     const decision = isStaleTmpDir(tmpDir, {
       ourPid: 55555,
-      // Even if our PID number is "alive", a same-PID lock means a previous
-      // run wrote it (PIDs are reused). We own the cleanup of our own runs.
       isProcessAlive: () => true
     });
     expect(decision.stale).toBe(true);
@@ -119,10 +111,8 @@ describe('isStaleTmpDir', () => {
   });
 
   it('returns stale when no lock and dir mtime is older than threshold', () => {
-    // mtime stamping needs a file inside the dir. Just touch one and lie
-    // about the threshold.
     fs.writeFileSync(path.join(tmpDir, 'marker'), '');
-    const fakeNow = Date.now() + (10 * 60 * 60 * 1000); // 10h in the future
+    const fakeNow = Date.now() + (10 * 60 * 60 * 1000);
     const decision = isStaleTmpDir(tmpDir, {
       now: () => fakeNow,
       staleThresholdMs: 6 * 60 * 60 * 1000
@@ -147,25 +137,18 @@ describe('isStaleTmpDir', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Multi-instance scenario walkthrough — the original bug.
-// ---------------------------------------------------------------------------
 
 describe('multi-instance race scenario', () => {
   it('instance B at startup does NOT delete instance A\'s in-flight dir', () => {
-    // Setup: instance A is mid-job, has written its lock with its PID.
     const instanceAPid = 12345;
     const instanceBPid = 67890;
     writeLockFile(tmpDir, { pid: instanceAPid });
 
-    // Instance B starts up and runs cleanupOrphanedTmpDirs. Its decision
-    // function reports instance A's PID as alive (because it really is).
     const decision = isStaleTmpDir(tmpDir, {
       ourPid: instanceBPid,
       isProcessAlive: (pid) => pid === instanceAPid
     });
 
-    // Critical assertion: instance B must NOT delete this dir.
     expect(decision.stale).toBe(false);
   });
 
@@ -173,8 +156,6 @@ describe('multi-instance race scenario', () => {
     const instanceBPid = 67890;
     writeLockFile(tmpDir, { pid: instanceBPid });
 
-    // PID 67890 is now us (we just started). Same PID, but our previous run
-    // crashed; this lock is "ours-prior" and we should clean it.
     const decision = isStaleTmpDir(tmpDir, {
       ourPid: instanceBPid,
       isProcessAlive: () => true
@@ -189,7 +170,7 @@ describe('multi-instance race scenario', () => {
 
     const decision = isStaleTmpDir(tmpDir, {
       ourPid: instanceBPid,
-      isProcessAlive: () => false  // instance A really is gone
+      isProcessAlive: () => false
     });
     expect(decision.stale).toBe(true);
     expect(decision.reason).toBe('dead-pid');

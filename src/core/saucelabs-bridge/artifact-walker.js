@@ -1,21 +1,5 @@
 'use strict';
 
-// Symlink-safe, depth-bounded directory walker for saucectl artifact dirs.
-//
-// Design constraints:
-//   - Saucectl writes artifacts under <tmpBase>/artifacts/<suite>/<sessionId>/.
-//     A well-formed tree is at most 4 levels deep; pathological inputs
-//     (symlink loops, bind-mounted /tmp, accidentally-staged user homedirs)
-//     must not loop or hang the main process.
-//   - Walker NEVER follows symbolic links. Symlinks are detected via
-//     fs.lstatSync (not the dirent.isFile() / dirent.isDirectory() shortcuts
-//     because those reflect the link target, not the link itself).
-//   - Tracks visited (dev,ino) pairs so a hardlinked dir is only walked once.
-//   - Hard caps on depth and total nodes — defense-in-depth even if
-//     symlink detection somehow misses a case (e.g., Windows junctions).
-//
-// Visit signature: visit(absolutePath, dirent) -> any. Return STOP_WALK to
-// abort the walk early (used by find-first-match consumers).
 
 const fs = require('fs');
 const path = require('path');
@@ -64,7 +48,6 @@ function walkFiles(rootDir, visit, opts = {}) {
       }
       const full = path.join(dir, entry.name);
 
-      // lstat — never let dirent's link-target view fool us into following.
       const st = _safeLstat(full);
       if (!st || st.isSymbolicLink()) continue;
 

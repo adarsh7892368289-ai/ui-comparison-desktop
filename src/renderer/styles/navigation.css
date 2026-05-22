@@ -90,7 +90,7 @@
   color: var(--color-text-tertiary);
   padding: 0;
   line-height: 1;
-  transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
+  transition: transform 150ms ease;
 }
 
 [data-panel="left"][data-collapsed="true"] .panel-toggle-btn {
@@ -109,7 +109,6 @@
   background: var(--color-surface-hover);
   border-color: var(--color-border-default);
   transform: translateX(-1px);
-  transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast), transform 150ms ease;
 }
 
 .panel-toggle-btn svg {

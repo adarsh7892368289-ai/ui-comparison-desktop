@@ -1054,12 +1054,14 @@ is full-fragment replacement: `_window.textContent = ''` followed by
 `_window.appendChild(frag)`.
 
 `src/renderer/components/bulk-panel.js` separately implements its own
-**variable-height virtual scroller** for the per-pair list. Row heights vary
-by status: `ROW_HEIGHT_COMPACT = 48` (queued/done/cancelled),
-`ROW_HEIGHT_ACTIVE = 64` (any in-flight phase from `ACTIVE_STATES`),
-`ROW_HEIGHT_FAILED = 72`. A binary search over the prefix-sum of row offsets
-(`_firstVisibleIndex`) finds the top render index; the panel maintains its
-own DOM-recycling loop.
+**fixed-height virtual scroller** for the per-pair list using
+`ROW_HEIGHT = 56` (uniform across queued/active/done/failed/cancelled
+states). Offsets are computed as `i * ROW_HEIGHT` with no prefix-sum table;
+visible-range lookup is `Math.floor(scrollTop / ROW_HEIGHT)`. The panel
+maintains its own DOM-recycling pool sized to viewport height plus
+`OVERSCAN = 3` rows on each side. Status-specific visual treatments
+(active shimmer, failed shake, cancelled fade) are handled inside a fixed
+56px frame via inner element animation rather than row-height changes.
 
 ### 9.4 Accordion nav state machine
 

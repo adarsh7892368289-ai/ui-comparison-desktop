@@ -49,7 +49,7 @@ body {
   align-items: center;
   gap: var(--space-3);
   padding: 0 var(--space-5);
-  height: 48px;
+  height: var(--space-12);
   background: var(--color-surface-base);
   border-bottom: 1px solid var(--color-border-subtle);
   flex-shrink: 0;
@@ -149,10 +149,17 @@ body {
   cursor: pointer;
   outline: none;
   appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%236b7280' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right var(--space-2) center;
   transition: border-color var(--transition-fast);
+}
+
+[data-theme="dark"] .select {
+  background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%237E8FA6' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+[data-theme="light"] .select {
+  background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2364748B' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
 .select:hover { border-color: var(--color-border-default); }
@@ -384,7 +391,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .vdiff-item-label { flex: 1; font-family: var(--font-mono); font-size: var(--text-sm); color: var(--color-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vdiff-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--color-border-subtle); }
 .vdiff-side { background: var(--color-surface-base); display: flex; flex-direction: column; }
-.vdiff-side-label { font-size: var(--text-xs); font-weight: var(--weight-bold); text-transform: uppercase; letter-spacing: 0.06em; padding: 4px var(--space-2); }
+.vdiff-side-label { font-size: var(--text-xs); font-weight: var(--weight-bold); text-transform: uppercase; letter-spacing: 0.06em; padding: var(--space-1) var(--space-2); }
 .vdiff-side--baseline .vdiff-side-label { color: var(--color-brand); }
 .vdiff-side--compare .vdiff-side-label { color: var(--color-success); }
 .vdiff-thumb-wrap { position: relative; background: var(--color-surface-base); overflow: hidden; width: 100%; }

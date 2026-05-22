@@ -53,7 +53,7 @@ describe('YAML generation', () => {
 
   it('includes correct platform, browser, and resolution', () => {
     const yaml = generateYaml({
-      platform: 'macOS 14',
+      platform: 'macOS 13',
       browserName: 'webkit',
       screenResolution: '2560x1440',
       region: 'eu-central-1',
@@ -61,7 +61,7 @@ describe('YAML generation', () => {
       suiteName: 'extract-test'
     });
 
-    expect(yaml).toContain('platformName: "macOS 14"');
+    expect(yaml).toContain('platformName: "macOS 13"');
     expect(yaml).toContain('browserName: "webkit"');
     expect(yaml).toContain('screenResolution: "2560x1440"');
     expect(yaml).toContain('region: eu-central-1');

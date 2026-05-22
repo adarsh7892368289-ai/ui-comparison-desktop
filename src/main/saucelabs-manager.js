@@ -79,9 +79,6 @@ function _registerJob(jobId, { username, accessKey, region }) {
     cancelled: false
   };
   _jobRegistry.set(jobId, entry);
-  // Mark this app instance as the owner of the on-disk tmp dir for this job.
-  // cleanupOrphanedTmpDirs() in another instance will see the live PID and
-  // skip the dir.
   writeLockFile(_tmpDir(jobId));
   return entry;
 }
@@ -89,8 +86,6 @@ function _registerJob(jobId, { username, accessKey, region }) {
 function _unregisterJob(jobId) {
   if (!jobId) return;
   _jobRegistry.delete(jobId);
-  // Best-effort: tmp may already be cleaned up by _cleanupTmp; that's fine,
-  // removeLockFile silently swallows ENOENT.
   removeLockFile(_tmpDir(jobId));
 }
 
@@ -250,7 +245,6 @@ async function validateCredentials({ username, accessKey, region }) {
   return { success: true, username, region };
 }
 
-// Locates a prebuilt artifact under dist/ in dev or unpacked-app in prod.
 function _resolveDistFile(...relativeParts) {
   const distDir = mainDistributionDir();
   const candidates = [
@@ -264,10 +258,6 @@ function _resolveDistFile(...relativeParts) {
   return null;
 }
 
-// Returns the prebuilt staging files for the SauceLabs runner project.
-// Throws if the build hasn't been run — the runner cannot operate without
-// these. extractor-bundle.js is built by webpack.extractor.config.js;
-// extract.spec.js + keyframe-grouper.js by webpack.saucelabs-runner.config.js.
 function _resolveRunnerStagingPaths() {
   const extractorBundle = _resolveDistFile('extractor-bundle.js');
   const spec = _resolveDistFile('saucelabs-runner', 'extract.spec.js');
@@ -296,19 +286,7 @@ const _DEFAULT_EXTRACTION_OVERRIDES = Object.freeze({
   }
 });
 
-// Stages the static runner project + per-job config under the saucectl tmp
-// dir. Layout written under <tmpBase>:
-//
-//   .sauce/config.yml          — saucectl config
-//   tests/extract.spec.js      — prebuilt spec (copy of dist/saucelabs-runner)
-//   tests/keyframe-grouper.js  — prebuilt grouper CJS
-//   tests/extractor-bundle.js  — prebuilt extractor bundle
-//   tests/job.json             — per-job parameters (url, filters, ...)
-//
-// All non-config files live under tests/ so saucectl uploads them as part of
-// the project. job.json is co-located with the spec so it survives any
-// .sauceignore-style filtering of dotted top-level dirs.
-function _stageRunnerProject(tmpBase, { url, filters, maxScreenshots }) {
+function _stageRunnerProject(tmpBase, { url, filters, maxScreenshots, device }) {
   const { extractorBundle, spec, grouper, schemas } = _resolveRunnerStagingPaths();
 
   const sauceDir = path.join(tmpBase, '.sauce');
@@ -326,11 +304,9 @@ function _stageRunnerProject(tmpBase, { url, filters, maxScreenshots }) {
     filters: filters || null,
     maxScreenshots: maxScreenshots || 200,
     configOverrides: _DEFAULT_EXTRACTION_OVERRIDES,
-    testTimeoutMs: 600_000
+    testTimeoutMs: 600_000,
+    device: device || null
   };
-  // Validate before serializing — catches programmer errors here, where the
-  // stack trace points at the bug, instead of inside the SauceLabs VM where
-  // it produces an opaque test failure 90 seconds later.
   validateJobConfig(jobConfig, 'staged job.json');
   fs.writeFileSync(path.join(testsDir, 'job.json'), JSON.stringify(jobConfig, null, 2));
 
@@ -588,9 +564,6 @@ function _interruptibleSleep(ms, ...signals) {
   });
 }
 
-// Forward to the symlink-safe walker in src/core/saucelabs-bridge. Wrapped
-// here so call sites stay readable and the warning hook routes through
-// electron-log with the manager's standard component prefix.
 function _walkerWarn(info) {
   if (info.kind === 'depth-cap') {
     log.warn('[SauceManager] artifact walker depth cap hit', info);
@@ -627,10 +600,6 @@ function _collectLocalArtifacts({ configDir, destDir }) {
     if (src) fs.copyFileSync(src, manifestDest);
   }
 
-  // Parse + validate at the trust boundary. A schema failure means the spec
-  // wrote a payload this main version can't consume — fail loud with the
-  // exact field path(s) that are wrong, so the user can see whether it's a
-  // build skew, a saucectl change, or a runner regression.
   let extractionRaw;
   try {
     extractionRaw = fs.readFileSync(extractionDest, 'utf8');
@@ -796,7 +765,7 @@ async function _recoverSessionId({ username, accessKey, region }) {
   return jobs[0].id;
 }
 
-async function submitExtraction({ jobId: providedJobId, username, accessKey, region, url, platform, browserName, screenResolution, tunnelName, filters, onProgress }) {
+async function submitExtraction({ jobId: providedJobId, username, accessKey, region, url, platform, browserName, screenResolution, tunnelName, filters, device, onProgress }) {
   const jobId = providedJobId || crypto.randomUUID();
   _registerJob(jobId, { username, accessKey, region });
   const pollTimeoutMs = defaultsConfig?.saucelabs?.pollTimeoutMs ?? 90 * 60 * 1000;
@@ -808,7 +777,7 @@ async function submitExtraction({ jobId: providedJobId, username, accessKey, reg
   }
 
   const tmpBase = _tmpDir(jobId);
-  const { sauceDir } = _stageRunnerProject(tmpBase, { url, filters, maxScreenshots });
+  const { sauceDir } = _stageRunnerProject(tmpBase, { url, filters, maxScreenshots, device });
 
   const yaml = _generateYaml({
     platform,
@@ -928,9 +897,6 @@ function cleanupArtifacts(jobId) {
   }
 }
 
-// Cleans up tmp dirs from previous app sessions. Multi-instance-safe via
-// process-lock.js: live-PID dirs are preserved; dead-PID and aged-no-lock
-// dirs are removed. See isStaleTmpDir for the full decision rule.
 function cleanupOrphanedTmpDirs() {
   const baseDir = path.join(os.tmpdir(), 'ui-comparison-saucelabs');
   let entries;
@@ -963,7 +929,7 @@ function cleanupOrphanedTmpDirs() {
   }
 }
 
-async function _submitSingleSession({ username, accessKey, region, url, platform, browserName, screenResolution, tunnelName, filters, side, jobId }) {
+async function _submitSingleSession({ username, accessKey, region, url, platform, browserName, screenResolution, tunnelName, filters, device, side, jobId }) {
   const pollTimeoutMs = defaultsConfig?.saucelabs?.pollTimeoutMs ?? 90 * 60 * 1000;
   const maxScreenshots = defaultsConfig?.saucelabs?.maxScreenshotsPerSession ?? 200;
 
@@ -973,7 +939,7 @@ async function _submitSingleSession({ username, accessKey, region, url, platform
   }
 
   const tmpBase = path.join(_tmpDir(jobId), side);
-  const { sauceDir } = _stageRunnerProject(tmpBase, { url, filters, maxScreenshots });
+  const { sauceDir } = _stageRunnerProject(tmpBase, { url, filters, maxScreenshots, device });
 
   const yaml = _generateYaml({
     platform,
@@ -1065,7 +1031,7 @@ async function _cancelRemoteSessions({ username, accessKey, region, sessionIds }
   return results;
 }
 
-async function submitComparison({ jobId: providedJobId, username, accessKey, region, baselineUrl, compareUrl, platform, browserName, screenResolution, tunnelName, filters, onProgress, onSessionId }) {
+async function submitComparison({ jobId: providedJobId, username, accessKey, region, baselineUrl, compareUrl, platform, browserName, screenResolution, tunnelName, filters, device, onProgress, onSessionId }) {
   const jobId = providedJobId || crypto.randomUUID();
   _registerJob(jobId, { username, accessKey, region });
   const pollTimeoutMs = defaultsConfig?.saucelabs?.pollTimeoutMs ?? 90 * 60 * 1000;
@@ -1073,7 +1039,7 @@ async function submitComparison({ jobId: providedJobId, username, accessKey, reg
   log.info('[SauceManager] submitComparison', { jobId, baselineUrl, compareUrl, platform, browserName });
   onProgress?.({ phase: 'submitted', jobId });
 
-  const sessionArgs = { username, accessKey, region, platform, browserName, screenResolution, tunnelName, filters, jobId };
+  const sessionArgs = { username, accessKey, region, platform, browserName, screenResolution, tunnelName, filters, device, jobId };
 
   let baselineSessionId, compareSessionId;
   let baselineConfigDir, compareConfigDir;
@@ -1210,7 +1176,7 @@ async function submitComparison({ jobId: providedJobId, username, accessKey, reg
   };
 }
 
-async function retryFailedSession({ username, accessKey, region, failedSide, failedSideUrl, successSideSessionId, platform, browserName, screenResolution, tunnelName, filters, jobId, onProgress }) {
+async function retryFailedSession({ username, accessKey, region, failedSide, failedSideUrl, successSideSessionId, platform, browserName, screenResolution, tunnelName, filters, device, jobId, onProgress }) {
   _registerJob(jobId, { username, accessKey, region });
   const successSide = oppositeSide(failedSide);
 
@@ -1225,6 +1191,7 @@ async function retryFailedSession({ username, accessKey, region, failedSide, fai
     screenResolution: screenResolution || '1920x1080',
     tunnelName: tunnelName || null,
     filters: filters || null,
+    device: device || null,
     side: failedSide,
     jobId
   });
