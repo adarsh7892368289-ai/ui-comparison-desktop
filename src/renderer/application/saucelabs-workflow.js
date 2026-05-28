@@ -5,6 +5,7 @@ import storage, { buildPairKey } from '../../infrastructure/idb-repository.js';
 import { loadAndRenderReports } from './report-manager.js';
 import { loadComparisonFromCacheByPairIds } from './compare-workflow.js';
 import { Comparator } from '@core/comparison/comparator.js';
+import { get as getDefault } from '@config/defaults.js';
 import {
   buildCompareHpidRemap,
   computeDiffKeyframeIds,
@@ -105,7 +106,7 @@ export function initSauceListeners() {
   }
 }
 
-export async function submitExtraction({ url, platform, browserName, screenResolution, tunnelName, filters, device }) {
+export async function submitExtraction({ url, platform, browserName, screenResolution, tunnelName, filters, device, playwrightVersion, concurrency, buildName, tags, visibility, timeout }) {
   if (!_creds) {
     dispatch('SAUCE_JOB_FAILED', { error: 'Credentials not available — validate first', url });
     return null;
@@ -128,7 +129,12 @@ export async function submitExtraction({ url, platform, browserName, screenResol
       screenResolution,
       tunnelName: tunnelName || null,
       filters: filters || null,
-      device: device || null
+      device: device || null,
+      playwrightVersion: playwrightVersion || null,
+      buildName: buildName || null,
+      tags: tags || null,
+      visibility: visibility || null,
+      timeout: timeout || null,
     });
   } catch (err) {
     dispatch('SAUCE_JOB_FAILED', { error: err?.message || 'Submission request failed', url, platform, browserName });
@@ -158,6 +164,12 @@ export async function submitExtraction({ url, platform, browserName, screenResol
     tunnelName: tunnelName || null,
     filters: filters || null,
     device: device || null,
+    playwrightVersion: playwrightVersion || null,
+    buildName: buildName || null,
+    tags: tags || null,
+    visibility: visibility || null,
+    timeout: timeout || null,
+    concurrency: concurrency || null,
     baselineSessionId: null,
     compareSessionId: null,
     sessionId: null,
@@ -201,7 +213,7 @@ export async function submitExtraction({ url, platform, browserName, screenResol
   return result.jobId;
 }
 
-export async function submitComparison({ baselineUrl, compareUrl, platform, browserName, screenResolution, tunnelName, filters, device }) {
+export async function submitComparison({ baselineUrl, compareUrl, platform, browserName, screenResolution, tunnelName, filters, device, playwrightVersion, concurrency, buildName, tags, visibility, timeout }) {
   if (!_creds) {
     dispatch('SAUCE_JOB_FAILED', { error: 'Credentials not available — validate first', baselineUrl, compareUrl });
     return null;
@@ -225,7 +237,13 @@ export async function submitComparison({ baselineUrl, compareUrl, platform, brow
       screenResolution,
       tunnelName: tunnelName || null,
       filters: filters || null,
-      device: device || null
+      device: device || null,
+      playwrightVersion: playwrightVersion || null,
+      concurrency: concurrency || null,
+      buildName: buildName || null,
+      tags: tags || null,
+      visibility: visibility || null,
+      timeout: timeout || null,
     });
   } catch (err) {
     dispatch('SAUCE_JOB_FAILED', { error: err?.message || 'Submission request failed', baselineUrl, compareUrl, platform, browserName });
@@ -252,6 +270,12 @@ export async function submitComparison({ baselineUrl, compareUrl, platform, brow
     tunnelName: tunnelName || null,
     filters: filters || null,
     device: device || null,
+    playwrightVersion: playwrightVersion || null,
+    concurrency: concurrency || null,
+    buildName: buildName || null,
+    tags: tags || null,
+    visibility: visibility || null,
+    timeout: timeout || null,
     baselineSessionId: null,
     compareSessionId: null,
     baselineArtifactDir: null,
@@ -406,7 +430,13 @@ export async function retrySauceJob(jobId) {
       screenResolution: storedJob.screenResolution,
       tunnelName: storedJob.tunnelName || null,
       filters: storedJob.filters ?? null,
-      device: storedJob.device ?? null
+      device: storedJob.device ?? null,
+      playwrightVersion: storedJob.playwrightVersion || null,
+      concurrency: storedJob.concurrency || null,
+      buildName: storedJob.buildName || null,
+      tags: storedJob.tags || null,
+      visibility: storedJob.visibility || null,
+      timeout: storedJob.timeout || null,
     });
   } catch (err) {
     dispatch('SAUCE_JOB_FAILED', { error: err?.message || 'Retry request failed', jobId });
@@ -597,6 +627,13 @@ async function _handleComparisonComplete(data) {
         compareManifest
       );
 
+      const sauceDefaults = getDefault('comparison.defaultTolerances', { color: 8, size: 5, opacity: 0.05 });
+      const sauceTolerancesSnapshot = {
+        color:   sauceDefaults.color,
+        size:    sauceDefaults.size,
+        opacity: sauceDefaults.opacity
+      };
+
       const meta = {
         id: comparisonId,
         pairKey,
@@ -610,7 +647,8 @@ async function _handleComparisonComplete(data) {
         timestamp: new Date().toISOString(),
         sauceJobId: jobId,
         visualDiffStatus: null,
-        visualSessionId: comparisonId
+        visualSessionId: comparisonId,
+        tolerancesSnapshot: sauceTolerancesSnapshot
       };
 
       await timer.time('saveComparison', () =>

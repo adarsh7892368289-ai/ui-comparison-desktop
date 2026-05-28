@@ -80,7 +80,12 @@
       "Read(//c/Users/adarshbm.gowda/.claude/projects/c--Projects-ui-comparison-desktop/**)",
       "Bash(node --check test/unit/sauce-bridge-constants.test.js)",
       "Bash(saucectl --help)",
-      "Bash(saucectl playwright *)"
+      "Bash(saucectl playwright *)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d.get\\('main',''\\)\\); print\\(json.dumps\\(d.get\\('scripts',{}\\), indent=2\\)\\)\")",
+      "Bash(node _check_tabs.mjs)",
+      "Bash(node -e \"const {_electron}=require\\('playwright-core'\\); console.log\\(typeof _electron.launch\\)\")",
+      "Bash(grep -E \"^c:\\\\\\\\\\\\\\\\Projects\\\\\\\\\\\\\\\\ui-comparison-desktop\\\\\\\\\\\\\\\\src\")",
+      "Bash(grep -v \"release\\\\\\\\\\\\\\\\\")"
     ],
     "additionalDirectories": [
       "c:\\Projects\\ui-comparison-desktop"

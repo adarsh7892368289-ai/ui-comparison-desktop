@@ -217,12 +217,13 @@ describe('SAUCE_PLATFORMS_BY_ENGINE / platformsForEngine', () => {
 
   it('platformsForEngine returns the matching list', () => {
     expect(platformsForEngine('chromium')).toBe(SAUCE_PLATFORMS_BY_ENGINE.chromium);
+    expect(platformsForEngine('chrome')).toBe(SAUCE_PLATFORMS_BY_ENGINE.chrome);
     expect(platformsForEngine('firefox')).toBe(SAUCE_PLATFORMS_BY_ENGINE.firefox);
     expect(platformsForEngine('webkit')).toBe(SAUCE_PLATFORMS_BY_ENGINE.webkit);
   });
 
   it('platformsForEngine falls back to chromium for unknown engines', () => {
-    expect(platformsForEngine('chrome')).toBe(SAUCE_PLATFORMS_BY_ENGINE.chromium);
+    expect(platformsForEngine('edge')).toBe(SAUCE_PLATFORMS_BY_ENGINE.chromium);
     expect(platformsForEngine(null)).toBe(SAUCE_PLATFORMS_BY_ENGINE.chromium);
     expect(platformsForEngine(undefined)).toBe(SAUCE_PLATFORMS_BY_ENGINE.chromium);
   });

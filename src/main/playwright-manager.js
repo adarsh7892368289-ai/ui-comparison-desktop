@@ -1446,6 +1446,7 @@ async function runComparison({
   compareElements,
   includeScreenshots,
   browser: browserDescriptor,
+  tolerances,
   comparisonId: incomingComparisonId,
   onProgress,
   blobCache,
@@ -1477,7 +1478,8 @@ async function runComparison({
   const generator = comparator.compare(
     { elements: baselineElements, url: baselineUrl, id: baselineId },
     { elements: compareElements, url: compareUrl, id: compareId },
-    mode
+    mode,
+    tolerances ?? null
   );
 
   const matchStart = Date.now();

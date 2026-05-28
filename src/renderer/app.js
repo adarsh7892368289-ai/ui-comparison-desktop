@@ -38,7 +38,10 @@ import { handleImportReport } from './application/import-workflow.js';
 import {
   routeCompareBtnClick,
   tryLoadCachedComparison,
-  renderCompareSummaryFromStrip } from
+  renderCompareSummaryFromStrip,
+  resolveActiveTolerances,
+  persistTolerancesImmediate,
+  persistTolerancesDebounced } from
 './application/compare-workflow.js';
 import { createResultPanel } from './components/result-panel.js';
 import { createBulkPanel } from './components/bulk-panel.js';
@@ -98,8 +101,10 @@ function toggleTheme() {
   } catch {
     void 0;
   }
+  syncThemeToggleButton();
   return next;
 }
+window.__toggleTheme = toggleTheme;
 
 function syncThemeToggleButton() {
   const btn = document.getElementById('theme-toggle');
@@ -670,6 +675,47 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     });
   });
+
+  const _wireToleranceInput = (id, field, parser) => {
+    const el = document.getElementById(id);
+    if (!el) { return; }
+    el.addEventListener('input', (e) => {
+      const raw = e.target.value;
+      if (raw === '' || raw === '-') { return; }
+      const value = parser(raw);
+      if (!Number.isFinite(value)) { return; }
+      dispatch('SET_TOLERANCE_FIELD', { field, value });
+      persistTolerancesDebounced();
+    });
+    el.addEventListener('change', () => {
+      persistTolerancesImmediate();
+    });
+  };
+  _wireToleranceInput('tolerance-color', 'color', (v) => parseInt(v, 10));
+  _wireToleranceInput('tolerance-size', 'size', (v) => parseInt(v, 10));
+  _wireToleranceInput('tolerance-opacity', 'opacity', (v) => parseFloat(v));
+
+  let _prevTolerances = null;
+  const _syncToleranceUI = (state) => {
+    const t = state.tolerances;
+    if (t === _prevTolerances) { return; }
+    _prevTolerances = t;
+
+    const active = resolveActiveTolerances(state);
+    const hint = document.getElementById('tolerance-hint');
+    if (hint) {
+      hint.textContent = `Ignoring differences within color ≤ ${active.color}, size ≤ ${active.size}px, opacity ≤ ${active.opacity}.`;
+    }
+
+    const colorEl = document.getElementById('tolerance-color');
+    const sizeEl = document.getElementById('tolerance-size');
+    const opacityEl = document.getElementById('tolerance-opacity');
+    if (colorEl && document.activeElement !== colorEl) { colorEl.value = String(active.color); }
+    if (sizeEl && document.activeElement !== sizeEl) { sizeEl.value = String(active.size); }
+    if (opacityEl && document.activeElement !== opacityEl) { opacityEl.value = String(active.opacity); }
+  };
+  subscribe(_syncToleranceUI);
+  _syncToleranceUI(getState());
 
   document.getElementById('compare-btn')?.addEventListener('click', () => void routeCompareBtnClick());
 

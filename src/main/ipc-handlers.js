@@ -80,8 +80,8 @@ function _pushToWindow(channel, payload) {
 
 function _registerComparisonHandlers() {
   ipcMain.handle(CH.START_COMPARISON, async (event, params) => {
-    const { baselineId, compareId, mode, baselineUrl, compareUrl, baselineElements, compareElements, includeScreenshots, browser, operationId, comparisonId } = params;
-    log.info('START_COMPARISON', { baselineId, compareId, mode, baselineCount: baselineElements?.length, compareCount: compareElements?.length, browserType: browser?.browserType });
+    const { baselineId, compareId, mode, baselineUrl, compareUrl, baselineElements, compareElements, includeScreenshots, browser, operationId, comparisonId, tolerances } = params;
+    log.info('START_COMPARISON', { baselineId, compareId, mode, baselineCount: baselineElements?.length, compareCount: compareElements?.length, browserType: browser?.browserType, tolerances });
 
     _registerOp(operationId, 'compare');
     const sendProgress = (label, pct) =>
@@ -98,6 +98,7 @@ function _registerComparisonHandlers() {
         compareElements,
         includeScreenshots: includeScreenshots ?? true,
         browser,
+        tolerances: tolerances ?? null,
         comparisonId: comparisonId ?? operationId,
         onProgress: sendProgress,
         blobCache: _blobCache,
@@ -599,7 +600,8 @@ function _registerSauceHandlers() {
     const {
       username, accessKey, region,
       url, platform, browserName, screenResolution,
-      tunnelName, filters, device
+      tunnelName, tunnelOwner, filters, device,
+      playwrightVersion, buildName, tags, visibility, timeout
     } = payload;
 
     if (!username || !accessKey || !url) {
@@ -618,8 +620,15 @@ function _registerSauceHandlers() {
       browserName: browserName || 'chromium',
       screenResolution: screenResolution || '1920x1080',
       tunnelName: tunnelName || null,
+      tunnelOwner: tunnelOwner || null,
       filters: filters || null,
       device: device || null,
+      playwrightVersion: playwrightVersion || defaultsConfig.saucelabs.defaultPlaywrightVersion,
+      concurrency: 1,
+      buildName: buildName || null,
+      tags: tags || defaultsConfig.saucelabs.defaultTags,
+      visibility: visibility || defaultsConfig.saucelabs.defaultVisibility,
+      timeout: timeout || defaultsConfig.saucelabs.defaultTimeout,
       onProgress: (progress) => {
         _pushToWindow(CH.SAUCE_JOB_PROGRESS, { jobId, ...progress });
       }
@@ -654,7 +663,8 @@ function _registerSauceHandlers() {
       username, accessKey, region,
       baselineUrl, compareUrl,
       platform, browserName, screenResolution,
-      tunnelName, filters, device
+      tunnelName, tunnelOwner, filters, device,
+      playwrightVersion, concurrency, buildName, tags, visibility, timeout
     } = payload;
 
     if (!username || !accessKey || !baselineUrl || !compareUrl) {
@@ -674,8 +684,15 @@ function _registerSauceHandlers() {
       browserName: browserName || 'chromium',
       screenResolution: screenResolution || '1920x1080',
       tunnelName: tunnelName || null,
+      tunnelOwner: tunnelOwner || null,
       filters: filters || null,
       device: device || null,
+      playwrightVersion: playwrightVersion || defaultsConfig.saucelabs.defaultPlaywrightVersion,
+      concurrency: concurrency || defaultsConfig.saucelabs.defaultConcurrency,
+      buildName: buildName || null,
+      tags: tags || defaultsConfig.saucelabs.defaultTags,
+      visibility: visibility || defaultsConfig.saucelabs.defaultVisibility,
+      timeout: timeout || defaultsConfig.saucelabs.defaultTimeout,
       onProgress: (progress) => {
         _pushToWindow(CH.SAUCE_JOB_PROGRESS, { jobId, ...progress });
       },
@@ -797,7 +814,8 @@ function _registerSauceHandlers() {
     const {
       username, accessKey, region,
       jobId, failedSide, failedSideUrl, successSideSessionId,
-      platform, browserName, screenResolution, tunnelName, filters, device
+      platform, browserName, screenResolution, tunnelName, tunnelOwner, filters, device,
+      playwrightVersion, concurrency, buildName, tags, visibility, timeout
     } = payload;
 
     if (!username || !accessKey || !jobId || !failedSide || !failedSideUrl || !successSideSessionId) {
@@ -815,9 +833,16 @@ function _registerSauceHandlers() {
       browserName: browserName || 'chromium',
       screenResolution: screenResolution || '1920x1080',
       tunnelName: tunnelName || null,
+      tunnelOwner: tunnelOwner || null,
       filters: filters || null,
       device: device || null,
       jobId,
+      playwrightVersion: playwrightVersion || defaultsConfig.saucelabs.defaultPlaywrightVersion,
+      concurrency: concurrency || defaultsConfig.saucelabs.defaultConcurrency,
+      buildName: buildName || null,
+      tags: tags || defaultsConfig.saucelabs.defaultTags,
+      visibility: visibility || defaultsConfig.saucelabs.defaultVisibility,
+      timeout: timeout || defaultsConfig.saucelabs.defaultTimeout,
       onProgress: (progress) => {
         _pushToWindow(CH.SAUCE_JOB_PROGRESS, { jobId, ...progress });
       }

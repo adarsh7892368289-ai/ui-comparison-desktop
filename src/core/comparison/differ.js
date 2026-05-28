@@ -20,6 +20,14 @@ const PROPERTY_CATEGORIES = {
 
 const DIMENSIONAL_KEYWORDS = ['width', 'height', 'size'];
 
+const SIZE_PROPERTY_NAMES = Object.freeze(new Set([
+  'gap', 'row-gap', 'column-gap',
+  'flex-basis',
+  'border-radius',
+  'border-top-left-radius', 'border-top-right-radius',
+  'border-bottom-right-radius', 'border-bottom-left-radius'
+]));
+
 const CURRENT_COLOR_PROPS = new Set([
   'border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color'
 ]);
@@ -55,9 +63,11 @@ function isColorProperty(prop, cats) {
 
 function isSizeProperty(prop, cats) {
   return (
-    cats.layout.has(prop)   ||
-    cats.spacing.has(prop)  ||
-    cats.position.has(prop) ||
+    cats.layout.has(prop)     ||
+    cats.spacing.has(prop)    ||
+    cats.position.has(prop)   ||
+    cats.typography.has(prop) ||
+    SIZE_PROPERTY_NAMES.has(prop) ||
     DIMENSIONAL_KEYWORDS.some(k => prop.includes(k))
   );
 }
@@ -102,7 +112,7 @@ class PropertyDiffer {
 
   compareElements(baselineElement, compareElement, options = {}) {
     const compareProperties = options.compareProperties ?? null;
-    const tolerances        = options.tolerances ?? get('comparison.modes.static.tolerances');
+    const tolerances        = options.tolerances ?? get('comparison.defaultTolerances');
 
     const baseEngineHint    = baselineElement.engine ?? options.baselineEngine ?? options.engineHint ?? null;
     const compareEngineHint = compareElement.engine ?? options.compareEngine ?? options.engineHint ?? null;

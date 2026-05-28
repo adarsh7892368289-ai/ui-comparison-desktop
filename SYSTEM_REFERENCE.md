@@ -26,6 +26,8 @@ This document covers the runtime contracts.
 14. [Bulk Pipeline](#14-bulk-pipeline)
 15. [CI / Release Pipeline](#15-ci--release-pipeline)
 16. [SauceLabs Pipeline](#16-saucelabs-pipeline)
+17. [Tolerance Profile System](#17-tolerance-profile-system)
+18. [Theme System (Light / Dark)](#18-theme-system-light--dark)
 
 ---
 
@@ -117,7 +119,7 @@ All channel constants live in `src/main/ipc-channels.js` and are imported as
 
 - **Runtime string:** `START_COMPARISON`
 - **Direction / method:** renderer → main, `invoke`
-- **Renderer payload:** `{ baselineId, compareId, mode, baselineUrl, compareUrl, baselineElements, compareElements, includeScreenshots, browser:{ browserType, channel, executablePath }, operationId, comparisonId? }`. The `browser` field is sourced from the renderer state's `selectedBrowser` (see §13). When omitted, screenshot phase defaults to `{ browserType: 'chromium', channel: null, executablePath: null }`. `comparisonId` defaults to `operationId` if not provided.
+- **Renderer payload:** `{ baselineId, compareId, mode, baselineUrl, compareUrl, baselineElements, compareElements, includeScreenshots, browser:{ browserType, channel, executablePath }, tolerances?:{ color, size, opacity }, operationId, comparisonId? }`. The `browser` field is sourced from the renderer state's `selectedBrowser` (see §13). When omitted, screenshot phase defaults to `{ browserType: 'chromium', channel: null, executablePath: null }`. `comparisonId` defaults to `operationId` if not provided. `tolerances` is the resolved `comparison.defaultTolerances` triple — when `null`/omitted, the comparator falls back to the boot-time defaults from `config/defaults.js`. See §17.
 - **Main behavior:** Calls `playwrightManager.runComparison`; returns `{ success:true, result }` or `{ success:false, error }` or `{ success:false, cancelled:true }` if `error.code==='CANCELLED'`. The result's `visualDiffs.devToolsWarnings` may include `{ kind:'screenshot-engine-fallback', from, to, reason }` when the WebKit→Chromium screenshot fallback was triggered.
 - **Handler:** `ipc-handlers.js` → `_registerComparisonHandlers`
 - **Producer:** —
@@ -394,7 +396,7 @@ All channel constants live in `src/main/ipc-channels.js` and are imported as
 
 - **Runtime string:** `SAUCE_SUBMIT_JOB`
 - **Direction / method:** renderer → main, `invoke`
-- **Renderer payload:** `{ username, accessKey, region, url, platform, browserName, screenResolution, tunnelName?, filters? }`
+- **Renderer payload:** `{ username, accessKey, region, url, platform, browserName, screenResolution, tunnelName?, tunnelOwner?, filters?, device?, playwrightVersion?, buildName?, tags?, visibility?, timeout? }`. Metadata fields default from `defaultsConfig.saucelabs.default*` when omitted (`defaultPlaywrightVersion='1.57.0'`, `defaultTimeout='15m'`, `defaultVisibility='team'`, `defaultTags=['ui-comparison']`). Concurrency is hard-coded to 1 for extractions.
 - **Main behavior:** Validates required fields, generates a `jobId`, **fires-and-forgets** `sauceManager.submitExtraction(...)`. Returns synchronously: `{ success:true, jobId }`. Progress is reported on `SAUCE_JOB_PROGRESS`; final result on `SAUCE_JOB_COMPLETE`.
 - **Handler:** `ipc-handlers.js` → `_registerSauceHandlers`
 - **Producer:** —
@@ -403,7 +405,7 @@ All channel constants live in `src/main/ipc-channels.js` and are imported as
 
 - **Runtime string:** `SAUCE_SUBMIT_COMPARISON`
 - **Direction / method:** renderer → main, `invoke`
-- **Renderer payload:** `{ username, accessKey, region, baselineUrl, compareUrl, platform, browserName, screenResolution, tunnelName?, filters? }`
+- **Renderer payload:** `{ username, accessKey, region, baselineUrl, compareUrl, platform, browserName, screenResolution, tunnelName?, tunnelOwner?, filters?, device?, playwrightVersion?, concurrency?, buildName?, tags?, visibility?, timeout? }`. Same metadata defaults as `SAUCE_SUBMIT_JOB`. `concurrency` defaults to 1; setting `2+` runs baseline+compare in parallel on SauceLabs (requires concurrent-session entitlement).
 - **Main behavior:** Validates required fields, generates a `jobId`, **fires-and-forgets** `sauceManager.submitComparison(...)`. Both sessions (baseline + compare) are submitted in parallel. Returns synchronously: `{ success:true, jobId }`. Partial failures surface as `SAUCE_JOB_COMPLETE` with `partiallyFailed:true` and `partiallyFailedSession:'baseline'|'compare'`.
 - **Handler:** `ipc-handlers.js` → `_registerSauceHandlers`
 - **Producer:** —
@@ -421,7 +423,7 @@ All channel constants live in `src/main/ipc-channels.js` and are imported as
 
 - **Runtime string:** `SAUCE_RETRY_FAILED_SESSION`
 - **Direction / method:** renderer → main, `invoke`
-- **Renderer payload:** `{ username, accessKey, region, jobId, failedSide:'baseline'|'compare', failedSideUrl, successSideSessionId, platform, browserName, screenResolution, tunnelName?, filters? }`
+- **Renderer payload:** `{ username, accessKey, region, jobId, failedSide:'baseline'|'compare', failedSideUrl, successSideSessionId, platform, browserName, screenResolution, tunnelName?, tunnelOwner?, filters?, device?, playwrightVersion?, concurrency?, buildName?, tags?, visibility?, timeout? }`. Metadata defaults match `SAUCE_SUBMIT_*`.
 - **Main behavior:** **Fires-and-forgets** `sauceManager.retryFailedSession(...)`. Re-submits only the failed side; downloads both sides' artifacts after completion. Returns synchronously: `{ success:true, jobId }`. Result arrives on `SAUCE_JOB_COMPLETE`.
 - **Handler:** `ipc-handlers.js` → `_registerSauceHandlers`
 - **Producer:** —
@@ -475,7 +477,7 @@ All channel constants live in `src/main/ipc-channels.js` and are imported as
 
 ## 4. IndexedDB Schema
 
-Database name: `ui_comparison_db`. **Current version: `10`.** All constants in
+Database name: `ui_comparison_db`. **Current version: `11`.** All constants in
 `src/infrastructure/idb-repository.js:6-26`. Single connection per renderer
 process; opened lazily by `IDBRepository.#getDB()`.
 
@@ -613,12 +615,23 @@ process; opened lazily by `IDBRepository.#getDB()`.
   - `by_status` → `status`, not unique
   - `by_createdAt` → `createdAt`, not unique
 - **Owner of writes:** `IDBRepository.saveSauceJob`, `updateSauceJob`, `deleteSauceJob`.
-- **Retention:** `saucelabs.maxRetainedJobs = 20` (`config/defaults.js:304`). Enforced in `#saveSauceJobInner` — oldest jobs beyond the limit are deleted.
+- **Retention:** `saucelabs.maxRetainedJobs = 20` (`config/defaults.js:298`). Enforced in `#saveSauceJobInner` — oldest jobs beyond the limit are deleted.
 - **Used by:** `saucelabs-workflow.js` for persisting SauceLabs job state across renderer restarts. Jobs in `submitted`/`running`/`downloading`/`comparing`/`partially_failed` status can be resumed after re-entering credentials.
+
+#### Store: `app_settings` (v11)
+
+- **Constant:** `STORE_APP_SETTINGS`
+- **keyPath:** `key`
+- **Created in:** `upgradeToV11` (guarded by `objectStoreNames.contains`).
+- **Indexes:** none
+- **Owner of writes:** `IDBRepository.saveToleranceProfile` (under `key='tolerance_profile'`).
+- **Records currently stored:**
+  - `{ key:'tolerance_profile', tolerances:{ color, size, opacity }, updatedAt }` — the user's per-user override of `comparison.defaultTolerances`. Loaded once at boot in `report-manager.js initializeApp` after WAL replay; dispatches `SET_TOLERANCES` to seed `state.tolerances`. Saved by `compare-workflow.js persistTolerancesImmediate` / `persistTolerancesDebounced` from the Compare panel's tolerance inputs (debounce 300 ms on `input`, immediate on `change`/blur). Field validation: color clamped to [0,255], size to [0,100], opacity to [0,1]; non-finite values fall back to the boot defaults.
+- **No retention cap** — the store has at most one row at a time (single profile keyed by `tolerance_profile`).
 
 ### 4.2 Upgrade ladder
 
-Source: `runUpgrade(db, upgradeTx, oldVersion)` at `idb-repository.js:217-226`. Execution order is the lexical order of the `if` statements:
+Source: `runUpgrade(db, upgradeTx, oldVersion)` at `idb-repository.js:233-244`. Execution order is the lexical order of the `if` statements:
 
 | Order | Block | Trigger | Action |
 |---|---|---|---|
@@ -631,6 +644,7 @@ Source: `runUpgrade(db, upgradeTx, oldVersion)` at `idb-repository.js:217-226`. 
 | 7 | `upgradeToV7` | `oldVersion < 7` | Cursor-walk `visual_blobs`; for any record whose key lacks `:` and has `comparisonId`, delete and re-insert with key `${comparisonId}:${oldKey}`. |
 | 8 | `upgradeToV9` | `oldVersion < 9` | Create `bulk_jobs` (with `by_createdAt`/`by_status`) and `bulk_pairs` (with `by_jobId`/`by_jobId_status`/`by_jobId_pairIndex`). On the existing `reports` store add `by_bulkJobId` and `by_extractionKey`. On `comparisons` add `by_bulkJobId`. All steps are guarded with `objectStoreNames.contains` / `indexNames.contains`. |
 | 9 | `upgradeToV10` | `oldVersion < 10` | Create `sauce_jobs` (with `by_status`/`by_createdAt`). Guarded with `objectStoreNames.contains`. |
+| 10 | `upgradeToV11` | `oldVersion < 11` | Create `app_settings` (no indexes). Guarded with `objectStoreNames.contains`. |
 
 **The v5/v8 ordering anomaly, mechanically.** v8 creates `app_meta`; v5
 attaches a `complete` listener that, after the upgrade transaction commits,
@@ -909,17 +923,37 @@ during capture, and constrained at compare-time by
 - **dynamic mode**: explicit list (`defaults.js:188-204`).
 - **static mode**: `compareProperties: null` → compare all captured properties; `compareTextContent: true`.
 
-### 8.2 Tolerances (mode-specific, sourced verbatim)
+### 8.2 Tolerances (single profile, user-overridable)
 
-| Tolerance | static | dynamic | Top-level fallback |
+Tolerances are **no longer mode-specific.** A single triple lives at
+`comparison.defaultTolerances` (`config/defaults.js:211`) and is used for both
+`static` and `dynamic` modes:
+
+| Tolerance | Default | Range | Field meaning |
 |---|---|---|---|
-| `color` | `5` | `8` | `5` |
-| `size` | `3` | `5` | `3` |
-| `opacity` | `0.01` | `0.05` | `0.01` |
+| `color` | `8` | `[0, 255]` | Per-channel ΔRGB threshold |
+| `size` | `5` | `[0, 100]` | Absolute pixel delta |
+| `opacity` | `0.05` | `[0, 1]` | Absolute opacity-float delta |
 
-The differ resolves the active tolerance set via
-`comparison.modes[mode].tolerances` first, then falls back to
-`comparison.tolerances`.
+The user can override these at runtime via the **Tolerance** section of the
+Compare panel (`#tolerance-color`/`-size`/`-opacity` inputs in
+`src/renderer/index.html:262-278`). Overrides are persisted to IDB
+(`app_settings` store under `key='tolerance_profile'`) and reloaded at boot.
+See §17 for the full tolerance-profile lifecycle.
+
+**Resolution order at compare time** (in `comparison-modes.js getFilter`):
+
+1. The `tolerances` argument passed by the renderer through
+   `START_COMPARISON` (sourced from `state.tolerances`, which holds the
+   active profile).
+2. If `null`/omitted: `comparison.defaultTolerances` from boot config.
+
+`Comparator.compare(baselineReport, compareReport, mode, tolerances=null)`
+forwards `tolerances` to `comparisonMode.compare(matches, tolerances)`. Both
+`StaticComparisonMode` and `DynamicComparisonMode` build their per-comparison
+filter via `getFilter(mode, tolerances)`, which clones the static/dynamic
+filter base (`STATIC_FILTER_BASE` / `DYNAMIC_FILTER_BASE`) and replaces the
+`tolerances` field.
 
 ### 8.3 Diff computation
 
@@ -928,6 +962,20 @@ via `src/core/normalization/`, compare using the relevant tolerance (per-channel
 ΔRGB for color, absolute pixel delta for length, absolute float for opacity,
 equality otherwise). Emit a `Difference{ property, baselineValue, compareValue, severity }`
 when out of tolerance.
+
+**Size-property classification (`differ.js isSizeProperty`).** A property is
+classified as a "size" property (and therefore subject to the `size`
+tolerance) if it satisfies ANY of:
+- belongs to `cats.layout`, `cats.spacing`, `cats.position`, or
+  `cats.typography`;
+- is in the explicit `SIZE_PROPERTY_NAMES` set: `gap`, `row-gap`,
+  `column-gap`, `flex-basis`, `border-radius`, the four
+  `border-*-*-radius` corners;
+- contains the substring `width`, `height`, or `size`.
+
+This is a deliberate widening — `font-size`, `letter-spacing`,
+`line-height`, `border-radius`, `gap`, etc. all flow through the size
+tolerance instead of being compared with strict equality.
 
 ### 8.4 Severity classification
 
@@ -1038,13 +1086,20 @@ every sibling stylesheet (`base.css`, `shell.css`, `components.css`,
 
 - `#system-banner-slot` — top-of-shell `SystemBanner` warnings/errors.
 - `#left-panel` — sidebar (reports list, search, filters, density cycle, resize handle).
-- `#main-content` — main area. Contains a section-nav (`#main-pane-section-nav`) with three buttons: **Extract**, **Compare**, **Bulk** (`#bulk-tab-btn`, with a status badge `#nav-section-status-bulk`). Underneath: `#section-extract`, `#section-compare`, `#section-bulk` (the latter contains `#bulk-resume-banner-slot`, `#bulk-panel-root`, and the bulk result area `#bulk-result-area` with `#bulk-results-screenshot-section` + `#bulk-result-panel-host`).
-- `#status-bar` — bottom status row.
+- `#main-content` — main area. Contains a section-nav (`#main-pane-section-nav`) with **four** buttons: **Extract**, **Compare**, **Bulk** (`#bulk-tab-btn`, with a status badge `#nav-section-status-bulk`), and **SauceLabs** (`#saucelabs-tab-btn`). Underneath: `#section-extract`, `#section-compare`, `#section-bulk` (with `#bulk-resume-banner-slot`, `#bulk-panel-root`, and `#bulk-result-area` → `#bulk-results-screenshot-section` + `#bulk-result-panel-host`), `#section-saucelabs` (with `#saucelabs-panel-root`).
+- `#status-bar` — bottom status row containing the theme toggle (`#theme-toggle`).
 
 There is also a global `#toast-container` and `#modal-overlay`. **There is no
 `#command-palette` element.** Keyboard shortcuts: `/` focuses
 `#search-reports`; `e`/`c` activate the Extract/Compare sections (no `b`
 shortcut for Bulk yet — the section is reached via the nav button).
+`Ctrl+B`/`Cmd+B` toggles the left panel; `Escape` collapses an expanded
+sidebar when focused inside it; `Ctrl+Shift+D` opens the diagnostics
+panel.
+
+**Empty bulk-resume-banner.** `shell.css` now collapses
+`#bulk-resume-banner-slot:empty { display: none }` so the slot does not
+reserve vertical space when no resume offer is active.
 
 ### 9.3 Virtual scroll (`report-list.js` and `bulk-panel.js`)
 
@@ -1076,7 +1131,24 @@ implicit in the DOM.
 `src/renderer/state.js` is a reducer over a flat object with phases
 `'idle' | 'extracting' | 'comparing' | 'cancelling' | 'done' | 'error'`.
 `dispatch(type, payload)` is synchronous and notifies a single Set of
-subscribers. The renderer subscribes once in `app.js:317-379`.
+subscribers. The renderer subscribes multiple times in `app.js`
+(`385-443` for panel/result rendering, `447-460` for selection-driven
+cache hydration, `698-717` for tolerance UI sync).
+
+**Top-level slices** (sourced from `state.js initialState`):
+- Lifecycle/selection: `phase`, `reports`, `comparison`, `progress`,
+  `error`, `exportState`, `selectedBaseline`, `selectedCompare`,
+  `compareMode`, `filters`, `cachedAt`, `comparisonFromCache`,
+  `compareSummaryStrip`.
+- Browser detection: `selectedBrowser`, `availableBrowsers`,
+  `browserDetectionState`, `browserDetectionError`.
+- Bulk: `bulkJob`, `bulkParsedRows`, `bulkDetectionState`.
+- Multi-select: `multiSelect:{ active, selectedIds:Set, anchorId }`.
+- SauceLabs: `sauceJob`, `sauceCredentialState`, `sauceCredentialError`,
+  `sauceComparisonResult`, `sauceInFlightJobCount`.
+- Tolerances: `tolerances:{ color, size, opacity }` — initialised from
+  `comparison.defaultTolerances`, overridden by the persisted profile
+  in `app_settings`. See §17.
 
 **Browser-detection slice:**
 - `availableBrowsers`, `selectedBrowser`, `browserDetectionState ∈ {'idle','loading','ready','error'}`, `browserDetectionError`.
@@ -1124,7 +1196,7 @@ Set). Non-launchable selections are silently rejected on `change`.
 
 `src/renderer/components/bulk-panel.js` is the third major user-facing
 component (alongside the report list and result panel). Mounted into
-`#bulk-panel-root` from `app.js:384-389`. Surfaces:
+`#bulk-panel-root` from `app.js:471-474`. Surfaces:
 
 - **Drop zone / file picker** for an `.xlsx` plan + a "Download template" button (calls `routeBulkDownloadTemplateClick` → `buildBulkTemplateWorkbook`).
 - **Parse summary strip** — total / valid / warning / invalid row counts.
@@ -1138,16 +1210,87 @@ of the concurrency control. Heterogeneous-plan detection uses the
 `BULK_CONCURRENCY_HETEROGENEOUS_HINT = 'Mixed browsers detected — concurrency
 limited to 1 on this machine.'` when triggered.
 
+### 9.5c SauceLabs panel component
+
+`src/renderer/components/saucelabs-panel.js` is the fourth top-level
+component, mounted into `#saucelabs-panel-root` from `app.js:476-479`.
+Surfaces:
+
+- **Credentials card** — username / access key / region selector (US-W1,
+  US-E4, EU-C1) + Validate button. Credentials are held in module-scope
+  (`saucelabs-workflow.js _creds`) — never persisted.
+- **Execution Mode radios** — Desktop | Mobile (legend: "Execution Mode").
+- **Compatibility-aware dropdowns** (driven by `SAUCE_COMPATIBILITY_MATRIX`):
+  - **Playwright Version** — `#sauce-pw-version`, default `1.57.0`. On
+    change, browser + platform dropdowns are re-populated to the matrix's
+    intersection of allowed combos.
+  - **Browser** — `#sauce-browser`. Includes `chromium`, `chrome (VM-installed)`,
+    `firefox`, `webkit`. Filtered by the active Playwright version.
+  - **Platform** — `#sauce-platform`. Filtered by both Playwright version
+    AND the matrix's `exclusions` list (e.g. macOS 12 excludes webkit on
+    most versions). Hidden in Mobile mode (the device choice fully
+    constrains platform).
+  - **Resolution** — `#sauce-resolution`, populated by
+    `resolutionsForEngine(engine)`. Hidden in Mobile mode.
+- **Mobile mode dropdowns** (visible only when Execution Mode = Mobile):
+  - **Device** — `#sauce-device`, grouped by OS (iOS / iPadOS / Android).
+    See §16.4a for the full device list with viewports + DPRs.
+  - **Orientation** — `#sauce-orientation`, portrait | landscape.
+    Selecting `landscape` flips viewport `{w,h}` in `_stageRunnerProject`
+    before writing `job.json`.
+  - The browser dropdown is locked to the device's `browserEngine` while
+    Mobile mode is active; it unlocks (and restores the user's last
+    Desktop-mode choice) when switching back.
+- **Tunnel** — `#sauce-tunnel` text input. Combined with `tunnelOwner`
+  (collected indirectly — currently always `null` from this panel; the
+  YAML supports it for future use). Newlines and overlong values are
+  rejected at YAML emit time.
+- **Timeout** — `#sauce-timeout` select with options 5m / 10m / 15m / 20m
+  / 30m. Default `15m`.
+- **Metadata expander (`#sauce-metadata-toggle`)** — collapsed by default,
+  shows a chevron with label "Metadata: auto-generated". Expands to:
+  - **Build Name** — text, max 255 chars. Default
+    `ui-compare ${ISO date YYYY-MM-DDThh:mm}`.
+  - **Tags** — comma-separated, each tag max 64 chars. Default
+    `ui-comparison`.
+  - **Visibility** — `private | team | share | public restricted | public`.
+    Default `team`.
+  - **Concurrency** — 1..5. A hint warns that values >1 require a
+    matching concurrent-session entitlement.
+- **URL inputs** — single (`Extract`) or pair (`Compare`) URL fields plus
+  filter inputs that share the engine with the Extract panel.
+- **Actions** — `Validate Credentials`, `Submit Extraction`,
+  `Submit Comparison`. Buttons are disabled while in-flight or before
+  credentials are validated.
+
+The panel emits a fully-populated payload to
+`saucelabs-workflow.submitExtraction` /
+`submitComparison` containing all metadata fields (`playwrightVersion`,
+`concurrency`, `buildName`, `tags`, `visibility`, `timeout`) plus the
+device payload. The workflow forwards all of these to the IPC handler
+which stamps them onto the `sauce_jobs` row for resume continuity.
+
 ### 9.6 Result panel data flow
 
 `src/renderer/components/result-panel.js` (`createResultPanel(container)`).
-Mounted twice in `app.js:298-308`: once into `#compare-results` (the
+Mounted twice in `app.js:367-376`: once into `#compare-results` (the
 single-compare workflow's panel) and once into `#bulk-result-panel-host`
-(the bulk pair viewer). The single subscriber in `app.js:317-379` decides
+(the bulk pair viewer). The single subscriber in `app.js:385-443` decides
 which panel to render based on `state.bulkJob?.activePairIndex` —
 `bulkDetailOpen ⇒ render into the bulk panel; otherwise render into the
 single-compare panel`. The `#main-content` element gains/loses
 `main-content--compare-results-visible` accordingly.
+
+**Tolerance badge.** The result-panel summary bar renders a `Tol C/S/O` chip
+(`_buildToleranceBadge` in `result-panel.js:18-44`) that displays the
+tolerances triple under which the comparison ran. Source:
+`result.tolerancesSnapshot` (set by
+`compare-workflow.js handleComparison` from `resolveActiveTolerances` at
+the moment of submission, also stamped onto saved `comparisons.tolerancesSnapshot`).
+The badge falls back to a muted "Tolerances: —" with tooltip
+`"This comparison was run before tolerances were tracked"` for legacy rows
+without the snapshot. Title attribute always shows the canonical form
+`color ΔRGB ≤ N, size ≤ Npx, opacity Δ ≤ N`.
 
 ### 9.7 Notification queue
 
@@ -1202,7 +1345,18 @@ single-compare panel`. The `#main-content` element gains/loses
 `COMPARISON_COMPLETE`, `COMPARISON_ERROR`, `COMPARE_UI_END`,
 `OPERATION_CANCELLING`, `RESET_COMPARISON`, `DISMISS_ERROR`,
 `BASELINE_SELECTED`, `COMPARE_SELECTED`, `MODE_CHANGED`, `FILTERS_UPDATED`,
-`EXPORT_STARTED`, `EXPORT_COMPLETE`, `EXPORT_ERROR`.
+`EXPORT_STARTED`, `EXPORT_COMPLETE`, `EXPORT_ERROR`,
+`SET_TOLERANCES`, `SET_TOLERANCE_FIELD`.
+
+**Tolerance reducer behavior:**
+- `SET_TOLERANCES { tolerances:{ color, size, opacity } }`: clamps each value
+  through `_clampNumber` (color [0,255], size [0,100], opacity [0,1]),
+  falling back to `comparison.defaultTolerances` for non-finite inputs;
+  noop if the resulting triple is bit-equal to current state.
+- `SET_TOLERANCE_FIELD { field, value }`: updates a single field
+  (`color` | `size` | `opacity`) using the same clamp.
+- `DISMISS_ERROR` preserves `state.tolerances` (it is not reset on error
+  recovery).
 
 **Browser detection:**
 `BROWSER_DETECTION_STARTED`, `BROWSERS_DETECTED`, `BROWSER_DETECTION_FAILED`,
@@ -2109,25 +2263,35 @@ the pipeline.
 
 ### 16.4 saucectl YAML generation
 
-`_generateYaml(...)` (`saucelabs-manager.js:273-301`) produces a minimal
-`.sauce/config.yml`:
+`_generateYaml(...)` (`saucelabs-manager.js:336-405`) produces
+`.sauce/config.yml`. All caller-provided strings (build name, tags, tunnel
+name, tunnel owner) flow through `_sanitiseYamlScalar` first
+(max-length check, newline rejection, backslash + double-quote escape) to
+prevent YAML injection.
 
 ```yaml
 apiVersion: v1alpha
 kind: playwright
 sauce:
   region: <region>
-  concurrency: 1
-  tunnel:             # only if tunnelName is provided
-    name: "<tunnelName>"
+  concurrency: <concurrency>          # 1 for extraction; 1..5 for comparison
+  metadata:
+    build: "<sanitised buildName>"     # e.g. "ui-compare 2026-05-24T11:12"
+    tags: ["ui-comparison", "<tag>", ...]
+  tunnel:                              # only if tunnelName provided
+    name: "<sanitised tunnelName>"
+    owner: "<sanitised tunnelOwner>"   # only if tunnelOwner provided
+  visibility: "<visibility>"           # private|team|share|public restricted|public
 playwright:
-  version: 1.52.0
+  version: <playwrightVersion>         # e.g. 1.57.0 — must be in
+                                       # SAUCE_SUPPORTED_PLAYWRIGHT_VERSIONS
 suites:
   - name: "<suiteName>"
     platformName: "<platform>"
     screenResolution: "<resolution>"
+    timeout: <timeout>                 # e.g. 5m, 10m, 15m, 20m, 30m
     params:
-      browserName: "<browser>"
+      browserName: "<browser>"         # chromium|chrome|firefox|webkit
       headless: false
     testMatch: ["tests/extract.spec.js"]
 artifacts:
@@ -2137,44 +2301,156 @@ artifacts:
     directory: ./artifacts/
 ```
 
-### 16.5 Test script generation
+**Sanitisation rules** (`_sanitiseYamlScalar`):
+- Build name max 255 chars, tunnel name/owner max 128, tag max 64.
+- Newlines (`\r` or `\n`) anywhere in any of these fields throws
+  `"<fieldName> must not contain newline characters"`.
+- `\` and `"` are escaped (`\\\\`, `\\"`).
 
-`_generateTestScript(...)` (`saucelabs-manager.js:315-482`) builds a Playwright
-test file (`tests/extract.spec.js`) that performs extraction and screenshots in a
-single browser session on the remote VM.
+**Compatibility validation.** Before emitting YAML, `_generateYaml` calls
+`isValidCombination(playwrightVersion, platform, browserName)` from
+`@core/saucelabs-bridge/constants.js`. If the combination is not in the
+matrix, a warning is logged but the YAML is still emitted (the user has
+opted into the combo via the panel and SauceLabs will return its own
+validator error if invalid).
 
-**What is embedded at generation time (read from disk, not hardcoded):**
-- The full `dist/extractor-bundle.js` content as a JSON-escaped string literal
-  (via `_getExtractorBundleSource()` — same three-path probe as
-  `playwright-manager.js`).
-- The `src/core/comparison/keyframe-grouper.js` source, converted from ESM to
-  CJS inline by `_convertEsmToCjs` (strips `export { ... }` and `export`
-  keyword prefixes). The resulting `groupIntoKeyframes` function is available
-  in the test script's scope.
+**SauceLabs supported matrix** (`SAUCE_COMPATIBILITY_MATRIX`):
 
-**Script execution steps:**
-1. Navigate to the URL (`page.goto`, 60 s timeout).
-2. Readiness gate: if filters produce a `compoundSelector`, wait for that
-   selector (30 s) then wait for descendant-count stabilisation (polling 750 ms,
-   timeout 30 s). Without a selector: `networkidle` (15 s) + DOM count > 100.
-3. Inject extractor bundle via `page.addScriptTag({ content: EXTRACTOR_BUNDLE })`.
-4. Run extraction: `page.evaluate(() => window.__uiCompare.extractWithConfig(filters, cfg))`.
-   Config overrides: `batchHardCapMs:30, maxElements:10000, skipInvisible:true,
-   stabilityWindowMs:500, hardTimeoutMs:20000`.
-5. Write `extraction-result.json`.
-6. Measure element rects via `page.evaluate` on `selectorPairs` (CSS selectors
-   from `el.cssSelector`).
-7. `groupIntoKeyframes(validRects, viewportHeight, viewportWidth, documentHeight)`.
-8. If keyframes exceed `MAX_KEYFRAMES` (default 200): sort by `elementIds.length`
-   descending, keep top N, re-sort by `scrollY`, re-index IDs.
-9. Freeze animations (inject `<style>` with
-   `animation-play-state:paused !important; transition-duration:0s !important`).
-10. For each keyframe: `window.scrollTo(0, kf.scrollY)`, 300 ms settle,
-    `page.screenshot({ type:'webp', quality:85, fullPage:false })`,
-    write `keyframe-N.webp`.
-11. Write `screenshots-manifest.json` with per-keyframe entries (`id`, `scrollY`,
-    `viewportWidth`, `viewportHeight`, `elementIds`, `filename`) and the
-    `elementKeyframeMap` (HPID → keyframe ID).
+| Playwright version | Platforms | Browsers | Exclusions |
+|---|---|---|---|
+| 1.58.2 / 1.58.1 | Win 10/11, macOS 14/15 | chromium, chrome, firefox, webkit | macOS 15 + firefox |
+| 1.57.0 | Win 10/11, macOS 12/13 | chromium, chrome, firefox, webkit | macOS 12 + webkit |
+| 1.56.1 / 1.55.1 | Win 10/11, macOS 12/13 | chromium, chrome, firefox | — |
+| 1.54.1 / 1.52.0 / 1.50.1 / 1.49.1 | Win 10/11, macOS 12/13 | chromium, chrome, firefox, webkit | macOS 12 + webkit |
+
+`SAUCE_SUPPORTED_PLAYWRIGHT_VERSIONS` is `['1.58.2', '1.58.1', '1.57.0',
+'1.56.1', '1.55.1', '1.54.1', '1.52.0', '1.50.1', '1.49.1']` —
+descending order. The default selected by the panel UI is
+`SAUCE_SUPPORTED_PLAYWRIGHT_VERSIONS[2]` (`1.57.0`), which also matches
+`saucelabs.defaultPlaywrightVersion`.
+
+`SAUCE_SUPPORTED_BROWSERS = ['chromium', 'chrome', 'firefox', 'webkit']`.
+`chrome` is a new addition — it represents the VM-installed Chrome (vs
+`chromium` which is the Playwright-bundled engine).
+`SAUCE_SUPPORTED_VISIBILITIES = ['private', 'team', 'share', 'public restricted', 'public']`.
+`SAUCE_SUPPORTED_REGIONS = ['us-west-1', 'eu-central-1', 'us-east-4']`.
+
+### 16.4a Mobile devices (`MOBILE_DEVICES`)
+
+`MOBILE_DEVICES` (`saucelabs-bridge/constants.js:65-74`) is a frozen list of
+emulated mobile profiles selectable via the Mobile execution mode in the
+SauceLabs panel. Each entry now carries an explicit `viewport` and
+`deviceScaleFactor`, used by both the test-script `test.use({...})` call
+and (when `orientation === 'landscape'`) the staging step that flips
+viewport dimensions:
+
+| Device | OS | Engine | Viewport | DPR |
+|---|---|---|---|---|
+| iPhone 13 / iPhone 14 | iOS | webkit | 390×844 | 3 |
+| iPhone 14 Pro Max | iOS | webkit | 430×932 | 3 |
+| iPad Pro 11" | iPadOS | webkit | 834×1194 | 2 |
+| Pixel 5 | Android | chromium | 393×851 | 2.75 |
+| Pixel 7 | Android | chromium | 412×915 | 2.625 |
+| Galaxy S9+ | Android | chromium | 320×658 | 4.5 |
+| Galaxy S24 | Android | chromium | 384×854 | 2.8125 |
+
+**Orientation handling.** The panel exposes an Orientation `<select>`
+(portrait | landscape) when Mobile is selected. The collected device payload
+becomes
+`{ name, orientation:'portrait'|'landscape', viewport:{width,height}, deviceScaleFactor, isMobile:true, hasTouch:true }`.
+In `_stageRunnerProject`, when `orientation === 'landscape'` the viewport is
+swapped (`{ width: h, height: w }`) before being written into `job.json`. The
+extract spec (`extract.spec.js:131-148`) merges any `device.viewport` /
+`userAgent` overrides on top of Playwright's `devices[name]` descriptor; if
+the descriptor is unknown, it constructs a minimal context from the supplied
+viewport/UA/DPR/touch fields directly.
+
+### 16.5 Test script staging
+
+The Playwright test script that runs on the SauceLabs VM lives in source
+at `src/saucelabs-runner/extract.spec.js` and is bundled separately via
+`webpack.saucelabs-runner.config.js` to `dist/saucelabs-runner/extract.spec.js`
+(plus `keyframe-grouper.js` and `schemas.js`). At submission time
+`_stageRunnerProject(tmpBase, ...)` (`saucelabs-manager.js:290-323`) copies
+those four files plus `dist/extractor-bundle.js` into a fresh tmp project:
+
+```
+<tmpBase>/
+  .sauce/config.yml          (generated by _generateYaml)
+  tests/
+    extract.spec.js          (copied verbatim from dist)
+    keyframe-grouper.js      (copied verbatim from dist)
+    schemas.js               (copied verbatim from dist)
+    extractor-bundle.js      (copied from dist/extractor-bundle.js)
+    job.json                 (per-run config)
+```
+
+The `tests/job.json` is the runtime contract between main and the
+remote test (validated by `validateJobConfig` from `schemas.js`):
+
+```json
+{
+  "url": "<target>",
+  "filters": { "class": "...", "id": "...", "tag": "..." } | null,
+  "maxScreenshots": 200,
+  "configOverrides": {
+    "extraction": {
+      "batchHardCapMs": 30,
+      "maxElements": 10000,
+      "skipInvisible": true,
+      "stabilityWindowMs": 500,
+      "hardTimeoutMs": 20000
+    }
+  },
+  "testTimeoutMs": 600000,
+  "device": null | {
+    "name": "<Playwright device name>",
+    "orientation": "portrait" | "landscape",
+    "viewport": { "width": N, "height": N },
+    "deviceScaleFactor": N,
+    "isMobile": true,
+    "hasTouch": true
+  }
+}
+```
+
+**Landscape orientation handling.** When `device.orientation === 'landscape'`,
+`_stageRunnerProject` swaps `viewport.{width,height}` before writing
+`job.json`. The spec then either spreads any `device.viewport`/`userAgent`
+overrides on top of Playwright's built-in `devices[name]` descriptor, or
+constructs a minimal context from the supplied
+`{ viewport, userAgent, isMobile, hasTouch, deviceScaleFactor }` if the
+device name is unknown.
+
+**Script execution steps (executed on the SauceLabs VM):**
+1. Load `tests/job.json` and validate via `schemas.js validateJobConfig`.
+2. `test.use(...)` if `device.name` is set (with override merging).
+3. Navigate to the URL (`page.goto`, 60 s timeout).
+4. Readiness gate: if filters produce a `compoundSelector`, wait for that
+   selector (30 s) then wait for descendant-count stabilisation (polling
+   750 ms, timeout 30 s). Without a selector: `networkidle` (15 s) + DOM
+   count > 100.
+5. Inject extractor bundle via
+   `page.addScriptTag({ content: EXTRACTOR_BUNDLE })` (read from disk in
+   `tests/extractor-bundle.js`).
+6. Run extraction:
+   `page.evaluate(() => window.__uiCompare.extractWithConfig(filters, cfg))`.
+7. Write `extraction-result.json`.
+8. Measure element rects via `page.evaluate` on `selectorPairs` (CSS
+   selectors from `el.cssSelector`).
+9. `groupIntoKeyframes(validRects, viewportHeight, viewportWidth,
+   documentHeight)` — imported from the staged `keyframe-grouper.js`.
+10. If keyframes exceed `maxScreenshots` (default 200): sort by
+    `elementIds.length` descending, keep top N, re-sort by `scrollY`,
+    re-index IDs.
+11. Freeze animations (inject `<style>` with
+    `animation-play-state:paused !important; transition-duration:0s !important`).
+12. For each keyframe: `window.scrollTo(0, kf.scrollY)`, settle,
+    `page.screenshot({ type:'webp', quality:85, fullPage:false })`, write
+    `keyframe-N.webp`.
+13. Write `screenshots-manifest.json` with per-keyframe entries (`id`,
+    `scrollY`, `viewportWidth`, `viewportHeight`, `elementIds`,
+    `filename`) and the `elementKeyframeMap` (HPID → keyframe ID).
 
 **Artifact schema written by the script:**
 ```
@@ -2182,6 +2458,11 @@ extraction-result.json       — same shape as runExtraction returns
 screenshots-manifest.json    — { keyframes: [...], elementKeyframeMap: { [hpid]: kfId } }
 keyframe-0.webp ... N.webp   — viewport screenshots at keyframe scroll positions
 ```
+
+**Build prerequisite.** `npm run build:saucelabs-runner` must produce all
+four staged files before any SauceLabs job can be submitted; the
+runner-staging path probe throws a descriptive error otherwise (listing
+each missing file).
 
 ### 16.6 Polling
 
@@ -2447,7 +2728,7 @@ that completed while the app was closed must be retried to get results.
 
 ### 16.13 Configuration
 
-All SauceLabs tunables live under `config.saucelabs` in `src/config/defaults.js:299-305`:
+All SauceLabs tunables live under `config.saucelabs` in `src/config/defaults.js:293-304`:
 
 | Key | Default | Purpose |
 |---|---|---|
@@ -2456,9 +2737,19 @@ All SauceLabs tunables live under `config.saucelabs` in `src/config/defaults.js:
 | `maxScreenshotsPerSession` | `200` | Cap on keyframe screenshots per extraction |
 | `pollTimeoutMs` | `90 * 60 * 1000` (90 min) | Maximum polling duration before declaring timeout |
 | `maxRetainedJobs` | `20` | IDB retention limit for `sauce_jobs` store |
+| `defaultPlaywrightVersion` | `'1.57.0'` | YAML `playwright.version` when caller omits it |
+| `defaultConcurrency` | `1` | YAML `sauce.concurrency` when caller omits it |
+| `defaultTimeout` | `'15m'` | YAML per-suite `timeout` when caller omits it |
+| `defaultVisibility` | `'team'` | YAML `sauce.visibility` when caller omits it |
+| `defaultTags` | `['ui-comparison']` | YAML `sauce.metadata.tags` when caller omits it |
 
-Additionally, `saucectlTimeoutMs` (default 10 min, `saucelabs-manager.js:760`) caps
+Additionally, `saucectlTimeoutMs` (default 10 min, `saucelabs-manager.js:1051`) caps
 how long a single `saucectl run` child process is allowed to execute before SIGKILL.
+
+**Concurrency clamp inside `_generateYaml`.** The argument is treated as
+valid only if `Number.isFinite(c) && 1 <= c <= 10`; anything else falls
+back to `defaultConcurrency`. The panel UI only exposes 1–5 in the
+`<select>` to match common SauceLabs concurrent-session entitlements.
 
 ### 16.14 Renderer-side state management
 
@@ -2474,6 +2765,15 @@ On `SAUCE_JOB_COMPLETE` with comparison data, the workflow runs the
 `Comparator` locally (same matching/diffing pipeline as the local compare
 flow), persists reports + comparison + filtered visual keyframes to IDB, and
 registers keyframe blobs in the protocol cache for immediate UI rendering.
+The persisted comparison row carries a `tolerancesSnapshot` mirroring the
+boot-time defaults (the cloud comparator does not yet honour the user's
+tolerance profile — see §17 for the local-compare path that does).
+
+**Persisted Sauce job fields (panel-supplied metadata).** When a job is
+written to `sauce_jobs`, the renderer payload now also persists:
+`playwrightVersion`, `concurrency`, `buildName`, `tags`, `visibility`,
+`timeout`, `tunnelOwner`. These are reused on `retrySauceJob` so a retry
+keeps the original parameters.
 
 ### 16.15 Failure modes
 
@@ -2493,3 +2793,174 @@ registers keyframe blobs in the protocol cache for immediate UI rendering.
 | Checksum mismatch on update | SHA-256 comparison | Update aborted; existing binary retained |
 | GitHub rate limit (403/429) | Response status code | Update check skipped silently |
 | Session ID not parseable from stdout | `_parseSauceSessionId` returns null | Fallback: `_recoverSessionId` via `GET /rest/v1/{user}/jobs?limit=1` |
+
+---
+
+## 17. Tolerance Profile System
+
+The CSS diff engine's tolerances (`color`, `size`, `opacity`) are no longer
+hard-coded per mode. They live in a **single user-overridable profile**
+that:
+
+- Boots from `comparison.defaultTolerances` in `config/defaults.js:211`
+  (`{ color:8, size:5, opacity:0.05 }`).
+- Is loaded once at app start from IDB store `app_settings`, key
+  `tolerance_profile`.
+- Is editable inline from the Compare panel's **Tolerance** group
+  (three numeric inputs in `index.html:262-278`).
+- Is stamped onto every saved comparison so historical reports retain the
+  threshold under which they were judged.
+
+### 17.1 Sources of truth
+
+| Layer | Where | Notes |
+|---|---|---|
+| Boot defaults | `config/defaults.js:211` | Frozen, deep-frozen. Validated by `validateDefaultTolerances` in `validator.js`. Required path; ranges checked. |
+| User override (persisted) | IDB `app_settings` row `key='tolerance_profile'` | Schema: `{ key, tolerances:{ color, size, opacity }, updatedAt }`. Single row at most. |
+| Live in renderer | `state.tolerances` | Seeded from boot defaults in `initialState`. Replaced by `SET_TOLERANCES` after `loadToleranceProfile()` resolves at boot. Updated incrementally by `SET_TOLERANCE_FIELD` per keystroke. |
+| Per-comparison snapshot | `comparisons.tolerancesSnapshot` (and `comparison.tolerancesSnapshot` after read) | Embedded into `meta` by `compare-workflow.js handleComparison` from `resolveActiveTolerances(getState())`. Bulk and SauceLabs paths stamp the boot defaults instead (they don't yet honour user override). |
+
+### 17.2 Lifecycle
+
+```
+boot
+ └─ initializeApp() (report-manager.js:828)
+     ├─ applyPendingOperations()    [WAL replay]
+     └─ storage.loadToleranceProfile()
+         ├─ if record exists → dispatch('SET_TOLERANCES', { tolerances })
+         └─ else            → state.tolerances stays at boot defaults
+
+user types a value in #tolerance-color/-size/-opacity (app.js:679-696)
+ └─ on 'input': dispatch('SET_TOLERANCE_FIELD', { field, value })
+     └─ persistTolerancesDebounced() — 300 ms debounce
+         └─ storage.saveToleranceProfile({ tolerances: resolveActiveTolerances(state) })
+ └─ on 'change' (blur): persistTolerancesImmediate() — flushes debounce
+
+user clicks Compare (compare-workflow.js handleComparison)
+ └─ const activeTolerances = resolveActiveTolerances(getState())
+ └─ api.startComparison({ ..., tolerances: activeTolerances })
+ └─ tolerancesSnapshot = { ...activeTolerances }
+     └─ stamped on meta + on the dispatched COMPARISON_COMPLETE result
+
+result panel renders (result-panel.js)
+ └─ result.tolerancesSnapshot drives the "Tol C/S/O" badge in the summary bar.
+     Legacy rows without the field show "Tolerances: —" with explanatory tooltip.
+```
+
+### 17.3 IPC contract
+
+`START_COMPARISON` accepts a `tolerances:{ color, size, opacity }` field
+(see §3). Main forwards it to `playwrightManager.runComparison`, which
+forwards it to `comparator.compare(..., tolerances)`. If null/omitted, the
+comparator falls back to `comparison.defaultTolerances` (the boot
+defaults). Bulk and Sauce comparison paths currently send no tolerance
+override — they always use boot defaults.
+
+### 17.4 IDB API surface
+
+Two new methods on `IDBRepository` (`idb-repository.js:1521-1565`):
+
+- `saveToleranceProfile({ tolerances })` — enqueued through the write
+  queue (so a circuit-open state correctly halts the save). Validates
+  `app_settings` exists (defensive — a v11+ DB always has it). Returns
+  `{ success:true }` or `{ success:false, error }`. **No WAL bracket** —
+  loss of a single in-flight save degrades gracefully (the user simply
+  re-types).
+- `loadToleranceProfile()` — bypasses the write queue (read-only path);
+  returns the record or `null` (also `null` on read error or missing
+  store).
+
+### 17.5 Reducer rules (`state.js`)
+
+- `_clampNumber(value, min, max, fallback)` is the shared helper. Non-finite
+  → `fallback`; out-of-range → clamped.
+- `SET_TOLERANCES` accepts a payload `{ tolerances }`; non-object payloads
+  fall back to boot defaults. Each field is clamped: color [0,255], size
+  [0,100], opacity [0,1]. Returns the prior state unchanged if the
+  resulting triple matches current state (avoids spurious re-renders).
+- `SET_TOLERANCE_FIELD` accepts `{ field:'color'|'size'|'opacity', value }`.
+  Unknown field → noop. Same clamp/no-op rules.
+- `DISMISS_ERROR` preserves `state.tolerances` explicitly — error recovery
+  must not reset the user's profile.
+
+### 17.6 Boot config validation
+
+`validateDefaultTolerances(errors)` (`validator.js:167-189`) is invoked
+during `validateConfig` at `src/main/index.js:144` with
+`{ throwOnError:true }`. Failures abort startup with `app.quit()`:
+
+- `comparison.defaultTolerances` must be an object (not array).
+- `color` is a number in [0, 255]; `size` in [0, 100]; `opacity` in [0, 1].
+
+The legacy `comparison.tolerances.*` paths are no longer required.
+Per-mode `comparison.modes.{static,dynamic}.tolerances` are also gone — the
+validator was updated in lock-step.
+
+---
+
+## 18. Theme System (Light / Dark)
+
+The renderer ships both a dark and a light theme, switchable from the
+status bar. The HTML export inherits the user's choice via
+`localStorage`.
+
+### 18.1 In-app theme
+
+- **Tokens.** `src/renderer/styles/tokens.css` defines two `:root` variants:
+  `[data-theme="dark"]` (the default) and `[data-theme="light"]`. Every
+  component stylesheet consumes `--color-*` / `--font-*` / `--space-*` /
+  `--radius-*` / `--shadow-*` / `--z-*` / `--motion-*` tokens — never
+  hard-coded HEX values.
+- **Bootstrap.** A blocking inline script at the top of
+  `src/renderer/index.html:4-18` reads `localStorage.ui-theme`. If no
+  value is stored, it derives `'light'` from
+  `prefers-color-scheme: light`, otherwise defaults to `'dark'`. Sets
+  `document.documentElement.setAttribute('data-theme', t)` synchronously
+  to avoid a flash of unthemed content.
+- **Toggle.** `#theme-toggle` lives in the status bar (right side,
+  `index.html:346-360`) and renders both moon and sun SVGs, hidden via
+  CSS based on the active theme. `app.js toggleTheme()` flips
+  `documentElement.dataset.theme`, persists to `localStorage`, and calls
+  `syncThemeToggleButton()` to update `aria-pressed` / `aria-label`. The
+  function is exposed as `window.__toggleTheme` for diagnostic / scripting
+  use.
+- **macOS class.** `app.js` adds `.platform-darwin` to `<html>` when
+  `electronAPI.platform === 'darwin'` — used by `shell.css` to add the
+  traffic-light left inset (independent of theme).
+
+### 18.2 HTML export theme inheritance
+
+`src/core/export/comparison-exporters/html-exporter.js`:
+
+- `exportToHTML(comparisonResult)` reads `localStorage.ui-theme` (defaulting
+  to `'dark'`), then forwards it to `buildDocument(...)` as a 6th argument.
+- `buildDocument` sets `<html lang="en" data-theme="${theme}">` and embeds
+  a small inline script: it re-reads `localStorage.ui-theme-report` (a
+  *separate* key from the main app, so that the report viewer can be
+  toggled independently of the editor), and overrides `data-theme` if a
+  value is present.
+- `buildCss()` emits both `[data-theme="dark"]` and `[data-theme="light"]`
+  variable blocks containing all colour tokens used inside the report
+  (severity buckets, banner palette, neighbour-bg colour set, role
+  badges, swatch borders, etc.).
+- The exported report has its own theme-toggle button rendered inside
+  `<header class="topbar">` (`#theme-toggle`); its click handler is
+  defined in the report's inline JS and writes
+  `ui-theme-report` to `localStorage`.
+
+### 18.3 Banner colour tokens
+
+The diagnostic / pre-flight / DevTools banners that overlay the export now
+use semantic colour tokens (`--color-banner-error-bg`,
+`--color-banner-error-border`, `--color-banner-error-fg`,
+`--color-banner-warn-bg/border`, `--color-banner-info-bg/border/fg/fg-muted`)
+instead of hard-coded hex values. Every banner adapts to the chosen theme
+without an explicit branch in JS.
+
+### 18.4 Component-level theme awareness
+
+There is no JS-level theme observer. Components rely entirely on the CSS
+variable cascade: any rule that consumes `--color-*` automatically receives
+the right value when `data-theme` flips on `<html>`. The only JS hook is
+`syncThemeToggleButton`, which only updates the toggle button's ARIA
+attributes — not any rendered content.

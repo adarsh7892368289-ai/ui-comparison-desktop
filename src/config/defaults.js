@@ -140,12 +140,6 @@ const rawConfig = {
       yieldChunkSize:      64
     },
 
-    tolerances: {
-      color:   5,
-      size:    3,
-      opacity: 0.01
-    },
-
     severity: {
       critical: ['display', 'visibility', 'position', 'z-index'],
       high: [
@@ -206,15 +200,15 @@ const rawConfig = {
         structuralOnlyAttributes: [
           'role', 'aria-label', 'aria-labelledby', 'aria-describedby',
           'type', 'name', 'data-testid', 'data-test', 'data-qa', 'data-cy'
-        ],
-        tolerances: { color: 8, size: 5, opacity: 0.05 }
+        ]
       },
       static: {
         compareProperties:  null,
-        compareTextContent: true,
-        tolerances:         { color: 5, size: 3, opacity: 0.01 }
+        compareTextContent: true
       }
     },
+
+    defaultTolerances: { color: 8, size: 5, opacity: 0.05 }
 
   },
 
@@ -302,6 +296,11 @@ const rawConfig = {
     maxScreenshotsPerSession: 200,
     pollTimeoutMs: 90 * 60 * 1000,
     maxRetainedJobs: 20,
+    defaultPlaywrightVersion: '1.57.0',
+    defaultConcurrency: 1,
+    defaultTimeout: '15m',
+    defaultVisibility: 'team',
+    defaultTags: ['ui-comparison'],
   },
 
   export: {

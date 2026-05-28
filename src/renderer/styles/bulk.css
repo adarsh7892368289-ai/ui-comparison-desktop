@@ -655,8 +655,7 @@
   transition: opacity 200ms var(--ease-standard);
 }
 .nav-section-status:empty {
-  opacity: 0;
-  pointer-events: none;
+  display: none;
 }
 .nav-section-status__dot {
   display: inline-block;

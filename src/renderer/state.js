@@ -1,5 +1,14 @@
 'use strict';
 
+import { get as configGet } from '../config/defaults.js';
+
+function _clampNumber(value, min, max, fallback) {
+  const n = typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+  if (n < min) { return min; }
+  if (n > max) { return max; }
+  return n;
+}
+
 
 
 
@@ -59,7 +68,8 @@ const initialState = {
   sauceJob: null,
   sauceCredentialState: 'idle',
   sauceCredentialError: null,
-  sauceComparisonResult: null
+  sauceComparisonResult: null,
+  tolerances: { ...configGet('comparison.defaultTolerances') }
 };
 
 let _state = { ...initialState };
@@ -189,6 +199,31 @@ function reduce(state, type, payload) {
     case 'MODE_CHANGED':
       return { ...state, compareMode: payload.mode };
 
+    case 'SET_TOLERANCES': {
+      const defaults = configGet('comparison.defaultTolerances');
+      const seed = (payload.tolerances && typeof payload.tolerances === 'object') ? payload.tolerances : defaults;
+      const next = {
+        color:   _clampNumber(seed.color,   0, 255, defaults.color),
+        size:    _clampNumber(seed.size,    0, 100, defaults.size),
+        opacity: _clampNumber(seed.opacity, 0, 1,   defaults.opacity)
+      };
+      const cur = state.tolerances ?? defaults;
+      if (cur.color === next.color && cur.size === next.size && cur.opacity === next.opacity) {
+        return state;
+      }
+      return { ...state, tolerances: next };
+    }
+
+    case 'SET_TOLERANCE_FIELD': {
+      if (!['color', 'size', 'opacity'].includes(payload.field)) { return state; }
+      const max = payload.field === 'color' ? 255 : payload.field === 'size' ? 100 : 1;
+      const defaults = configGet('comparison.defaultTolerances');
+      const value = _clampNumber(payload.value, 0, max, defaults[payload.field]);
+      const base = state.tolerances ?? defaults;
+      if (base[payload.field] === value) { return state; }
+      return { ...state, tolerances: { ...base, [payload.field]: value } };
+    }
+
     case 'RESET_COMPARISON':{
         const cleared = {
           ...state,
@@ -233,7 +268,8 @@ function reduce(state, type, payload) {
         sauceJob: state.sauceJob,
         sauceCredentialState: state.sauceCredentialState,
         sauceCredentialError: state.sauceCredentialError,
-        sauceInFlightJobCount: state.sauceInFlightJobCount
+        sauceInFlightJobCount: state.sauceInFlightJobCount,
+        tolerances: state.tolerances
       };
 
     case 'BULK_PARSED_ROWS_SET':

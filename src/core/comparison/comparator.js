@@ -63,7 +63,7 @@ class Comparator {
     };
   }
 
-  async* compare(baselineReport, compareReport, mode = 'static') {
+  async* compare(baselineReport, compareReport, mode = 'static', tolerances = null) {
     const startTime    = performance.now();
     let matchingResult = null;
 
@@ -86,7 +86,7 @@ class Comparator {
     const diffTotal       = matchingResult.matches.length;
     let   comparisonResult = null;
 
-    const diffingGen = comparisonMode.compare(matchingResult.matches);
+    const diffingGen = comparisonMode.compare(matchingResult.matches, tolerances);
 
     for await (const frame of diffingGen) {
       if (frame.type === 'result') {

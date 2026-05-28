@@ -309,6 +309,10 @@ html.platform-darwin #app-root {
   gap: var(--space-2);
 }
 
+#bulk-resume-banner-slot:empty {
+  display: none;
+}
+
 #section-extract,
 #section-compare,
 #section-bulk,

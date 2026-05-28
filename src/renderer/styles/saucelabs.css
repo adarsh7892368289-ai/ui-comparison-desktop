@@ -217,3 +217,38 @@
   font-size: var(--text-sm);
   color: var(--color-success);
 }
+
+.saucelabs-panel__metadata-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  cursor: pointer;
+  user-select: none;
+}
+
+.saucelabs-panel__metadata-label {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+}
+
+.saucelabs-panel__metadata-chevron {
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--color-text-tertiary);
+  transition: transform 0.15s;
+}
+
+.saucelabs-panel__metadata-chevron--open {
+  transform: rotate(180deg);
+}
+
+.saucelabs-panel__metadata {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-bottom: var(--space-3);
+}

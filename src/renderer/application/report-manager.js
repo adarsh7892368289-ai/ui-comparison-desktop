@@ -837,6 +837,15 @@ async function initializeApp(statusBar) {
     console.warn('[report-manager] applyPendingOperations failed or timed out, continuing init', err);
   }
 
+  try {
+    const profile = await storage.loadToleranceProfile();
+    if (profile && profile.tolerances && typeof profile.tolerances === 'object') {
+      dispatch('SET_TOLERANCES', { tolerances: profile.tolerances });
+    }
+  } catch (err) {
+    console.warn('[report-manager] loadToleranceProfile failed, using default tolerances', err);
+  }
+
   const listContainer = document.getElementById('reports-list');
   if (listContainer) {
     _reportList = createReportList(listContainer, {

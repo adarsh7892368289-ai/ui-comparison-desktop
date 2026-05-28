@@ -21,6 +21,9 @@ import {
   SAUCE_DEFAULT_VIEWPORT,
   SAUCE_DEFAULT_PLATFORM_BY_ENGINE,
   SAUCE_DEFAULT_RESOLUTION_BY_ENGINE,
+  SAUCE_SUPPORTED_PLAYWRIGHT_VERSIONS,
+  SAUCE_COMPATIBILITY_MATRIX,
+  SAUCE_SUPPORTED_VISIBILITIES,
   platformsForEngine,
   resolutionsForEngine,
   findMobileDevice
@@ -31,11 +34,19 @@ const REGIONS = [
 { value: 'us-east-4', label: 'US East 4' },
 { value: 'eu-central-1', label: 'EU Central 1' }];
 
-
 const BROWSERS = [
 { value: 'chromium', label: 'Chromium' },
+{ value: 'chrome', label: 'Chrome (VM-installed)' },
 { value: 'firefox', label: 'Firefox' },
 { value: 'webkit', label: 'WebKit' }];
+
+const TIMEOUTS = [
+{ value: '5m', label: '5 minutes' },
+{ value: '10m', label: '10 minutes' },
+{ value: '15m', label: '15 minutes' },
+{ value: '20m', label: '20 minutes' },
+{ value: '30m', label: '30 minutes' }];
+
 
 
 
@@ -86,7 +97,7 @@ export function createSauceLabsPanel(hostEl) {
       </div>
 
       <fieldset class="saucelabs-panel__form-factor">
-        <legend class="label">Device type</legend>
+        <legend class="label">Execution Mode</legend>
         <label class="saucelabs-panel__radio">
           <input type="radio" name="sauce-form-factor" value="desktop" checked>
           <span>Desktop</span>
@@ -99,8 +110,8 @@ export function createSauceLabsPanel(hostEl) {
 
       <div class="form-row">
         <div class="form-field form-field--half">
-          <label class="label" for="sauce-platform">Platform</label>
-          <select class="input" id="sauce-platform"></select>
+          <label class="label" for="sauce-pw-version">Playwright Version</label>
+          <select class="input" id="sauce-pw-version"></select>
         </div>
         <div class="form-field form-field--half">
           <label class="label" for="sauce-browser">Browser</label>
@@ -109,18 +120,71 @@ export function createSauceLabsPanel(hostEl) {
       </div>
 
       <div class="form-row">
+        <div class="form-field form-field--half" id="sauce-platform-field">
+          <label class="label" for="sauce-platform">Platform</label>
+          <select class="input" id="sauce-platform"></select>
+        </div>
         <div class="form-field form-field--half" id="sauce-resolution-field">
           <label class="label" for="sauce-resolution">Resolution</label>
           <select class="input" id="sauce-resolution"></select>
         </div>
-        <div class="form-field form-field--half" id="sauce-device-field" hidden>
+      </div>
+
+      <div class="form-row" id="sauce-device-row" hidden>
+        <div class="form-field form-field--half" id="sauce-device-field">
           <label class="label" for="sauce-device">Device</label>
           <select class="input" id="sauce-device"></select>
         </div>
+        <div class="form-field form-field--half" id="sauce-orientation-field">
+          <label class="label" for="sauce-orientation">Orientation</label>
+          <select class="input" id="sauce-orientation">
+            <option value="portrait">Portrait</option>
+            <option value="landscape">Landscape</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-row">
         <div class="form-field form-field--half">
           <label class="label" for="sauce-tunnel">Tunnel (optional)</label>
           <input class="input" id="sauce-tunnel" type="text" placeholder="tunnel-name" autocomplete="off">
         </div>
+        <div class="form-field form-field--half">
+          <label class="label" for="sauce-timeout">Timeout</label>
+          <select class="input" id="sauce-timeout"></select>
+        </div>
+      </div>
+
+      <div class="saucelabs-panel__metadata-toggle" id="sauce-metadata-toggle">
+        <span class="saucelabs-panel__metadata-label">Metadata: auto-generated</span>
+        <span class="saucelabs-panel__metadata-chevron" id="sauce-metadata-chevron"></span>
+      </div>
+      <div class="saucelabs-panel__metadata" id="sauce-metadata-section" hidden>
+        <div class="form-field">
+          <label class="label" for="sauce-build-name">Build Name</label>
+          <input class="input" id="sauce-build-name" type="text" placeholder="ui-compare {date}" autocomplete="off" maxlength="255">
+        </div>
+        <div class="form-field">
+          <label class="label" for="sauce-tags">Tags (comma-separated)</label>
+          <input class="input" id="sauce-tags" type="text" placeholder="ui-comparison" autocomplete="off" maxlength="500">
+        </div>
+        <div class="form-row">
+          <div class="form-field form-field--half">
+            <label class="label" for="sauce-visibility">Visibility</label>
+            <select class="input" id="sauce-visibility"></select>
+          </div>
+          <div class="form-field form-field--half">
+            <label class="label" for="sauce-concurrency">Concurrency</label>
+            <select class="input" id="sauce-concurrency">
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+              <option value="5">5</option>
+            </select>
+          </div>
+        </div>
+        <p class="saucelabs-panel__hint">Set concurrency to 2+ to run baseline and compare sessions simultaneously — requires a concurrent session limit >= 2 on your SauceLabs plan.</p>
       </div>
 
       <div class="card-header">
@@ -169,17 +233,97 @@ export function createSauceLabsPanel(hostEl) {
     regionSelect.appendChild(opt);
   }
 
+  const pwVersionSelect = panel.querySelector('#sauce-pw-version');
   const platformSelect = panel.querySelector('#sauce-platform');
-
   const browserSelect = panel.querySelector('#sauce-browser');
-  for (const b of BROWSERS) {
+  const resolutionSelect = panel.querySelector('#sauce-resolution');
+  const deviceSelect = panel.querySelector('#sauce-device');
+  const orientationSelect = panel.querySelector('#sauce-orientation');
+  const timeoutSelect = panel.querySelector('#sauce-timeout');
+  const visibilitySelect = panel.querySelector('#sauce-visibility');
+  const concurrencySelect = panel.querySelector('#sauce-concurrency');
+  const buildNameInput = panel.querySelector('#sauce-build-name');
+  const tagsInput = panel.querySelector('#sauce-tags');
+  const metadataToggle = panel.querySelector('#sauce-metadata-toggle');
+  const metadataSection = panel.querySelector('#sauce-metadata-section');
+  const metadataChevron = panel.querySelector('#sauce-metadata-chevron');
+  const platformField = panel.querySelector('#sauce-platform-field');
+  const resolutionField = panel.querySelector('#sauce-resolution-field');
+  const deviceRow = panel.querySelector('#sauce-device-row');
+  const formFactorRadios = panel.querySelectorAll('input[name="sauce-form-factor"]');
+
+  for (const v of SAUCE_SUPPORTED_PLAYWRIGHT_VERSIONS) {
     const opt = document.createElement('option');
-    opt.value = b.value;
-    opt.textContent = b.label;
-    browserSelect.appendChild(opt);
+    opt.value = v;
+    opt.textContent = v;
+    pwVersionSelect.appendChild(opt);
+  }
+  pwVersionSelect.value = SAUCE_SUPPORTED_PLAYWRIGHT_VERSIONS[2];
+
+  for (const t of TIMEOUTS) {
+    const opt = document.createElement('option');
+    opt.value = t.value;
+    opt.textContent = t.label;
+    timeoutSelect.appendChild(opt);
+  }
+  timeoutSelect.value = '15m';
+
+  for (const vis of SAUCE_SUPPORTED_VISIBILITIES) {
+    const opt = document.createElement('option');
+    opt.value = vis;
+    opt.textContent = vis;
+    visibilitySelect.appendChild(opt);
+  }
+  visibilitySelect.value = 'team';
+
+  function _repopulateBrowserDropdown(pwVersion, preferredValue) {
+    const entry = SAUCE_COMPATIBILITY_MATRIX[pwVersion];
+    const allowedBrowsers = entry ? entry.browsers : ['chromium', 'chrome', 'firefox', 'webkit'];
+    const previousValue = browserSelect.value;
+    while (browserSelect.firstChild) browserSelect.removeChild(browserSelect.firstChild);
+    for (const b of BROWSERS) {
+      if (!allowedBrowsers.includes(b.value)) continue;
+      const opt = document.createElement('option');
+      opt.value = b.value;
+      opt.textContent = b.label;
+      browserSelect.appendChild(opt);
+    }
+    if (preferredValue && allowedBrowsers.includes(preferredValue)) {
+      browserSelect.value = preferredValue;
+    } else if (allowedBrowsers.includes(previousValue)) {
+      browserSelect.value = previousValue;
+    } else {
+      browserSelect.value = allowedBrowsers[0];
+    }
   }
 
-  const resolutionSelect = panel.querySelector('#sauce-resolution');
+  function _repopulatePlatformDropdown(pwVersion, engine, preferredValue) {
+    const entry = SAUCE_COMPATIBILITY_MATRIX[pwVersion];
+    let allowedPlatforms;
+    if (entry) {
+      allowedPlatforms = entry.platforms.filter(p => {
+        return !entry.exclusions.some(e => e.platform === p && e.browser === engine);
+      });
+    } else {
+      allowedPlatforms = platformsForEngine(engine);
+    }
+    const previousValue = platformSelect.value;
+    while (platformSelect.firstChild) platformSelect.removeChild(platformSelect.firstChild);
+    for (const p of allowedPlatforms) {
+      const opt = document.createElement('option');
+      opt.value = p;
+      opt.textContent = p;
+      platformSelect.appendChild(opt);
+    }
+    if (preferredValue && allowedPlatforms.includes(preferredValue)) {
+      platformSelect.value = preferredValue;
+    } else if (allowedPlatforms.includes(previousValue)) {
+      platformSelect.value = previousValue;
+    } else {
+      platformSelect.value = SAUCE_DEFAULT_PLATFORM_BY_ENGINE[engine] ?? allowedPlatforms[0] ?? '';
+    }
+  }
+
   function _repopulateResolutionDropdown(engine, preferredValue) {
     const allowed = resolutionsForEngine(engine);
     const previousValue = resolutionSelect.value;
@@ -199,9 +343,7 @@ export function createSauceLabsPanel(hostEl) {
       resolutionSelect.value = def;
     }
   }
-  _repopulateResolutionDropdown(browserSelect.value);
 
-  const deviceSelect = panel.querySelector('#sauce-device');
   const _devicesByOs = MOBILE_DEVICES.reduce((acc, d) => {
     if (!acc[d.os]) acc[d.os] = [];
     acc[d.os].push(d);
@@ -219,10 +361,6 @@ export function createSauceLabsPanel(hostEl) {
     deviceSelect.appendChild(grp);
   }
 
-  const resolutionField = panel.querySelector('#sauce-resolution-field');
-  const deviceField = panel.querySelector('#sauce-device-field');
-  const formFactorRadios = panel.querySelectorAll('input[name="sauce-form-factor"]');
-
   function _currentFormFactor() {
     for (const r of formFactorRadios) {
       if (r.checked) return r.value;
@@ -233,24 +371,6 @@ export function createSauceLabsPanel(hostEl) {
   let _userBrowserChoice = null;
   let _userPlatformChoice = null;
   let _userResolutionChoice = null;
-
-  function _repopulatePlatformDropdown(allowedPlatforms, preferredValue) {
-    const previousValue = platformSelect.value;
-    while (platformSelect.firstChild) platformSelect.removeChild(platformSelect.firstChild);
-    for (const p of allowedPlatforms) {
-      const opt = document.createElement('option');
-      opt.value = p;
-      opt.textContent = p;
-      platformSelect.appendChild(opt);
-    }
-    if (preferredValue && allowedPlatforms.includes(preferredValue)) {
-      platformSelect.value = preferredValue;
-    } else if (allowedPlatforms.includes(previousValue)) {
-      platformSelect.value = previousValue;
-    } else {
-      platformSelect.value = allowedPlatforms[0];
-    }
-  }
 
   function _lockBrowserToDevice(deviceMeta) {
     if (!deviceMeta?.browserEngine) return;
@@ -264,30 +384,25 @@ export function createSauceLabsPanel(hostEl) {
       _userResolutionChoice = resolutionSelect.value;
     }
     const engine = deviceMeta.browserEngine;
-    const opt = Array.from(browserSelect.options).find((o) => o.value === engine);
-    if (opt) {
-      browserSelect.value = engine;
-    }
+    browserSelect.value = engine;
     browserSelect.disabled = true;
     browserSelect.title = `Locked to ${engine} for ${deviceMeta.label}`;
-
-    const allowedPlatforms = platformsForEngine(engine);
-    const preferredPlatform = SAUCE_DEFAULT_PLATFORM_BY_ENGINE[engine] ?? allowedPlatforms[0];
-    _repopulatePlatformDropdown(allowedPlatforms, preferredPlatform);
-
+    _repopulatePlatformDropdown(pwVersionSelect.value, engine, SAUCE_DEFAULT_PLATFORM_BY_ENGINE[engine]);
     _repopulateResolutionDropdown(engine, deviceMeta.viewportLabel);
   }
 
   function _unlockBrowser() {
     if (_userBrowserChoice !== null) {
-      browserSelect.value = _userBrowserChoice;
+      const entry = SAUCE_COMPATIBILITY_MATRIX[pwVersionSelect.value];
+      if (entry && entry.browsers.includes(_userBrowserChoice)) {
+        browserSelect.value = _userBrowserChoice;
+      }
       _userBrowserChoice = null;
     }
     browserSelect.disabled = false;
     browserSelect.title = '';
     const engine = browserSelect.value;
-    const allowedPlatforms = platformsForEngine(engine);
-    _repopulatePlatformDropdown(allowedPlatforms, _userPlatformChoice);
+    _repopulatePlatformDropdown(pwVersionSelect.value, engine, _userPlatformChoice);
     _userPlatformChoice = null;
     _repopulateResolutionDropdown(engine, _userResolutionChoice);
     _userResolutionChoice = null;
@@ -295,10 +410,12 @@ export function createSauceLabsPanel(hostEl) {
 
   function _syncFormFactorUI() {
     const isMobile = _currentFormFactor() === FORM_FACTOR.MOBILE;
+    platformField.hidden = isMobile;
     resolutionField.hidden = isMobile;
-    deviceField.hidden = !isMobile;
+    deviceRow.hidden = !isMobile;
     resolutionSelect.disabled = isMobile;
     deviceSelect.disabled = !isMobile;
+    orientationSelect.disabled = !isMobile;
     if (isMobile) {
       _lockBrowserToDevice(findMobileDevice(deviceSelect.value));
     } else {
@@ -306,45 +423,79 @@ export function createSauceLabsPanel(hostEl) {
     }
   }
 
-  for (const r of formFactorRadios) {
-    r.addEventListener('change', _syncFormFactorUI);
+  function _syncDropdownsFromVersion() {
+    const pwVersion = pwVersionSelect.value;
+    const currentBrowser = browserSelect.value;
+    _repopulateBrowserDropdown(pwVersion, currentBrowser);
+    if (_currentFormFactor() !== FORM_FACTOR.MOBILE) {
+      _repopulatePlatformDropdown(pwVersion, browserSelect.value);
+      _repopulateResolutionDropdown(browserSelect.value);
+    }
   }
+
+  metadataToggle.addEventListener('click', () => {
+    const isHidden = metadataSection.hidden;
+    metadataSection.hidden = !isHidden;
+    metadataChevron.classList.toggle('saucelabs-panel__metadata-chevron--open', isHidden);
+  });
+
+  pwVersionSelect.addEventListener('change', _syncDropdownsFromVersion);
+
   browserSelect.addEventListener('change', () => {
     if (_currentFormFactor() !== FORM_FACTOR.MOBILE) {
       const engine = browserSelect.value;
-      _repopulatePlatformDropdown(
-        platformsForEngine(engine),
-        SAUCE_DEFAULT_PLATFORM_BY_ENGINE[engine]
-      );
+      _repopulatePlatformDropdown(pwVersionSelect.value, engine, SAUCE_DEFAULT_PLATFORM_BY_ENGINE[engine]);
       _repopulateResolutionDropdown(engine);
     }
   });
+
+  for (const r of formFactorRadios) {
+    r.addEventListener('change', _syncFormFactorUI);
+  }
+
   deviceSelect.addEventListener('change', () => {
     if (_currentFormFactor() === FORM_FACTOR.MOBILE) {
       _lockBrowserToDevice(findMobileDevice(deviceSelect.value));
     }
   });
-  {
-    const initialEngine = browserSelect.value;
-    _repopulatePlatformDropdown(
-      platformsForEngine(initialEngine),
-      SAUCE_DEFAULT_PLATFORM_BY_ENGINE[initialEngine]
-    );
-  }
+
+  _repopulateBrowserDropdown(pwVersionSelect.value);
+  _repopulatePlatformDropdown(pwVersionSelect.value, browserSelect.value, SAUCE_DEFAULT_PLATFORM_BY_ENGINE[browserSelect.value]);
+  _repopulateResolutionDropdown(browserSelect.value);
   _syncFormFactorUI();
 
   function _collectDeviceSelection() {
     if (_currentFormFactor() === FORM_FACTOR.MOBILE) {
       const name = deviceSelect.value;
       const meta = findMobileDevice(name);
+      const devicePayload = { name, orientation: orientationSelect.value };
+      if (meta?.viewport) {
+        devicePayload.viewport = meta.viewport;
+        devicePayload.deviceScaleFactor = meta.deviceScaleFactor ?? 1;
+        devicePayload.isMobile = true;
+        devicePayload.hasTouch = true;
+      }
       return {
-        device: { name },
+        device: devicePayload,
         screenResolution: meta?.viewportLabel ?? SAUCE_DEFAULT_VIEWPORT
       };
     }
     return {
       device: null,
       screenResolution: resolutionSelect.value
+    };
+  }
+
+  function _collectMetadata() {
+    const rawTags = tagsInput.value.trim();
+    const tags = rawTags ? rawTags.split(',').map(t => t.trim()).filter(Boolean) : null;
+    return {
+      playwrightVersion: pwVersionSelect.value,
+      concurrency: parseInt(concurrencySelect.value, 10) || 1,
+      buildName: buildNameInput.value.trim() || null,
+      tags,
+      visibility: visibilitySelect.value || null,
+      timeout: timeoutSelect.value || null,
     };
   }
 
@@ -537,6 +688,7 @@ export function createSauceLabsPanel(hostEl) {
     compareBtn.disabled = true;
     extractBtn.disabled = true;
     const { device, screenResolution } = _collectDeviceSelection();
+    const metadata = _collectMetadata();
     void submitComparison({
       baselineUrl,
       compareUrl,
@@ -545,7 +697,8 @@ export function createSauceLabsPanel(hostEl) {
       screenResolution,
       tunnelName: tunnelInput.value.trim() || null,
       filters: filterResult.filters,
-      device
+      device,
+      ...metadata
     });
   });
 
@@ -563,6 +716,7 @@ export function createSauceLabsPanel(hostEl) {
     compareBtn.disabled = true;
     extractBtn.disabled = true;
     const { device, screenResolution } = _collectDeviceSelection();
+    const metadata = _collectMetadata();
     void submitExtraction({
       url,
       platform: platformSelect.value,
@@ -570,7 +724,8 @@ export function createSauceLabsPanel(hostEl) {
       screenResolution,
       tunnelName: tunnelInput.value.trim() || null,
       filters: filterResult.filters,
-      device
+      device,
+      ...metadata
     });
   });
 

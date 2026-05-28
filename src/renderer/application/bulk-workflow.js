@@ -465,6 +465,12 @@ async function _persistPairResult(payload) {
       const mode = slim.mode ?? payload.mode ?? 'dynamic';
 
       if (comparisonId && baseId && compId) {
+        const bulkDefaults = getDefault('comparison.defaultTolerances', { color: 8, size: 5, opacity: 0.05 });
+        const bulkTolerancesSnapshot = {
+          color:   bulkDefaults.color,
+          size:    bulkDefaults.size,
+          opacity: bulkDefaults.opacity
+        };
         const meta = {
           id: comparisonId,
           pairKey: buildPairKey(baseId, compId, mode),
@@ -478,7 +484,8 @@ async function _persistPairResult(payload) {
           timestamp: slim.completedAt ?? new Date().toISOString(),
           bulkJobId: jobId,
           visualDiffStatus: slim.visualDiffStatus ?? null,
-          visualSessionId: slim.sessionId ?? null
+          visualSessionId: slim.sessionId ?? null,
+          tolerancesSnapshot: bulkTolerancesSnapshot
         };
         await storage.saveComparison(meta, slim.comparison?.results ?? []);
 

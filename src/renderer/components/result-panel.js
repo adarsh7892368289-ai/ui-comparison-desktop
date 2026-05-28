@@ -15,6 +15,33 @@ function _text(tag, className, content) {
   return el;
 }
 
+function _buildToleranceBadge(snapshot) {
+  const isValidTriple = (v) =>
+    v && typeof v === 'object' &&
+    typeof v.color === 'number' && Number.isFinite(v.color) &&
+    typeof v.size === 'number' && Number.isFinite(v.size) &&
+    typeof v.opacity === 'number' && Number.isFinite(v.opacity);
+
+  let triple = null;
+  if (isValidTriple(snapshot)) {
+    triple = snapshot;
+  } else if (snapshot && typeof snapshot === 'object' && isValidTriple(snapshot.values)) {
+    triple = snapshot.values;
+  }
+
+  if (!triple) {
+    const el = _text('span', 'result-mode-badge result-mode-badge--muted', 'Tolerances: —');
+    el.title = 'This comparison was run before tolerances were tracked';
+    return el;
+  }
+
+  const titleText = `color ΔRGB ≤ ${triple.color}, size ≤ ${triple.size}px, opacity Δ ≤ ${triple.opacity}`;
+  const el = _ce('span', 'result-mode-badge');
+  el.title = titleText;
+  el.textContent = `Tol ${triple.color}/${triple.size}/${triple.opacity}`;
+  return el;
+}
+
 function _buildSevRow(label, count, type, sevTotal) {
   const pct = sevTotal > 0 ? (count / sevTotal * 100).toFixed(1) : 0;
   const row = _ce('div', 'rp-sev-row');
@@ -110,7 +137,7 @@ export class ResultPanel {
 
     const root = _ce('div', 'result-panel');
 
-    root.appendChild(this._buildSummaryBar(matching, mode, duration, cachedAt, fromCache, result.baselineUrl, result.compareUrl));
+    root.appendChild(this._buildSummaryBar(matching, mode, duration, cachedAt, fromCache, result.baselineUrl, result.compareUrl, result.tolerancesSnapshot ?? null));
     root.appendChild(this._buildCoverageSection(matching, modifiedElements, unchangedElements, added, removed));
 
     if (added.length > 0) {
@@ -135,7 +162,7 @@ export class ResultPanel {
     this._container.appendChild(root);
   }
 
-  _buildSummaryBar(matching, mode, duration, cachedAt, fromCache, baselineUrl, compareUrl) {
+  _buildSummaryBar(matching, mode, duration, cachedAt, fromCache, baselineUrl, compareUrl, tolerancesSnapshot) {
     const bar = _ce('div', 'result-summary-bar');
 
     const pct = matching.matchRate ?? 0;
@@ -195,6 +222,7 @@ export class ResultPanel {
 
     const meta = _ce('div', 'result-meta');
     meta.appendChild(_text('span', 'result-mode-badge', mode));
+    meta.appendChild(_buildToleranceBadge(tolerancesSnapshot));
     meta.appendChild(_text('span', '', `${duration}ms`));
 
     if (fromCache && cachedAt) {

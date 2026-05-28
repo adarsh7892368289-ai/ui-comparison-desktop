@@ -83,6 +83,11 @@
   color: var(--color-text-secondary);
 }
 
+.result-mode-badge--muted {
+  opacity: 0.6;
+  font-style: italic;
+}
+
 .result-cached-badge {
   padding: 2px var(--space-2);
   background: var(--color-surface-overlay);

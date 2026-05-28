@@ -130,10 +130,21 @@ test.setTimeout(job.testTimeoutMs ?? 600_000);
 if (job.device && job.device.name) {
   const descriptor = devices[job.device.name];
   if (descriptor) {
-    test.use(descriptor);
+    const overrides = {};
+    if (job.device.viewport) overrides.viewport = job.device.viewport;
+    if (job.device.userAgent) overrides.userAgent = job.device.userAgent;
+    test.use({ ...descriptor, ...overrides });
+  } else if (job.device.viewport) {
+    test.use({
+      viewport: job.device.viewport,
+      userAgent: job.device.userAgent || undefined,
+      isMobile: job.device.isMobile ?? false,
+      hasTouch: job.device.hasTouch ?? false,
+      deviceScaleFactor: job.device.deviceScaleFactor ?? 1,
+    });
   } else {
     // eslint-disable-next-line no-console
-    console.warn(`[saucelabs-runner] Unknown Playwright device "${job.device.name}" — running with default desktop context.`);
+    console.warn(`[saucelabs-runner] Unknown device "${job.device.name}" with no viewport — running desktop.`);
   }
 }
 

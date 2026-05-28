@@ -148,7 +148,7 @@ app.on('ready', () => {
     return;
   }
 
-  log.info('[BOOT] config tolerances:', configGet('comparison.tolerances'));
+  log.info('[BOOT] default tolerances:', configGet('comparison.defaultTolerances'));
 
   buildApplicationMenu();
 

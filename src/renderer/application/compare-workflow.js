@@ -2,6 +2,7 @@ import { dispatch, getState } from '../state.js';
 import storage from '../../infrastructure/idb-repository.js';
 import { buildPairKey } from '../../infrastructure/idb-repository.js';
 import { assessUrlCompatibility } from '@core/comparison/url-compatibility.js';
+import { get as configGet } from '../../config/defaults.js';
 import { relativeTime } from '../utils/time.js';
 import { sanitizeErrorMessage } from '../utils/sanitize.js';
 import {
@@ -16,6 +17,48 @@ import {
 const api = window.electronAPI;
 
 const _compareCancelAck = new Set();
+
+let _toleranceSaveTimer = null;
+const _TOLERANCE_SAVE_DEBOUNCE_MS = 300;
+
+const _SAFE_FALLBACK_TOLERANCES = Object.freeze({ color: 8, size: 5, opacity: 0.05 });
+
+function _coerceToleranceTriple(source) {
+  const safe = (v, fallback) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
+  let defaults;
+  try {
+    defaults = configGet('comparison.defaultTolerances');
+  } catch {
+    defaults = _SAFE_FALLBACK_TOLERANCES;
+  }
+  return {
+    color:   safe(source?.color,   defaults.color),
+    size:    safe(source?.size,    defaults.size),
+    opacity: safe(source?.opacity, defaults.opacity)
+  };
+}
+
+function resolveActiveTolerances(state) {
+  return _coerceToleranceTriple(state?.tolerances);
+}
+
+export function persistTolerancesImmediate() {
+  if (_toleranceSaveTimer) {
+    clearTimeout(_toleranceSaveTimer);
+    _toleranceSaveTimer = null;
+  }
+  void storage.saveToleranceProfile({ tolerances: resolveActiveTolerances(getState()) });
+}
+
+export function persistTolerancesDebounced() {
+  if (_toleranceSaveTimer) { clearTimeout(_toleranceSaveTimer); }
+  _toleranceSaveTimer = setTimeout(() => {
+    _toleranceSaveTimer = null;
+    void storage.saveToleranceProfile({ tolerances: resolveActiveTolerances(getState()) });
+  }, _TOLERANCE_SAVE_DEBOUNCE_MS);
+}
+
+export { resolveActiveTolerances };
 
 let _activeCompareCancel = null;
 let _compareBusy = false;
@@ -377,7 +420,8 @@ export async function loadComparisonFromCacheByPairIds(baselineId, compareId, mo
       unmatchedElements: cached.unmatchedElements,
       duration: cached.duration ?? 0,
       baselineUrl: baselineRep?.url ?? '',
-      compareUrl: compareRep?.url ?? ''
+      compareUrl: compareRep?.url ?? '',
+      tolerancesSnapshot: cached.tolerancesSnapshot ?? null
     });
     const compareSummaryStrip = _buildCompareSummaryStrip(normalized, true, cached.timestamp);
     return {
@@ -552,6 +596,9 @@ async function handleComparison() {
       throw new Error(`No elements found for compare report — re-extract the page`);
     }
 
+    const activeTolerances = resolveActiveTolerances(getState());
+    const tolerancesSnapshot = { ...activeTolerances };
+
     const result = await api.startComparison({
       baselineId: baselineReport.id,
       compareId: compareReport.id,
@@ -562,6 +609,7 @@ async function handleComparison() {
       compareElements,
       includeScreenshots,
       browser: browserPayload,
+      tolerances: activeTolerances,
       operationId,
       comparisonId
     });
@@ -611,7 +659,8 @@ async function handleComparison() {
       duration: sr.duration,
       timestamp: sr.completedAt ?? new Date().toISOString(),
       visualSessionId: sr.sessionId ?? null,
-      visualDiffStatus: sr.visualDiffStatus ?? null
+      visualDiffStatus: sr.visualDiffStatus ?? null,
+      tolerancesSnapshot
     };
 
     await storage.saveComparison(meta, sr.comparison?.results ?? []);
@@ -647,7 +696,7 @@ async function handleComparison() {
       null
     );
     dispatch('COMPARISON_COMPLETE', {
-      result: { ...normalized, id: meta.id },
+      result: { ...normalized, id: meta.id, tolerancesSnapshot },
       fromCache: false,
       compareSummaryStrip
     });

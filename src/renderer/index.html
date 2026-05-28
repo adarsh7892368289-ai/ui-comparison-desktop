@@ -256,6 +256,27 @@
               <p class="field-hint" id="mode-hint-static">Compares everything — all styles, text content, and attributes.</p>
             </div>
 
+            <hr class="card-sep">
+
+            <div class="form-field">
+              <label class="label">Tolerance</label>
+              <div class="tolerance-grid" role="group" aria-label="Tolerance values">
+                <div class="tolerance-cell">
+                  <label class="tolerance-cell__label" for="tolerance-color">Color (ΔRGB)</label>
+                  <input type="number" id="tolerance-color" class="tolerance-cell__input" min="0" max="255" step="1" inputmode="numeric">
+                </div>
+                <div class="tolerance-cell">
+                  <label class="tolerance-cell__label" for="tolerance-size">Size (px)</label>
+                  <input type="number" id="tolerance-size" class="tolerance-cell__input" min="0" max="100" step="1" inputmode="numeric">
+                </div>
+                <div class="tolerance-cell">
+                  <label class="tolerance-cell__label" for="tolerance-opacity">Opacity (Δ)</label>
+                  <input type="number" id="tolerance-opacity" class="tolerance-cell__input" min="0" max="1" step="0.01" inputmode="decimal">
+                </div>
+              </div>
+              <p class="field-hint" id="tolerance-hint">Differences within these thresholds are ignored.</p>
+            </div>
+
             <label class="toggle-row" for="visual-diff-toggle">
               <div class="toggle-row__text">
                 <span class="toggle-row__label">Visual Diff</span>

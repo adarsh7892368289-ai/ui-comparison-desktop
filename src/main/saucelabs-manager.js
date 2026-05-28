@@ -20,7 +20,8 @@ const {
 } = require('@core/saucelabs-bridge/schemas.js');
 const {
   SIDE,
-  oppositeSide
+  oppositeSide,
+  isValidCombination
 } = require('@core/saucelabs-bridge/constants.js');
 const {
   findFirstByName,
@@ -299,13 +300,21 @@ function _stageRunnerProject(tmpBase, { url, filters, maxScreenshots, device }) 
   fs.copyFileSync(schemas, path.join(testsDir, 'schemas.js'));
   fs.copyFileSync(extractorBundle, path.join(testsDir, 'extractor-bundle.js'));
 
+  let stagedDevice = device || null;
+  if (stagedDevice && stagedDevice.orientation === 'landscape' && stagedDevice.viewport) {
+    stagedDevice = {
+      ...stagedDevice,
+      viewport: { width: stagedDevice.viewport.height, height: stagedDevice.viewport.width }
+    };
+  }
+
   const jobConfig = {
     url,
     filters: filters || null,
     maxScreenshots: maxScreenshots || 200,
     configOverrides: _DEFAULT_EXTRACTION_OVERRIDES,
     testTimeoutMs: 600_000,
-    device: device || null
+    device: stagedDevice
   };
   validateJobConfig(jobConfig, 'staged job.json');
   fs.writeFileSync(path.join(testsDir, 'job.json'), JSON.stringify(jobConfig, null, 2));
@@ -313,26 +322,79 @@ function _stageRunnerProject(tmpBase, { url, filters, maxScreenshots, device }) 
   return { sauceDir, testsDir };
 }
 
-function _generateYaml({ platform, browserName, screenResolution, region, tunnelName, suiteName }) {
-  const tunnelSection = tunnelName ?
-  `  tunnel:\n    name: "${tunnelName}"\n` :
-  '';
+function _sanitiseYamlScalar(raw, fieldName, maxLength = 255) {
+  if (!raw || typeof raw !== 'string') return '';
+  const trimmed = raw.trim();
+  if (trimmed.length > maxLength) {
+    throw new Error(`${fieldName} exceeds maximum length (${maxLength} chars)`);
+  }
+  if (/[\r\n]/.test(trimmed)) {
+    throw new Error(`${fieldName} must not contain newline characters`);
+  }
+  return trimmed.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+function _generateYaml({
+  platform,
+  browserName,
+  screenResolution,
+  region,
+  tunnelName,
+  tunnelOwner,
+  suiteName,
+  playwrightVersion,
+  concurrency,
+  buildName,
+  tags,
+  visibility,
+  timeout,
+}) {
+  const pw = playwrightVersion || defaultsConfig.saucelabs.defaultPlaywrightVersion;
+  const conc = Number.isFinite(concurrency) && concurrency >= 1 && concurrency <= 10 ? concurrency : (defaultsConfig.saucelabs.defaultConcurrency || 1);
+  const to = timeout || defaultsConfig.saucelabs.defaultTimeout;
+  const vis = visibility || defaultsConfig.saucelabs.defaultVisibility;
+  const plat = platform || 'Windows 11';
+  const browser = browserName || 'chromium';
+  const res = screenResolution || '1920x1080';
+  const reg = region || 'us-west-1';
+
+  const safeBuild = _sanitiseYamlScalar(
+    buildName || `ui-compare ${new Date().toISOString().slice(0, 16)}`,
+    'Build name', 255
+  );
+  const safeTags = ((tags && tags.length > 0) ? tags : (defaultsConfig.saucelabs.defaultTags || ['ui-comparison']))
+    .map(t => `"${_sanitiseYamlScalar(t, 'Tag', 64)}"`).join(', ');
+
+  const safeTunnel = tunnelName ? _sanitiseYamlScalar(tunnelName, 'Tunnel name', 128) : null;
+  const safeTunnelOwner = tunnelOwner ? _sanitiseYamlScalar(tunnelOwner, 'Tunnel owner', 128) : null;
+  const tunnelSection = safeTunnel
+    ? `  tunnel:\n    name: "${safeTunnel}"${safeTunnelOwner ? `\n    owner: "${safeTunnelOwner}"` : ''}\n`
+    : '';
+
+  if (!isValidCombination(pw, plat, browser)) {
+    log.warn('[SauceManager] submitted config may be invalid for SauceLabs', { playwrightVersion: pw, platform: plat, browserName: browser });
+  }
 
   return `apiVersion: v1alpha
 kind: playwright
 sauce:
-  region: ${region}
-  concurrency: 1
-${tunnelSection}
+  region: ${reg}
+  concurrency: ${conc}
+  metadata:
+    build: "${safeBuild}"
+    tags: [${safeTags}]
+${tunnelSection}  visibility: "${vis}"
+
 playwright:
-  version: 1.52.0
+  version: ${pw}
 
 suites:
   - name: "${suiteName}"
-    platformName: "${platform}"
-    screenResolution: "${screenResolution}"
+    platformName: "${plat}"
+    screenResolution: "${res}"
+    timeout: ${to}
     params:
-      browserName: "${browserName}"
+      browserName: "${browser}"
       headless: false
     testMatch: ["tests/extract.spec.js"]
 
@@ -765,7 +827,7 @@ async function _recoverSessionId({ username, accessKey, region }) {
   return jobs[0].id;
 }
 
-async function submitExtraction({ jobId: providedJobId, username, accessKey, region, url, platform, browserName, screenResolution, tunnelName, filters, device, onProgress }) {
+async function submitExtraction({ jobId: providedJobId, username, accessKey, region, url, platform, browserName, screenResolution, tunnelName, tunnelOwner, filters, device, onProgress, playwrightVersion, buildName, tags, visibility, timeout }) {
   const jobId = providedJobId || crypto.randomUUID();
   _registerJob(jobId, { username, accessKey, region });
   const pollTimeoutMs = defaultsConfig?.saucelabs?.pollTimeoutMs ?? 90 * 60 * 1000;
@@ -785,7 +847,14 @@ async function submitExtraction({ jobId: providedJobId, username, accessKey, reg
     screenResolution,
     region,
     tunnelName,
-    suiteName: `extract-${jobId.slice(0, 8)}`
+    tunnelOwner,
+    suiteName: `extract-${jobId.slice(0, 8)}`,
+    playwrightVersion,
+    concurrency: 1,
+    buildName,
+    tags,
+    visibility,
+    timeout,
   });
   fs.writeFileSync(path.join(sauceDir, 'config.yml'), yaml);
 
@@ -929,7 +998,7 @@ function cleanupOrphanedTmpDirs() {
   }
 }
 
-async function _submitSingleSession({ username, accessKey, region, url, platform, browserName, screenResolution, tunnelName, filters, device, side, jobId }) {
+async function _submitSingleSession({ username, accessKey, region, url, platform, browserName, screenResolution, tunnelName, tunnelOwner, filters, device, side, jobId, playwrightVersion, concurrency, buildName, tags, visibility, timeout }) {
   const pollTimeoutMs = defaultsConfig?.saucelabs?.pollTimeoutMs ?? 90 * 60 * 1000;
   const maxScreenshots = defaultsConfig?.saucelabs?.maxScreenshotsPerSession ?? 200;
 
@@ -947,7 +1016,14 @@ async function _submitSingleSession({ username, accessKey, region, url, platform
     screenResolution,
     region,
     tunnelName,
-    suiteName: `${side}-${jobId.slice(0, 8)}`
+    tunnelOwner,
+    suiteName: `${side}-${jobId.slice(0, 8)}`,
+    playwrightVersion,
+    concurrency,
+    buildName,
+    tags,
+    visibility,
+    timeout,
   });
   fs.writeFileSync(path.join(sauceDir, 'config.yml'), yaml);
 
@@ -1031,7 +1107,7 @@ async function _cancelRemoteSessions({ username, accessKey, region, sessionIds }
   return results;
 }
 
-async function submitComparison({ jobId: providedJobId, username, accessKey, region, baselineUrl, compareUrl, platform, browserName, screenResolution, tunnelName, filters, device, onProgress, onSessionId }) {
+async function submitComparison({ jobId: providedJobId, username, accessKey, region, baselineUrl, compareUrl, platform, browserName, screenResolution, tunnelName, tunnelOwner, filters, device, onProgress, onSessionId, playwrightVersion, concurrency, buildName, tags, visibility, timeout }) {
   const jobId = providedJobId || crypto.randomUUID();
   _registerJob(jobId, { username, accessKey, region });
   const pollTimeoutMs = defaultsConfig?.saucelabs?.pollTimeoutMs ?? 90 * 60 * 1000;
@@ -1039,7 +1115,7 @@ async function submitComparison({ jobId: providedJobId, username, accessKey, reg
   log.info('[SauceManager] submitComparison', { jobId, baselineUrl, compareUrl, platform, browserName });
   onProgress?.({ phase: 'submitted', jobId });
 
-  const sessionArgs = { username, accessKey, region, platform, browserName, screenResolution, tunnelName, filters, device, jobId };
+  const sessionArgs = { username, accessKey, region, platform, browserName, screenResolution, tunnelName, tunnelOwner, filters, device, jobId, playwrightVersion, concurrency, buildName, tags, visibility, timeout };
 
   let baselineSessionId, compareSessionId;
   let baselineConfigDir, compareConfigDir;
@@ -1176,7 +1252,7 @@ async function submitComparison({ jobId: providedJobId, username, accessKey, reg
   };
 }
 
-async function retryFailedSession({ username, accessKey, region, failedSide, failedSideUrl, successSideSessionId, platform, browserName, screenResolution, tunnelName, filters, device, jobId, onProgress }) {
+async function retryFailedSession({ username, accessKey, region, failedSide, failedSideUrl, successSideSessionId, platform, browserName, screenResolution, tunnelName, tunnelOwner, filters, device, jobId, onProgress, playwrightVersion, concurrency, buildName, tags, visibility, timeout }) {
   _registerJob(jobId, { username, accessKey, region });
   const successSide = oppositeSide(failedSide);
 
@@ -1190,10 +1266,17 @@ async function retryFailedSession({ username, accessKey, region, failedSide, fai
     browserName: browserName || 'chromium',
     screenResolution: screenResolution || '1920x1080',
     tunnelName: tunnelName || null,
+    tunnelOwner: tunnelOwner || null,
     filters: filters || null,
     device: device || null,
     side: failedSide,
-    jobId
+    jobId,
+    playwrightVersion: playwrightVersion || defaultsConfig.saucelabs.defaultPlaywrightVersion,
+    concurrency: concurrency || defaultsConfig.saucelabs.defaultConcurrency,
+    buildName: buildName || null,
+    tags: tags || null,
+    visibility: visibility || defaultsConfig.saucelabs.defaultVisibility,
+    timeout: timeout || defaultsConfig.saucelabs.defaultTimeout,
   });
 
   onProgress?.({ phase: 'running', jobId, side: failedSide, sessionId });

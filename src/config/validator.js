@@ -43,9 +43,6 @@ const REQUIRED_PATHS = [
 
   'comparison.matching.anchorAttributes',
   'comparison.matching.strategies',
-  'comparison.tolerances.color',
-  'comparison.tolerances.size',
-  'comparison.tolerances.opacity',
   'comparison.matching.positionTolerance',
 
   'comparison.severity.critical',
@@ -60,9 +57,12 @@ const REQUIRED_PATHS = [
 
   'comparison.modes.dynamic.compareProperties',
   'comparison.modes.dynamic.compareTextContent',
-  'comparison.modes.dynamic.tolerances',
   'comparison.modes.static.compareTextContent',
-  'comparison.modes.static.tolerances',
+
+  'comparison.defaultTolerances',
+  'comparison.defaultTolerances.color',
+  'comparison.defaultTolerances.size',
+  'comparison.defaultTolerances.opacity',
 
   'normalization.cache.enabled',
   'normalization.cache.maxEntries',
@@ -130,12 +130,13 @@ const TYPE_EXPECTATIONS = [
   { path: 'selectors.css.perStrategyTimeout',   type: 'number' },
   { path: 'comparison.matching.anchorAttributes', type: 'array' },
   { path: 'comparison.matching.strategies',       type: 'array' },
-  { path: 'comparison.tolerances.color',    type: 'number' },
-  { path: 'comparison.tolerances.size',     type: 'number' },
   { path: 'comparison.severity.critical',   type: 'array' },
   { path: 'comparison.severity.high',       type: 'array' },
   { path: 'comparison.severity.medium',     type: 'array' },
   { path: 'comparison.modes.dynamic.compareProperties', type: 'array' },
+  { path: 'comparison.defaultTolerances.color',   type: 'number' },
+  { path: 'comparison.defaultTolerances.size',    type: 'number' },
+  { path: 'comparison.defaultTolerances.opacity', type: 'number' },
   { path: 'infrastructure.timeout.default', type: 'number' },
   { path: 'logging.slowOperationThreshold', type: 'number' },
   { path: 'attributes.priority',            type: 'array' },
@@ -159,11 +160,33 @@ const SANITY_CHECKS = [
   { path: 'selectors.totalTimeout',             min: 100,  max: 10000  },
   { path: 'selectors.xpath.perStrategyTimeout', min: 10,   max: 2000   },
   { path: 'selectors.css.perStrategyTimeout',   min: 5,    max: 1000   },
-  { path: 'comparison.tolerances.color',        min: 0,    max: 255    },
-  { path: 'comparison.tolerances.size',         min: 0,    max: 100    },
   { path: 'infrastructure.timeout.default',     min: 100,  max: 300000 },
   { path: 'logging.slowOperationThreshold',     min: 50,   max: 30000  }
 ];
+
+function validateDefaultTolerances(errors) {
+  let entry;
+  try {
+    entry = get('comparison.defaultTolerances');
+  } catch {
+    errors.push('[Config] "comparison.defaultTolerances" is missing');
+    return;
+  }
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    errors.push('[Config] "comparison.defaultTolerances" must be an object');
+    return;
+  }
+  const { color, size, opacity } = entry;
+  if (typeof color !== 'number' || color < 0 || color > 255) {
+    errors.push('[Config] "comparison.defaultTolerances.color" must be a number in [0,255]');
+  }
+  if (typeof size !== 'number' || size < 0 || size > 100) {
+    errors.push('[Config] "comparison.defaultTolerances.size" must be a number in [0,100]');
+  }
+  if (typeof opacity !== 'number' || opacity < 0 || opacity > 1) {
+    errors.push('[Config] "comparison.defaultTolerances.opacity" must be a number in [0,1]');
+  }
+}
 
 function validateStrategies(errors) {
   try {
@@ -235,6 +258,7 @@ function validateConfig({ throwOnError = true } = {}) {
   checkTypeExpectations(errors);
   checkSanityRanges(errors);
   validateStrategies(errors);
+  validateDefaultTolerances(errors);
 
   const valid = errors.length === 0;
 

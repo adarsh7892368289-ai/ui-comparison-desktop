@@ -19,22 +19,30 @@ const CURRENT_COLOR_DERIVED = new Set([
   'border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color'
 ]);
 
-const STATIC_FILTER = {
+const STATIC_FILTER_BASE = {
   compareProperties:        null,
   compareTextContent:       get('comparison.modes.static.compareTextContent'),
   structuralAttributesOnly: false,
-  tolerances:               get('comparison.modes.static.tolerances')
+  tolerances:               get('comparison.defaultTolerances')
 };
 
-const DYNAMIC_FILTER = {
+const DYNAMIC_FILTER_BASE = {
   compareProperties:        new Set(get('comparison.modes.dynamic.compareProperties', [])),
   compareTextContent:       get('comparison.modes.dynamic.compareTextContent'),
   structuralAttributesOnly: true,
   structuralAttributes:     new Set(get('comparison.modes.dynamic.structuralOnlyAttributes', [
     'role', 'aria-label', 'type', 'name', 'data-testid'
   ])),
-  tolerances:               get('comparison.modes.dynamic.tolerances')
+  tolerances:               get('comparison.defaultTolerances')
 };
+
+function getFilter(mode, tolerances) {
+  const base = mode === 'dynamic' ? DYNAMIC_FILTER_BASE : STATIC_FILTER_BASE;
+  const resolved = tolerances === null || tolerances === undefined
+    ? base.tolerances
+    : tolerances;
+  return { ...base, tolerances: resolved };
+}
 
 class BaseComparisonMode {
   #differ;
@@ -238,16 +246,16 @@ class BaseComparisonMode {
 
 class StaticComparisonMode extends BaseComparisonMode {
   constructor(deps = {}) { super(deps); }
-  async* compare(matches) {
-    yield* this.compareChunked(matches, STATIC_FILTER, 'static');
+  async* compare(matches, tolerances = null) {
+    yield* this.compareChunked(matches, getFilter('static', tolerances), 'static');
   }
 }
 
 class DynamicComparisonMode extends BaseComparisonMode {
   constructor(deps = {}) { super(deps); }
-  async* compare(matches) {
-    yield* this.compareChunked(matches, DYNAMIC_FILTER, 'dynamic');
+  async* compare(matches, tolerances = null) {
+    yield* this.compareChunked(matches, getFilter('dynamic', tolerances), 'dynamic');
   }
 }
 
-export { StaticComparisonMode, DynamicComparisonMode, STATIC_FILTER, DYNAMIC_FILTER };
+export { StaticComparisonMode, DynamicComparisonMode, STATIC_FILTER_BASE, DYNAMIC_FILTER_BASE, getFilter };

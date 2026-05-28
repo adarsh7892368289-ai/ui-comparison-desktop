@@ -4,7 +4,7 @@ import logger from './logger.js';
 import { performanceMonitor } from './performance-monitor.js';
 
 const DB_NAME = 'ui_comparison_db';
-const DB_VERSION = 10;
+const DB_VERSION = 11;
 const STORE_REPORTS = 'reports';
 const STORE_ELEMENTS = 'elements';
 const STORE_COMPARISONS = 'comparisons';
@@ -18,6 +18,8 @@ const STORE_APP_META = 'app_meta';
 const STORE_BULK_JOBS = 'bulk_jobs';
 const STORE_BULK_PAIRS = 'bulk_pairs';
 const STORE_SAUCE_JOBS = 'sauce_jobs';
+const STORE_APP_SETTINGS = 'app_settings';
+const SETTINGS_KEY_TOLERANCE_PROFILE = 'tolerance_profile';
 const META_KEY_V5_DATA_CLEARED = 'v5_upgrade_data_cleared_notice';
 const MAX_COMPARISONS = 20;
 const BULK_MAX_RETAINED_JOBS = 10;
@@ -223,6 +225,12 @@ function upgradeToV10(db) {
   }
 }
 
+function upgradeToV11(db) {
+  if (!db.objectStoreNames.contains(STORE_APP_SETTINGS)) {
+    db.createObjectStore(STORE_APP_SETTINGS, { keyPath: 'key' });
+  }
+}
+
 function runUpgrade(db, upgradeTx, oldVersion) {
   if (oldVersion < 1) {buildReportStores(db);}
   if (oldVersion < 2) {buildComparisonStores(db);}
@@ -233,6 +241,7 @@ function runUpgrade(db, upgradeTx, oldVersion) {
   if (oldVersion < 7) {upgradeToV7(db, upgradeTx);}
   if (oldVersion < 9) {upgradeToV9(db, upgradeTx);}
   if (oldVersion < 10) {upgradeToV10(db);}
+  if (oldVersion < 11) {upgradeToV11(db);}
 }
 
 class IDBRepository {
@@ -1508,6 +1517,54 @@ class IDBRepository {
       trackError(ERROR_CODES.STORAGE_WRITE_FAILED, deleteError.message, { jobId });
       return { success: false, error: deleteError.message };
     }
+  }
+
+  saveToleranceProfile(profile) {
+    return this.#enqueue(performanceMonitor.wrap('idb.saveToleranceProfile', () => this.#saveToleranceProfileInner(profile)));
+  }
+
+  async #saveToleranceProfileInner(profile) {
+    try {
+      const db = await this.#getDB();
+      if (!db.objectStoreNames.contains(STORE_APP_SETTINGS)) {
+        return { success: false, error: 'app_settings store missing' };
+      }
+      const t = profile?.tolerances ?? {};
+      const tx = db.transaction(STORE_APP_SETTINGS, 'readwrite');
+      tx.objectStore(STORE_APP_SETTINGS).put({
+        key:        SETTINGS_KEY_TOLERANCE_PROFILE,
+        tolerances: {
+          color:   typeof t.color === 'number' ? t.color : null,
+          size:    typeof t.size === 'number' ? t.size : null,
+          opacity: typeof t.opacity === 'number' ? t.opacity : null
+        },
+        updatedAt: Date.now()
+      });
+      await transactionToPromise(tx);
+      return { success: true };
+    } catch (writeError) {
+      trackError(ERROR_CODES.STORAGE_WRITE_FAILED, writeError.message);
+      return { success: false, error: writeError.message };
+    }
+  }
+
+  async loadToleranceProfile() {
+    return performanceMonitor.wrap('idb.loadToleranceProfile', async () => {
+      try {
+        const db = await this.#getDB();
+        if (!db.objectStoreNames.contains(STORE_APP_SETTINGS)) {
+          return null;
+        }
+        const tx = db.transaction(STORE_APP_SETTINGS, 'readonly');
+        const record = await requestToPromise(
+          tx.objectStore(STORE_APP_SETTINGS).get(SETTINGS_KEY_TOLERANCE_PROFILE)
+        );
+        return record ?? null;
+      } catch (readError) {
+        trackError(ERROR_CODES.STORAGE_READ_FAILED, readError.message);
+        return null;
+      }
+    })();
   }
 }
 
