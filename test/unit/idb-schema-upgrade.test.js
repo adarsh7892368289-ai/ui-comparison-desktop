@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import 'fake-indexeddb/auto';
 
 const DB_NAME = 'ui_comparison_db_test';
@@ -85,6 +85,24 @@ function upgradeToV10(db) {
     const store = db.createObjectStore('sauce_jobs', { keyPath: 'id' });
     store.createIndex('by_status', 'status', { unique: false });
     store.createIndex('by_createdAt', 'createdAt', { unique: false });
+  }
+}
+
+function upgradeToV11(db) {
+  if (!db.objectStoreNames.contains('app_settings')) {
+    db.createObjectStore('app_settings', { keyPath: 'key' });
+  }
+}
+
+function upgradeToV12(db, upgradeTx) {
+  if (!db.objectStoreNames.contains('report_visual_manifests')) {
+    db.createObjectStore('report_visual_manifests', { keyPath: 'reportId' });
+  }
+  if (db.objectStoreNames.contains('visual_blobs')) {
+    const blobStore = upgradeTx.objectStore('visual_blobs');
+    if (!blobStore.indexNames.contains('by_reportId')) {
+      blobStore.createIndex('by_reportId', 'reportId', { unique: false });
+    }
   }
 }
 
@@ -304,5 +322,96 @@ describe('IDB Schema Upgrade v9 → v10', () => {
 
     expect(dbV10.objectStoreNames.contains('sauce_jobs')).toBe(true);
     dbV10.close();
+  });
+});
+
+describe('IDB Schema Upgrade v11 → v12', () => {
+  afterEach(async () => {
+    await deleteDb();
+  });
+
+  function openV11(extra) {
+    return openDbAtVersion(11, (db, tx, oldVersion) => {
+      if (oldVersion < 1) buildReportStores(db);
+      if (oldVersion < 2) buildComparisonStores(db);
+      if (oldVersion < 4) buildAuxStores(db);
+      if (oldVersion < 6) upgradeToV6(db);
+      if (oldVersion < 8) upgradeToV8(db);
+      if (oldVersion < 9) upgradeToV9(db, tx);
+      if (oldVersion < 10) upgradeToV10(db);
+      if (oldVersion < 11) upgradeToV11(db);
+      if (extra) extra(db, tx, oldVersion);
+    });
+  }
+
+  it('creates report_visual_manifests store and visual_blobs by_reportId index after v12', async () => {
+    const dbV11 = await openV11();
+    dbV11.close();
+
+    const dbV12 = await openDbAtVersion(12, (db, tx, oldVersion) => {
+      if (oldVersion < 12) upgradeToV12(db, tx);
+    });
+
+    expect(dbV12.objectStoreNames.contains('report_visual_manifests')).toBe(true);
+    const manifestStore = dbV12.transaction('report_visual_manifests', 'readonly').objectStore('report_visual_manifests');
+    expect(manifestStore.keyPath).toBe('reportId');
+
+    const blobStore = dbV12.transaction('visual_blobs', 'readonly').objectStore('visual_blobs');
+    expect(blobStore.indexNames.contains('by_reportId')).toBe(true);
+    dbV12.close();
+  });
+
+  it('preserves existing reports and comparison_summary data after v12 upgrade', async () => {
+    const dbV11 = await openV11();
+    const tx = dbV11.transaction('reports', 'readwrite');
+    tx.objectStore('reports').put({ id: 'r-1', url: 'https://x.com', timestamp: '2026-01-01T00:00:00Z', totalElements: 7 });
+    await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
+    dbV11.close();
+
+    const dbV12 = await openDbAtVersion(12, (db, t, oldVersion) => {
+      if (oldVersion < 12) upgradeToV12(db, t);
+    });
+    const report = await new Promise((resolve) => {
+      const req = dbV12.transaction('reports', 'readonly').objectStore('reports').get('r-1');
+      req.onsuccess = () => resolve(req.result);
+    });
+    expect(report).not.toBeNull();
+    expect(report.totalElements).toBe(7);
+    dbV12.close();
+  });
+
+  it('report_visual_manifests round-trips a manifest and blobs query by reportId', async () => {
+    const dbV12 = await openDbAtVersion(12, (db, tx, oldVersion) => {
+      if (oldVersion < 1) buildReportStores(db);
+      if (oldVersion < 2) buildComparisonStores(db);
+      if (oldVersion < 4) buildAuxStores(db);
+      if (oldVersion < 6) upgradeToV6(db);
+      if (oldVersion < 8) upgradeToV8(db);
+      if (oldVersion < 9) upgradeToV9(db, tx);
+      if (oldVersion < 10) upgradeToV10(db);
+      if (oldVersion < 11) upgradeToV11(db);
+      if (oldVersion < 12) upgradeToV12(db, tx);
+    });
+
+    const writeTx = dbV12.transaction(['report_visual_manifests', 'visual_blobs'], 'readwrite');
+    writeTx.objectStore('report_visual_manifests').put({
+      reportId: 'rep-9', manifest: { keyframes: [{ id: 'kf_0' }], elementKeyframeMap: { 'el.1': 'kf_0' } }
+    });
+    writeTx.objectStore('visual_blobs').put({ key: 'report:rep-9:kf_0', blob: 'data', reportId: 'rep-9', timestamp: 't' });
+    await new Promise((resolve, reject) => { writeTx.oncomplete = resolve; writeTx.onerror = () => reject(writeTx.error); });
+
+    const manifest = await new Promise((resolve) => {
+      const req = dbV12.transaction('report_visual_manifests', 'readonly').objectStore('report_visual_manifests').get('rep-9');
+      req.onsuccess = () => resolve(req.result);
+    });
+    expect(manifest.manifest.keyframes[0].id).toBe('kf_0');
+
+    const blobs = await new Promise((resolve) => {
+      const req = dbV12.transaction('visual_blobs', 'readonly').objectStore('visual_blobs').index('by_reportId').getAll(IDBKeyRange.only('rep-9'));
+      req.onsuccess = () => resolve(req.result);
+    });
+    expect(blobs).toHaveLength(1);
+    expect(blobs[0].key).toBe('report:rep-9:kf_0');
+    dbV12.close();
   });
 });

@@ -23,14 +23,17 @@ const _TOLERANCE_SAVE_DEBOUNCE_MS = 300;
 
 const _SAFE_FALLBACK_TOLERANCES = Object.freeze({ color: 8, size: 5, opacity: 0.05 });
 
+function _safeDefaults() {
+  try {
+    return configGet('comparison.defaultTolerances');
+  } catch {
+    return _SAFE_FALLBACK_TOLERANCES;
+  }
+}
+
 function _coerceToleranceTriple(source) {
   const safe = (v, fallback) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
-  let defaults;
-  try {
-    defaults = configGet('comparison.defaultTolerances');
-  } catch {
-    defaults = _SAFE_FALLBACK_TOLERANCES;
-  }
+  const defaults = _safeDefaults();
   return {
     color:   safe(source?.color,   defaults.color),
     size:    safe(source?.size,    defaults.size),
@@ -39,7 +42,22 @@ function _coerceToleranceTriple(source) {
 }
 
 function resolveActiveTolerances(state) {
-  return _coerceToleranceTriple(state?.tolerances);
+  const triple = _coerceToleranceTriple(state?.tolerances);
+  return { enabled: Boolean(state?.tolerances?.enabled), ...triple };
+}
+
+function buildToleranceSnapshot(active) {
+  return {
+    enabled: Boolean(active?.enabled),
+    color:   typeof active?.color === 'number' ? active.color : _safeDefaults().color,
+    size:    typeof active?.size === 'number' ? active.size : _safeDefaults().size,
+    opacity: typeof active?.opacity === 'number' ? active.opacity : _safeDefaults().opacity
+  };
+}
+
+function tolerancesPayloadFromActive(active) {
+  if (!active?.enabled) { return { color: 0, size: 0, opacity: 0 }; }
+  return { color: active.color, size: active.size, opacity: active.opacity };
 }
 
 export function persistTolerancesImmediate() {
@@ -58,7 +76,7 @@ export function persistTolerancesDebounced() {
   }, _TOLERANCE_SAVE_DEBOUNCE_MS);
 }
 
-export { resolveActiveTolerances };
+export { resolveActiveTolerances, buildToleranceSnapshot, tolerancesPayloadFromActive };
 
 let _activeCompareCancel = null;
 let _compareBusy = false;
@@ -597,7 +615,8 @@ async function handleComparison() {
     }
 
     const activeTolerances = resolveActiveTolerances(getState());
-    const tolerancesSnapshot = { ...activeTolerances };
+    const tolerancesSnapshot = buildToleranceSnapshot(activeTolerances);
+    const tolerancesPayload = tolerancesPayloadFromActive(activeTolerances);
 
     const result = await api.startComparison({
       baselineId: baselineReport.id,
@@ -609,7 +628,7 @@ async function handleComparison() {
       compareElements,
       includeScreenshots,
       browser: browserPayload,
-      tolerances: activeTolerances,
+      tolerances: tolerancesPayload,
       operationId,
       comparisonId
     });

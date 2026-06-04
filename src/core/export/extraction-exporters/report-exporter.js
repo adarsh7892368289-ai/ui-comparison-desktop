@@ -1,9 +1,13 @@
 import * as XLSX       from 'xlsx';
 import { get }        from '../../../config/defaults.js';
 import { rowsToCsv }  from '../export-utils/csv-utils.js';
+import {
+  STRUCTURAL_COLUMN_COUNT,
+  buildElementHeaders as _schemaHeaders,
+  buildElementRow as _schemaRow }
+from './report-table-schema.js';
 
 const UTF8_BOM          = '\uFEFF';
-const CSV_TEXT_MAX      = 200;
 const HEADER_FONT_COLOR = 'FFFFFF';
 
 function _headerCellStyle(headerColor) {
@@ -19,75 +23,49 @@ function _applyFreezePane(ws) {
 }
 
 function _buildElementHeaders(cssProperties) {
-  return [
-    'HPID',
-    'Absolute HPID',
-    'Tag Name',
-    'Element ID',
-    'Class Name',
-    'Class Occurrence Count',
-    'Text Content',
-    'CSS Selector',
-    'XPath',
-    'Shadow Path',
-    'Rect X',
-    'Rect Y',
-    'Rect Top',
-    'Rect Left',
-    'Width',
-    'Height',
-    'Tier',
-    'Depth',
-    'Page Section',
-    'Class Hierarchy',
-    'Neighbours',
-    'Attributes',
-    ...cssProperties
-  ];
+  return _schemaHeaders(cssProperties);
 }
 
 function _buildElementRow(el, cssProperties) {
-  const styleValues = cssProperties.map(prop => el.styles?.[prop] ?? '');
+  return _schemaRow(el, cssProperties);
+}
+
+function _buildReportMetadataRows(report) {
   return [
-    el.hpid                ?? '',
-    el.absoluteHpid        ?? '',
-    el.tagName             ?? '',
-    el.elementId           ?? '',
-    el.className           ?? '',
-    el.classOccurrenceCount ?? 0,
-    (el.textContent ?? '').substring(0, CSV_TEXT_MAX),
-    el.cssSelector         ?? '',
-    el.xpath               ?? '',
-    el.shadowPath          ?? '',
-    el.rect?.x             ?? '',
-    el.rect?.y             ?? '',
-    el.rect?.top           ?? '',
-    el.rect?.left          ?? '',
-    el.rect?.width         ?? '',
-    el.rect?.height        ?? '',
-    el.tier                ?? '',
-    el.depth               ?? '',
-    el.pageSection         ?? '',
-    el.classHierarchy ? JSON.stringify(el.classHierarchy) : '',
-    el.neighbours     ? JSON.stringify(el.neighbours)     : '',
-    el.attributes     ? JSON.stringify(el.attributes)     : '',
-    ...styleValues
+    ['REPORT METADATA'],
+    ['Report ID',       report.id],
+    ['URL',             report.url],
+    ['Title',           report.title],
+    ['Timestamp',       report.timestamp],
+    ['Total Elements',  report.totalElements],
+    ['Duration (ms)',   report.duration       ?? 'N/A'],
+    ['Capture Quality', report.captureQuality ?? 'N/A'],
+    ['Version',         report.version        ?? ''],
+    ['Filters',         report.filters        ? JSON.stringify(report.filters)        : ''],
+    ['Extract Options', report.extractOptions  ? JSON.stringify(report.extractOptions) : ''],
+    ['Capture Config',  report.captureConfig   ? JSON.stringify(report.captureConfig)  : ''],
+    []
   ];
 }
 
 function buildExtractedReportCsv(report) {
   const cssProperties = get('extraction.cssProperties', []);
-  const rows          = [];
+  const rows          = _buildReportMetadataRows(report);
 
-  rows.push(['REPORT METADATA']);
-  rows.push(['Report ID',       report.id]);
-  rows.push(['URL',             report.url]);
-  rows.push(['Title',           report.title]);
-  rows.push(['Timestamp',       report.timestamp]);
-  rows.push(['Total Elements',  report.totalElements]);
-  rows.push(['Duration (ms)',   report.duration       ?? 'N/A']);
-  rows.push(['Capture Quality', report.captureQuality ?? 'N/A']);
-  rows.push([]);
+  const cc = report.captureConfig;
+  if (cc && typeof cc === 'object') {
+    rows.push(['CAPTURE CONFIG']);
+    rows.push(['Source',        cc.source       ?? 'local']);
+    rows.push(['Device Type',   cc.deviceType   ?? 'N/A']);
+    if (cc.deviceName) {rows.push(['Device Model', cc.deviceName]);}
+    rows.push(['Viewport',      cc.viewport ? `${cc.viewport.width} x ${cc.viewport.height}` : 'N/A']);
+    rows.push(['Screen',        cc.screenResolution ?? 'N/A']);
+    rows.push(['Pixel Ratio',   cc.devicePixelRatio ?? 'N/A']);
+    rows.push(['Orientation',   cc.orientation  ?? 'N/A']);
+    rows.push(['Touch',         cc.hasTouch == null ? 'N/A' : (cc.hasTouch ? 'yes' : 'no')]);
+    if (cc.userAgent) {rows.push(['User Agent', cc.userAgent]);}
+    rows.push([]);
+  }
 
   const filters = report.filters;
   if (filters && Object.values(filters).some(Boolean)) {
@@ -151,7 +129,8 @@ function buildExtractedReportExcel(report) {
       ['Capture Quality', report.captureQuality ?? 'N/A'],
       ['Version',         report.version        ?? ''],
       ['Filters',         report.filters        ? JSON.stringify(report.filters)        : ''],
-      ['Extract Options', report.extractOptions  ? JSON.stringify(report.extractOptions) : '']
+      ['Extract Options', report.extractOptions  ? JSON.stringify(report.extractOptions) : ''],
+      ['Capture Config',  report.captureConfig   ? JSON.stringify(report.captureConfig)  : '']
     ];
 
     const metaWs = XLSX.utils.aoa_to_sheet(metaData);
@@ -166,7 +145,7 @@ function buildExtractedReportExcel(report) {
     const elementRows = (report.elements || []).map(el => _buildElementRow(el, cssProperties));
     const elemWs      = XLSX.utils.aoa_to_sheet([headers, ...elementRows]);
 
-    const structuralCount = 23;
+    const structuralCount = STRUCTURAL_COLUMN_COUNT;
     elemWs['!cols'] = [
       ...Array(structuralCount).fill({ wch: 20 }),
       ...cssProperties.map(() => ({ wch: 15 }))
@@ -218,25 +197,17 @@ function buildAllExtractedReportsExcel(reports) {
     _applyFreezePane(summaryWs);
     XLSX.utils.book_append_sheet(wb, summaryWs, 'Summary');
 
-    const headers         = _buildElementHeaders(cssProperties);
-    const structuralCount = 23;
+    const headers = _buildElementHeaders(cssProperties);
 
     reports.forEach((report, i) => {
-      const elementRows = (report.elements || []).map(el => _buildElementRow(el, cssProperties));
-      const ws          = XLSX.utils.aoa_to_sheet([headers, ...elementRows]);
-
-      ws['!cols'] = [
-        ...Array(structuralCount).fill({ wch: 20 }),
-        ...cssProperties.map(() => ({ wch: 15 }))
-      ];
-
-      if (ws['!ref']) {
-        const range = XLSX.utils.decode_range(ws['!ref']);
-        for (let c = range.s.c; c <= range.e.c; c++) {
-          const addr = XLSX.utils.encode_cell({ r: 0, c });
-          if (ws[addr]) { ws[addr].s = _headerCellStyle(headerColor); }
-        }
+      const aoa          = _buildReportMetadataRows(report);
+      aoa.push(['EXTRACTED ELEMENTS']);
+      aoa.push(headers);
+      for (const el of (report.elements || [])) {
+        aoa.push(_buildElementRow(el, cssProperties));
       }
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws['!cols'] = [{ wch: 24 }, { wch: 40 }];
       _applyFreezePane(ws);
 
       const sheetName = `Report_${i + 1}`.substring(0, 31);

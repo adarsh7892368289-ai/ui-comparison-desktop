@@ -32,6 +32,55 @@ function _effectiveDprFor(browserTypeName) {
   return profile.deviceScaleFactorOverride ? CAPTURE_SCALE_FACTOR : 1;
 }
 
+async function _collectCaptureConfig(page) {
+  try {
+    const raw = await page.evaluate(() => ({
+      viewportWidth: Math.round(window.innerWidth || document.documentElement.clientWidth || 0),
+      viewportHeight: Math.round(window.innerHeight || document.documentElement.clientHeight || 0),
+      devicePixelRatio: Number((window.devicePixelRatio || 1).toFixed(2)),
+      screenWidth: Math.round((window.screen && window.screen.width) || 0),
+      screenHeight: Math.round((window.screen && window.screen.height) || 0),
+      userAgent: String(navigator.userAgent || ''),
+      hasTouch: (navigator.maxTouchPoints || 0) > 0 || 'ontouchstart' in window,
+      coarsePointer: typeof window.matchMedia === 'function'
+        && window.matchMedia('(pointer: coarse)').matches
+    }));
+
+    const vw = raw.viewportWidth;
+    const vh = raw.viewportHeight;
+    const hasViewport = vw > 0 && vh > 0;
+    const ua = raw.userAgent;
+    const minEdge = hasViewport ? Math.min(vw, vh) : 0;
+    const mobileUa = /Mobi|Android|iPhone|iPod/i.test(ua);
+    const tabletUa = /iPad|Tablet|Nexus 7|Nexus 10|SM-T/i.test(ua);
+    const touchDevice = raw.hasTouch && raw.coarsePointer;
+
+    let deviceType = 'desktop';
+    if (tabletUa || (touchDevice && minEdge >= 600 && minEdge <= 820)) {
+      deviceType = 'tablet';
+    } else if (mobileUa || (touchDevice && minEdge > 0 && minEdge < 600)) {
+      deviceType = 'phone';
+    }
+
+    return {
+      source: 'local',
+      deviceType,
+      deviceName: null,
+      viewport: hasViewport ? { width: vw, height: vh } : null,
+      devicePixelRatio: raw.devicePixelRatio > 0 ? raw.devicePixelRatio : null,
+      screenResolution: raw.screenWidth && raw.screenHeight
+        ? `${raw.screenWidth} × ${raw.screenHeight}`
+        : null,
+      orientation: hasViewport ? (vw >= vh ? 'landscape' : 'portrait') : null,
+      hasTouch: raw.hasTouch,
+      userAgent: ua || null
+    };
+  } catch (err) {
+    log.warn('[PM] capture config collection failed', { error: err?.message });
+    return null;
+  }
+}
+
 function getScrollTolerance(browserType) {
   switch (browserType) {
     case 'firefox':return 5;
@@ -800,7 +849,7 @@ function buildElementRectRecords(sessionId, role, manifest) {
   return records;
 }
 
-function buildDiffMap(elements, baselineManifest, compareManifest) {
+function buildDiffMap(elements, addedElements, removedElements, baselineManifest, compareManifest) {
   const diffs = new Map();
   for (const el of elements) {
     const hpid = el.baselineElement.hpid;
@@ -813,11 +862,77 @@ function buildDiffMap(elements, baselineManifest, compareManifest) {
       diffs: el.annotatedDifferences ?? []
     });
   }
+  for (const el of [...(addedElements ?? []), ...(removedElements ?? [])]) {
+    const hpid = el.hpid;
+    if (!hpid || diffs.has(hpid)) {continue;}
+    const baselineEntry = baselineManifest.get(hpid) ?? null;
+    const compareEntry = compareManifest.get(hpid) ?? null;
+    if (!baselineEntry && !compareEntry) {continue;}
+    diffs.set(hpid, { baseline: baselineEntry, compare: compareEntry, diffs: [] });
+  }
   return diffs;
 }
 
 function extractModifiedElements(comparisonResult) {
   return comparisonResult.comparison.results.filter((r) => (r.totalDifferences ?? 0) > 0);
+}
+
+function buildUnmatchedSelectorPairs(elements) {
+  return (elements ?? []).
+  filter((el) => el?.hpid && el?.cssSelector).
+  map((el) => ({ id: el.hpid, selector: el.cssSelector }));
+}
+
+function hpidAncestors(hpid) {
+  const parts = String(hpid).split('.');
+  const out = [];
+  for (let i = parts.length - 1; i >= 1; i--) {
+    out.push(parts.slice(0, i).join('.'));
+  }
+  return out;
+}
+
+function nearestAncestorSelector(hpid, ancestorSelectorMap) {
+  for (const ancestor of hpidAncestors(hpid)) {
+    const selector = ancestorSelectorMap.get(ancestor);
+    if (selector) {return selector;}
+  }
+  return null;
+}
+
+function buildAncestorSelectorMaps(matchResults) {
+  const compareToBaselineSel = new Map();
+  const baselineToCompareSel = new Map();
+  for (const r of matchResults ?? []) {
+    const b = r.baselineElement;
+    const c = r.compareElement;
+    if (c?.hpid && b?.cssSelector && !compareToBaselineSel.has(c.hpid)) {
+      compareToBaselineSel.set(c.hpid, b.cssSelector);
+    }
+    if (b?.hpid && c?.cssSelector && !baselineToCompareSel.has(b.hpid)) {
+      baselineToCompareSel.set(b.hpid, c.cssSelector);
+    }
+  }
+  return { compareToBaselineSel, baselineToCompareSel };
+}
+
+function buildContextSelectorPairs(elements, ancestorSelectorMap) {
+  return (elements ?? []).map((el) => {
+    if (!el?.hpid) {return null;}
+    const selector = nearestAncestorSelector(el.hpid, ancestorSelectorMap);
+    return selector ? { id: el.hpid, selector } : null;
+  }).filter(Boolean);
+}
+
+function dedupeSelectorPairsById(pairs) {
+  const seen = new Set();
+  const out = [];
+  for (const pair of pairs) {
+    if (!pair || seen.has(pair.id)) {continue;}
+    seen.add(pair.id);
+    out.push(pair);
+  }
+  return out;
 }
 
 function extractSelectorPair(element, role) {
@@ -923,7 +1038,7 @@ async function captureKeyframe(sessionHandle, keyframe, kfSelectorPairs, session
   };
 }
 
-async function captureAllKeyframes(sessionHandle, keyframes, selectorById, sessionId, role, actualDPR, documentHeight, blobCache, comparisonId) {
+async function captureAllKeyframes(sessionHandle, keyframes, selectorById, sessionId, role, actualDPR, documentHeight, blobCache, blobKeyFn) {
   const total = keyframes.length;
   const roleStart = Date.now();
   const remeasureResults = [];
@@ -940,8 +1055,8 @@ async function captureAllKeyframes(sessionHandle, keyframes, selectorById, sessi
       sessionHandle, kf, kfSelectorPairs, sessionId, i, total, roleStart, actualDPR, documentHeight
     );
 
-    if (blobCache && result.blob) {
-      blobCache.set(`${comparisonId}:${result.keyframeId}`, result.blob);
+    if (blobCache && result.blob && typeof blobKeyFn === 'function') {
+      blobCache.set(blobKeyFn(result.keyframeId), result.blob);
     }
 
     capturedKeyframes.push(result.keyframeMeta);
@@ -959,9 +1074,9 @@ async function captureAllKeyframes(sessionHandle, keyframes, selectorById, sessi
   return { remeasureResults, capturedKeyframes };
 }
 
-async function executeTabCapture(sessionHandle, selectorPairs, sessionId, role, blobCache, comparisonId) {
+async function captureCore(sessionHandle, selectorPairs, sessionId, role, blobCache, blobKeyFn) {
   const t0 = Date.now();
-  log.info(`VDIFF [${role}] executeTabCapture START`, { selectorCount: selectorPairs.length });
+  log.info(`VDIFF [${role}] captureCore START`, { selectorCount: selectorPairs.length });
 
   await sendCDP(sessionHandle, 'Page.bringToFront');
 
@@ -1048,7 +1163,7 @@ async function executeTabCapture(sessionHandle, selectorPairs, sessionId, role, 
 
   if (validRects.length === 0) {
     log.warn(`VDIFF [${role}] 0 valid rects — aborting`, {});
-    return { manifest: new Map(), keyframes: [], rectRecords: [], devToolsWarning };
+    return { empty: true, devToolsWarning };
   }
 
   const pseudoResults = await executeInPage(sessionHandle, inPageGetPseudoStyles, selectorPairs);
@@ -1063,22 +1178,112 @@ async function executeTabCapture(sessionHandle, selectorPairs, sessionId, role, 
   const documentYById = new Map(validRects.map((r) => [r.id, r.documentY]));
 
   const { remeasureResults, capturedKeyframes } = await captureAllKeyframes(
-    sessionHandle, keyframes, selectorById, sessionId, role, actualDPR, documentHeight, blobCache, comparisonId
+    sessionHandle, keyframes, selectorById, sessionId, role, actualDPR, documentHeight, blobCache, blobKeyFn
   );
 
   const effectiveDpr = _effectiveDprFor(sessionHandle.browserTypeName);
-  const manifest = buildManifestFromRemeasured(
-    keyframes, remeasureResults, documentYById, actualDPR, documentHeight, confirmedHeight, effectiveDpr
-  );
+  log.info(`VDIFF [${role}] captureCore COMPLETE`, { totalElapsed: ms(t0), keyframeCount: keyframes.length });
 
-  attachPseudoDataToManifest(manifest, pseudoResults ?? []);
+  return {
+    keyframes, capturedKeyframes, remeasureResults, documentYById, pseudoResults: pseudoResults ?? [],
+    actualDPR, effectiveDpr, documentHeight, confirmedHeight, viewportWidth: vpWidth, devToolsWarning
+  };
+}
+
+async function executeTabCapture(sessionHandle, selectorPairs, sessionId, role, blobCache, comparisonId) {
+  const core = await captureCore(
+    sessionHandle, selectorPairs, sessionId, role, blobCache,
+    (kfId) => `${comparisonId}:${kfId}`
+  );
+  if (!core || core.empty) {
+    return { manifest: new Map(), keyframes: [], rectRecords: [], devToolsWarning: core?.devToolsWarning ?? null };
+  }
+
+  const manifest = buildManifestFromRemeasured(
+    core.keyframes, core.remeasureResults, core.documentYById,
+    core.actualDPR, core.documentHeight, core.confirmedHeight, core.effectiveDpr
+  );
+  attachPseudoDataToManifest(manifest, core.pseudoResults);
 
   const rectRecords = buildElementRectRecords(sessionId, role, manifest);
-  log.info(`VDIFF [${role}] executeTabCapture COMPLETE`, {
-    totalElapsed: ms(t0), manifestSize: manifest.size
+  log.info(`VDIFF [${role}] executeTabCapture COMPLETE`, { manifestSize: manifest.size });
+
+  return { manifest, keyframes: core.capturedKeyframes, rectRecords, devToolsWarning: core.devToolsWarning };
+}
+
+function buildSauceShapedManifest(core, role) {
+  const elementKeyframeMap = Object.create(null);
+  const keyframes = core.keyframes.map((kf) => {
+    for (const elId of kf.elementIds) {
+      if (!(elId in elementKeyframeMap)) {elementKeyframeMap[elId] = kf.id;}
+    }
+    return {
+      id: kf.id,
+      scrollY: kf.scrollY,
+      viewportWidth: kf.viewportWidth,
+      viewportHeight: kf.viewportHeight,
+      elementIds: kf.elementIds,
+      filename: null
+    };
   });
 
-  return { manifest, keyframes: capturedKeyframes, rectRecords, devToolsWarning };
+  const documentYById = Object.create(null);
+  for (const [id, y] of core.documentYById.entries()) {
+    documentYById[id] = Math.round(y);
+  }
+
+  const pseudoByKf = new Map();
+  for (const kf of core.keyframes) {
+    const ids = new Set(kf.elementIds);
+    pseudoByKf.set(kf.id, (core.pseudoResults ?? []).filter((p) => ids.has(p.id)));
+  }
+
+  const keyframeMeasurements = core.remeasureResults.map((r) => ({
+    keyframeId: r.keyframeId,
+    actualScrollY: r.actualScrollY,
+    rects: r.rects,
+    pseudoStyles: pseudoByKf.get(r.keyframeId) ?? []
+  }));
+
+  return {
+    keyframes,
+    elementKeyframeMap,
+    documentYById,
+    documentHeight: core.documentHeight,
+    viewportHeight: core.confirmedHeight,
+    actualDPR: core.effectiveDpr ?? core.actualDPR,
+    role,
+    keyframeMeasurements
+  };
+}
+
+async function runExtractionCapture(page, selectorPairs, sessionId) {
+  const role = 'extract';
+  let sessionHandle = null;
+  const blobs = Object.create(null);
+  try {
+    sessionHandle = await attachSession(page);
+    const core = await captureCore(
+      sessionHandle, selectorPairs, sessionId, role,
+      { set: (key, val) => { blobs[key] = val; } },
+      (kfId) => kfId
+    );
+    if (!core || core.empty) {return null;}
+    const manifest = buildSauceShapedManifest(core, role);
+    return { manifest, blobs };
+  } catch (err) {
+    const msg = err?.message ?? String(err);
+    log.error('VDIFF [extract] capture FAILED', { error: msg });
+    if (msg.includes('already attached') || msg.includes('Target closed') || msg.includes('Page closed')) {
+      return null;
+    }
+    throw err;
+  } finally {
+    if (sessionHandle) {
+      await safeRestorePage(sessionHandle).catch(() => {});
+      await detachSession(sessionHandle);
+    }
+  }
 }
 
 async function runTabCapture(page, selectorPairs, sessionId, role, blobCache, comparisonId) {
@@ -1140,18 +1345,27 @@ async function captureVisualDiffs(comparisonResult, pageContext, blobCache, comp
   }
 
   const modified = extractModifiedElements(comparisonResult);
-  if (modified.length === 0) {
-    return { status: 'skipped', reason: 'No modified elements', diffs: new Map(),
+  const added = comparisonResult.unmatchedElements?.compare ?? [];
+  const removed = comparisonResult.unmatchedElements?.baseline ?? [];
+  if (modified.length === 0 && added.length === 0 && removed.length === 0) {
+    return { status: 'skipped', reason: 'No modified, added, or removed elements', diffs: new Map(),
       keyframes: [], rectRecords: [], devToolsWarnings: [] };
   }
 
   const sessionId = crypto.randomUUID();
-  const baselinePairs = buildSelectorPairs(modified, 'baseline');
-  const comparePairs = buildSelectorPairs(modified, 'compare');
+  const addedPairs = buildUnmatchedSelectorPairs(added);
+  const removedPairs = buildUnmatchedSelectorPairs(removed);
+  const { compareToBaselineSel, baselineToCompareSel } = buildAncestorSelectorMaps(comparisonResult.comparison.results);
+  const addedContextPairs = buildContextSelectorPairs(added, compareToBaselineSel);
+  const removedContextPairs = buildContextSelectorPairs(removed, baselineToCompareSel);
+  const baselinePairs = dedupeSelectorPairsById([...buildSelectorPairs(modified, 'baseline'), ...removedPairs, ...addedContextPairs]);
+  const comparePairs = dedupeSelectorPairsById([...buildSelectorPairs(modified, 'compare'), ...addedPairs, ...removedContextPairs]);
   const { baselinePage, comparePage } = pageContext;
 
   log.info('VDIFF session init', {
-    sessionId, baselinePairs: baselinePairs.length, comparePairs: comparePairs.length
+    sessionId, baselinePairs: baselinePairs.length, comparePairs: comparePairs.length,
+    modified: modified.length, added: added.length, removed: removed.length,
+    addedContext: addedContextPairs.length, removedContext: removedContextPairs.length
   });
 
   try {
@@ -1174,7 +1388,7 @@ async function captureVisualDiffs(comparisonResult, pageContext, blobCache, comp
       };
     }
 
-    const diffs = buildDiffMap(modified, baselineManifest, compareManifest);
+    const diffs = buildDiffMap(modified, added, removed, baselineManifest, compareManifest);
     log.info('VDIFF captureVisualDiffs COMPLETE', {
       sessionId, diffCount: diffs.size, totalElapsed: ms(sessionStart)
     });
@@ -1216,7 +1430,7 @@ function _cancelErr() {
   return Object.assign(new Error('cancelled'), { code: 'CANCELLED', name: 'CancelledError' });
 }
 
-async function runExtraction({ url, browser: browserDescriptor, browserType, filters, onProgress, isCancelled }) {
+async function runExtraction({ url, browser: browserDescriptor, browserType, filters, onProgress, isCancelled, captureScreenshots }) {
   const totalStart = Date.now();
   const navigateStart = Date.now();
   const launchTarget = browserDescriptor ?? browserType ?? 'chromium';
@@ -1352,6 +1566,36 @@ async function runExtraction({ url, browser: browserDescriptor, browserType, fil
     browserDescriptor.browserType ?? 'chromium' :
     browserType ?? 'chromium';
     report.platform = process.platform;
+    const captureConfig = await _collectCaptureConfig(page);
+    if (captureConfig) {report.captureConfig = captureConfig;}
+
+    if (captureScreenshots) {
+      const selectorPairs = (report.elements ?? []).
+      filter((el) => el?.hpid && el?.cssSelector).
+      map((el) => ({ id: el.hpid, selector: el.cssSelector }));
+      if (selectorPairs.length > 0) {
+        if (isCancelled?.()) {throw _cancelErr();}
+        onProgress?.('Capturing screenshots…', 90);
+        const captureStart = Date.now();
+        try {
+          const captured = await runExtractionCapture(page, selectorPairs, report.id);
+          if (captured) {
+            report.visualManifest = captured.manifest;
+            report.visualBlobs = captured.blobs;
+            log.info('[PM] extraction-time capture done', {
+              url, keyframes: captured.manifest.keyframes.length,
+              blobs: Object.keys(captured.blobs).length, elapsed: ms(captureStart)
+            });
+          } else {
+            log.warn('[PM] extraction-time capture produced no manifest', { url });
+          }
+        } catch (capErr) {
+          if (capErr?.code === 'CANCELLED') {throw capErr;}
+          log.error('[PM] extraction-time capture failed — continuing without screenshots', { url, error: capErr?.message });
+        }
+        _recordPhase('pm.extract.capture', captureStart);
+      }
+    }
 
     onProgress?.('Extraction complete', 100);
     log.info('[PM] runExtraction done', { url, elementCount: report?.totalElements ?? 0 });

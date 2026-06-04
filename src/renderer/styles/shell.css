@@ -43,6 +43,7 @@ html.platform-darwin #app-root {
   width: auto;
   max-width: none;
   background: var(--color-surface-sidebar);
+  border-right: 1px solid var(--color-border-default);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -57,7 +58,7 @@ html.platform-darwin #app-root {
   flex-shrink: 0;
   min-width: 0;
   background: var(--color-surface-sidebar);
-  border-bottom: 1px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--color-border-default);
   position: relative;
   z-index: 2;
 }
@@ -79,6 +80,7 @@ html.platform-darwin #app-root {
   min-width: 0;
   align-self: stretch;
   margin: 0;
+  background: transparent;
   border-bottom: none;
   padding-left: var(--space-2);
 }
@@ -130,6 +132,10 @@ html.platform-darwin #app-root {
 
   max-width: 100%;
   margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+  color: var(--color-text-primary);
   line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;
@@ -170,6 +176,8 @@ html.platform-darwin #app-root {
   flex-shrink: 0;
   min-width: min-content;
   max-width: none;
+  background: var(--color-surface-base);
+  border-color: var(--color-border-default);
 }
 
 [data-panel="left"] .card--toolbar [data-sidebar-toolbar] .sidebar-import-btn {
@@ -193,19 +201,23 @@ html.platform-darwin #app-root {
   height: 28px;
   min-height: 28px;
   padding: 0;
-  border: none;
+  box-sizing: border-box;
+  border: 1px solid var(--color-border-default);
   border-radius: var(--radius-sm);
-  background: transparent;
+  background: var(--color-surface-base);
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   color: var(--color-text-secondary);
   cursor: pointer;
-  transition: color 150ms ease, background 150ms ease;
+  transition: color var(--dur-fast) var(--ease-standard),
+              background-color var(--dur-fast) var(--ease-standard),
+              border-color var(--dur-fast) var(--ease-standard);
 }
 
 [data-panel="left"] .sidebar-import-btn:hover:not(:disabled) {
   color: var(--color-text-primary);
   background: var(--color-surface-hover);
+  border-color: var(--color-border-default);
 }
 
 [data-panel="left"] .card--toolbar [data-sidebar-toolbar] .sidebar-import-btn {

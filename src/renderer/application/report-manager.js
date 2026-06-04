@@ -299,10 +299,13 @@ function _syncSortControl() {
   const btn = document.getElementById('sort-control-btn');
   if (!btn) return;
   const cfg = _reportList?.getViewConfig() ?? { sortField: 'date', sortDirection: 'desc' };
-  const preset = SORT_PRESETS.find(
+  const presetIndex = SORT_PRESETS.findIndex(
     (x) => x.sortField === cfg.sortField && x.sortDirection === cfg.sortDirection
-  ) ?? SORT_PRESETS[0];
+  );
+  const preset = presetIndex >= 0 ? SORT_PRESETS[presetIndex] : SORT_PRESETS[0];
   btn.innerHTML = `${iconArrowUpDown(14)}<span class="filter-rail__toolbar-btn-label">${preset.menuLabel}</span>`;
+  // SORT_PRESETS[0] (Date — newest first) is the default; tint only when sort differs from it.
+  btn.classList.toggle('filter-rail__toolbar-btn--active', presetIndex > 0);
   btn.setAttribute('aria-label', _sortTooltipText(cfg));
 }
 
@@ -326,8 +329,7 @@ function _densityTooltipLabel(density) {
 function _syncDensityCycleButton() {
   const btn = document.getElementById('density-cycle-btn');
   if (!btn) return;
-  const cfg = _reportList?.getViewConfig() ?? { density: 'default' };
-  const d = cfg.density;
+  const d = _reportList?.getViewConfig()?.density ?? 'default';
   if (d === 'compact') {
     btn.innerHTML = iconList(14);
   } else if (d === 'comfortable') {
@@ -391,10 +393,16 @@ function _injectSidebarControlIcons() {
 function _syncSearchClearVisibility() {
   const input = document.getElementById('search-reports');
   const clear = document.getElementById('search-reports-clear');
-  if (!clear) return;
+  const kbd = document.getElementById('search-reports-kbd');
   const empty = (input?.value ?? '').trim().length === 0;
-  clear.classList.toggle('filter-rail__search-clear--off', empty);
-  clear.setAttribute('aria-hidden', empty ? 'true' : 'false');
+  if (clear) {
+    clear.classList.toggle('filter-rail__search-clear--off', empty);
+    clear.setAttribute('aria-hidden', empty ? 'true' : 'false');
+  }
+  // Hint chip shows only when the field is empty; the clear button takes over otherwise.
+  if (kbd) {
+    kbd.classList.toggle('filter-rail__search-kbd--off', !empty);
+  }
 }
 
 const api = window.electronAPI;
@@ -409,8 +417,6 @@ function handleEmptyClearSearchClick() {
 
 async function _syncJobMeta(state) {
   if (!_reportList) return;
-  const cfg = _reportList.getViewConfig();
-  if (cfg.groupBy !== 'job') return;
 
   const map = new Map();
   let storedJobs = [];
@@ -424,9 +430,14 @@ async function _syncJobMeta(state) {
     if (!j?.id) continue;
     map.set(j.id, {
       filename: j.filename ?? null,
-      totalPairs: j.totalPairs ?? null,
+      totalPairs: j.totalPairs ?? j.pairs?.length ?? null,
       createdAt: j.createdAt ?? null,
-      status: j.status ?? null
+      status: j.status ?? null,
+      concurrency: typeof j.concurrency === 'number' ? j.concurrency : null,
+      hostCooldownMs: typeof j.hostCooldownMs === 'number' ? j.hostCooldownMs : null,
+      summary: j.summary ?? null,
+      startedAt: j.startedAt ?? null,
+      completedAt: j.completedAt ?? null
     });
   }
 
@@ -438,7 +449,12 @@ async function _syncJobMeta(state) {
       filename: job.filename ?? existing.filename ?? null,
       totalPairs: job.totalPairs ?? job.pairs?.length ?? existing.totalPairs ?? null,
       createdAt: job.startedAt ?? existing.createdAt ?? null,
-      status: job.status ?? existing.status ?? null
+      status: job.status ?? existing.status ?? null,
+      concurrency: job.concurrency ?? existing.concurrency ?? null,
+      hostCooldownMs: job.hostCooldownMs ?? existing.hostCooldownMs ?? null,
+      summary: job.summary ?? existing.summary ?? null,
+      startedAt: job.startedAt ?? existing.startedAt ?? null,
+      completedAt: job.completedAt ?? existing.completedAt ?? null
     });
   }
 
@@ -545,11 +561,11 @@ function renderReportList(reports, searchQuery) {
     const titleEl = filteredPanel?.querySelector('.empty-title');
     if (titleEl) {
       const q = rawQ.trim();
-      titleEl.textContent = q.length > 0 ? `No results for "${q}"` : 'No results';
+      titleEl.textContent = q.length > 0 ? `No reports match "${q}"` : 'No matching reports';
     }
   } else {
     const titleEl = filteredPanel?.querySelector('.empty-title');
-    if (titleEl) {titleEl.textContent = 'No results';}
+    if (titleEl) {titleEl.textContent = 'No matching reports';}
   }
 }
 

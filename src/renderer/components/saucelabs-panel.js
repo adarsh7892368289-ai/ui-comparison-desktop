@@ -1,6 +1,11 @@
 'use strict';
 
-import { getState, subscribe } from '../state.js';
+import { getState, dispatch, subscribe } from '../state.js';
+import {
+  resolveActiveTolerances,
+  persistTolerancesImmediate,
+  persistTolerancesDebounced } from
+'../application/compare-workflow.js';
 import {
   validateAndStoreCredentials,
   getCredentials,
@@ -207,9 +212,37 @@ export function createSauceLabsPanel(hostEl) {
       </div>
       <div class="saucelabs-panel__filter-error" id="sauce-filter-error" role="alert" aria-live="polite" hidden></div>
 
-      <div class="saucelabs-panel__actions">
-        <button type="button" class="btn-primary" id="sauce-compare-btn">Run Comparison on SauceLabs</button>
-        <button type="button" class="btn-secondary btn-sm" id="sauce-extract-btn">Extract Only</button>
+      <label class="toggle-row" for="sauce-tolerance-toggle">
+        <div class="toggle-row__text">
+          <span class="toggle-row__label">Tolerance</span>
+          <span class="toggle-row__hint">Ignore small differences below thresholds</span>
+        </div>
+        <div class="visual-toggle__track">
+          <input type="checkbox" id="sauce-tolerance-toggle">
+          <span class="visual-toggle__thumb" aria-hidden="true"></span>
+        </div>
+      </label>
+      <div class="tolerance-collapsible" id="sauce-tolerance-collapsible" hidden>
+        <div class="tolerance-grid" role="group" aria-label="SauceLabs tolerance values">
+          <div class="tolerance-cell">
+            <label class="tolerance-cell__label" for="sauce-tolerance-color">Color (ΔRGB)</label>
+            <input type="number" id="sauce-tolerance-color" class="tolerance-cell__input" min="0" max="255" step="1" inputmode="numeric">
+          </div>
+          <div class="tolerance-cell">
+            <label class="tolerance-cell__label" for="sauce-tolerance-size">Size (px)</label>
+            <input type="number" id="sauce-tolerance-size" class="tolerance-cell__input" min="0" max="100" step="1" inputmode="numeric">
+          </div>
+          <div class="tolerance-cell">
+            <label class="tolerance-cell__label" for="sauce-tolerance-opacity">Opacity (Δ)</label>
+            <input type="number" id="sauce-tolerance-opacity" class="tolerance-cell__input" min="0" max="1" step="0.01" inputmode="decimal">
+          </div>
+        </div>
+        <p class="saucelabs-panel__hint">Differences within these thresholds are ignored.</p>
+      </div>
+
+      <div class="saucelabs-panel__actions saucelabs-panel__actions--primary">
+        <button type="button" class="btn-primary saucelabs-panel__primary-btn" id="sauce-compare-btn">Run Comparison on SauceLabs</button>
+        <button type="button" class="btn-secondary saucelabs-panel__secondary-btn" id="sauce-extract-btn">Extract Only</button>
       </div>
     </div>
 
@@ -517,7 +550,44 @@ export function createSauceLabsPanel(hostEl) {
   const jobCard = panel.querySelector('#sauce-job-card');
   const resultSection = panel.querySelector('#sauce-result-section');
   const resultHost = panel.querySelector('#sauce-result-host');
+  const sauceToleranceToggle = panel.querySelector('#sauce-tolerance-toggle');
+  const sauceToleranceCollapsible = panel.querySelector('#sauce-tolerance-collapsible');
+  const sauceToleranceColor = panel.querySelector('#sauce-tolerance-color');
+  const sauceToleranceSize = panel.querySelector('#sauce-tolerance-size');
+  const sauceToleranceOpacity = panel.querySelector('#sauce-tolerance-opacity');
   let lastRenderedComparisonId = null;
+
+  if (sauceToleranceToggle) {
+    sauceToleranceToggle.addEventListener('change', (e) => {
+      dispatch('SET_TOLERANCE_ENABLED', { enabled: Boolean(e.target.checked) });
+      persistTolerancesImmediate();
+    });
+  }
+  const _wireSauceToleranceField = (el, field, parser) => {
+    if (!el) {return;}
+    el.addEventListener('input', (e) => {
+      const raw = e.target.value;
+      if (raw === '' || raw === '-') {return;}
+      const value = parser(raw);
+      if (!Number.isFinite(value)) {return;}
+      dispatch('SET_TOLERANCE_FIELD', { field, value });
+      persistTolerancesDebounced();
+    });
+    el.addEventListener('change', () => persistTolerancesImmediate());
+  };
+  _wireSauceToleranceField(sauceToleranceColor, 'color', (v) => parseInt(v, 10));
+  _wireSauceToleranceField(sauceToleranceSize, 'size', (v) => parseInt(v, 10));
+  _wireSauceToleranceField(sauceToleranceOpacity, 'opacity', (v) => parseFloat(v));
+
+  function _syncSauceToleranceUI(state) {
+    if (!sauceToleranceToggle) {return;}
+    const active = resolveActiveTolerances(state);
+    sauceToleranceToggle.checked = Boolean(active.enabled);
+    if (sauceToleranceCollapsible) {sauceToleranceCollapsible.hidden = !active.enabled;}
+    if (sauceToleranceColor && document.activeElement !== sauceToleranceColor) {sauceToleranceColor.value = String(active.color);}
+    if (sauceToleranceSize && document.activeElement !== sauceToleranceSize) {sauceToleranceSize.value = String(active.size);}
+    if (sauceToleranceOpacity && document.activeElement !== sauceToleranceOpacity) {sauceToleranceOpacity.value = String(active.opacity);}
+  }
 
   function renderCredentialStatus(state) {
     const credState = state.sauceCredentialState;
@@ -750,6 +820,7 @@ export function createSauceLabsPanel(hostEl) {
     renderJobStatus(state);
     renderSauceResult(state);
     maybeHydrateResult(state);
+    _syncSauceToleranceUI(state);
     const isRunning = state.sauceJob && !['done', 'failed', 'cancelled', 'timed_out'].includes(state.sauceJob.status);
     compareBtn.disabled = isRunning;
     extractBtn.disabled = isRunning;
@@ -760,6 +831,7 @@ export function createSauceLabsPanel(hostEl) {
   renderJobStatus(currentState);
   renderSauceResult(currentState);
   maybeHydrateResult(currentState);
+  _syncSauceToleranceUI(currentState);
 
   return { destroy: unsubscribe };
 }

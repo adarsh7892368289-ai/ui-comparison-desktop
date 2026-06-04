@@ -13,6 +13,16 @@ function escapeCsv(value) {
   return safe;
 }
 
+function unescapeCsv(value) {
+  if (typeof value !== 'string') { return value; }
+  // Reverse escapeCsv's formula-injection guard: a leading apostrophe is only
+  // ever prepended when the original value started with =, +, - or @.
+  if (value.length >= 2 && value[0] === "'" && /^[=+\-@]/u.test(value.slice(1))) {
+    return value.slice(1);
+  }
+  return value;
+}
+
 function rowsToCsv(rows) {
   return rows.map(row => row.map(escapeCsv).join(',')).join('\n');
 }
@@ -21,4 +31,4 @@ function safeTimestamp() {
   return new Date().toISOString().replace(/[:.]/gu, '-').slice(0, ISO_DATE_SLICE_END);
 }
 
-export { escapeCsv, rowsToCsv, safeTimestamp };
+export { escapeCsv, unescapeCsv, rowsToCsv, safeTimestamp };

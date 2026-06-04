@@ -40,7 +40,8 @@ async function runBulkJob(jobSpec, pushEvent, isMasterCancelled, ctx) {
     pairs,
     concurrency,
     hostCooldownMs,
-    comparisonIdsByPairIndex
+    comparisonIdsByPairIndex,
+    tolerances
   } = jobSpec;
 
   const safeConcurrency = Math.max(1, Math.min(concurrency || 1, 8));
@@ -143,6 +144,7 @@ async function runBulkJob(jobSpec, pushEvent, isMasterCancelled, ctx) {
               url: pair.baselineUrl,
               browser,
               filters: _filtersForPair,
+              captureScreenshots: !!pair.includeScreenshots,
               onProgress: (label, innerPct) => {
                 baselineOuter = (innerPct * 25) / 100;
                 const pct = Math.max(baselineOuter, compareOuter);
@@ -165,6 +167,7 @@ async function runBulkJob(jobSpec, pushEvent, isMasterCancelled, ctx) {
               url: pair.compareUrl,
               browser,
               filters: _filtersForPair,
+              captureScreenshots: !!pair.includeScreenshots,
               onProgress: (label, innerPct) => {
                 compareOuter = (innerPct * 25) / 100;
                 const pct = Math.max(baselineOuter, compareOuter);
@@ -211,8 +214,9 @@ async function runBulkJob(jobSpec, pushEvent, isMasterCancelled, ctx) {
           compareUrl: pair.compareUrl,
           baselineElements,
           compareElements,
-          includeScreenshots: !!pair.includeScreenshots,
+          includeScreenshots: false,
           browser,
+          tolerances: tolerances ?? null,
           blobCache: ctx.blobCache,
           isCancelled: () => _isOpCancelled(operationId) || isMasterCancelled(),
           onProgress: (label, innerPct) => {

@@ -394,7 +394,8 @@ function _registerBulkHandlers() {
         pairs,
         concurrency,
         hostCooldownMs,
-        comparisonIdsByPairIndex
+        comparisonIdsByPairIndex,
+        tolerances
       } = payload;
 
       if (!jobId || !Array.isArray(pairs) || pairs.length === 0) {
@@ -478,7 +479,8 @@ function _registerBulkHandlers() {
         pairs,
         concurrency: safeConcurrency,
         hostCooldownMs: cooldown,
-        comparisonIdsByPairIndex: comparisonIdsByPairIndex ?? {}
+        comparisonIdsByPairIndex: comparisonIdsByPairIndex ?? {},
+        tolerances: tolerances ?? null
       };
 
       bulkRunner.runBulkJob(jobSpec, pushEvent, isMasterCancelled, ctx).catch((err) => {

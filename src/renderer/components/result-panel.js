@@ -23,15 +23,24 @@ function _buildToleranceBadge(snapshot) {
     typeof v.opacity === 'number' && Number.isFinite(v.opacity);
 
   let triple = null;
+  let enabled = null;
   if (isValidTriple(snapshot)) {
     triple = snapshot;
+    if (typeof snapshot.enabled === 'boolean') { enabled = snapshot.enabled; }
   } else if (snapshot && typeof snapshot === 'object' && isValidTriple(snapshot.values)) {
     triple = snapshot.values;
+    if (typeof snapshot.enabled === 'boolean') { enabled = snapshot.enabled; }
   }
 
   if (!triple) {
     const el = _text('span', 'result-mode-badge result-mode-badge--muted', 'Tolerances: —');
     el.title = 'This comparison was run before tolerances were tracked';
+    return el;
+  }
+
+  if (enabled === false) {
+    const el = _text('span', 'result-mode-badge result-mode-badge--muted', 'Tolerance: off');
+    el.title = 'Comparison ran with strict matching — no tolerance applied';
     return el;
   }
 

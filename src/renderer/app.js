@@ -93,9 +93,15 @@ if (!api) {
 api.setWindowTitle?.('UI Comparison');
 
 function toggleTheme() {
-  const current = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+  const root = document.documentElement;
+  const current = root.dataset.theme === 'light' ? 'light' : 'dark';
   const next = current === 'dark' ? 'light' : 'dark';
-  document.documentElement.dataset.theme = next;
+  root.classList.add('theme-switching');
+  root.dataset.theme = next;
+  void root.offsetWidth;
+  requestAnimationFrame(() => {
+    root.classList.remove('theme-switching');
+  });
   try {
     localStorage.setItem('ui-theme', next);
   } catch {
@@ -695,6 +701,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   _wireToleranceInput('tolerance-size', 'size', (v) => parseInt(v, 10));
   _wireToleranceInput('tolerance-opacity', 'opacity', (v) => parseFloat(v));
 
+  const _toleranceToggleEl = document.getElementById('tolerance-toggle');
+  if (_toleranceToggleEl) {
+    _toleranceToggleEl.addEventListener('change', (e) => {
+      dispatch('SET_TOLERANCE_ENABLED', { enabled: Boolean(e.target.checked) });
+      persistTolerancesImmediate();
+    });
+  }
+
   let _prevTolerances = null;
   const _syncToleranceUI = (state) => {
     const t = state.tolerances;
@@ -702,6 +716,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     _prevTolerances = t;
 
     const active = resolveActiveTolerances(state);
+    const collapsible = document.getElementById('tolerance-collapsible');
+    if (collapsible) { collapsible.hidden = !active.enabled; }
+    const toggleEl = document.getElementById('tolerance-toggle');
+    if (toggleEl) { toggleEl.checked = Boolean(active.enabled); }
+
     const hint = document.getElementById('tolerance-hint');
     if (hint) {
       hint.textContent = `Ignoring differences within color ≤ ${active.color}, size ≤ ${active.size}px, opacity ≤ ${active.opacity}.`;

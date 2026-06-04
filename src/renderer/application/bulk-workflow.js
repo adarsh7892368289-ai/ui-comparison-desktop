@@ -3,8 +3,14 @@
 import { getState, dispatch } from '../state.js';
 import storage, { buildPairKey } from '../../infrastructure/idb-repository.js';
 import { Toast } from '../ui.js';
-import { loadComparisonFromCacheByPairIds } from './compare-workflow.js';
+import {
+  loadComparisonFromCacheByPairIds,
+  resolveActiveTolerances,
+  buildToleranceSnapshot,
+  tolerancesPayloadFromActive } from
+'./compare-workflow.js';
 import { loadAndRenderReports } from './report-manager.js';
+import { reconstructBulkVisualRecords } from '@core/visual/bulk-visual-reconstruct.js';
 import { buildExtractionKey, todayYmd } from '@core/bulk/extraction-key.js';
 import { get as getDefault } from '@config/defaults.js';
 import { sanitizeFilename } from '../utils/sanitize.js';
@@ -61,6 +67,7 @@ function _clampConcurrency(requested, totalMemMB, heterogeneous) {
 
 const _pairIdsByJobId = new Map();
 const _pairMetaByJobId = new Map();
+const _toleranceSnapshotByJobId = new Map();
 const _pendingPersistByPairIndex = new Map();
 
 
@@ -115,6 +122,19 @@ export async function computeDeduplicationPlan(pairs, jobOptions = {}) {
     };
 
     const dedupedSides = {};
+    // When this pair wants screenshots, a cached report is only reusable if it
+    // also has a persisted visual manifest — otherwise extraction-time capture
+    // is skipped on reuse and the pair would silently lose its screenshots.
+    const needsVisual = pair.includeScreenshots !== false;
+    const hasVisual = async (reportId) => {
+      if (!needsVisual) {return true;}
+      if (typeof storage.loadReportVisualManifest !== 'function') {return false;}
+      try {
+        return Boolean(await storage.loadReportVisualManifest(reportId));
+      } catch {
+        return false;
+      }
+    };
     try {
       const baselineKey = await buildExtractionKey({ ...keyArgs, url: pair.baselineUrl });
       const compareKey = await buildExtractionKey({ ...keyArgs, url: pair.compareUrl });
@@ -124,10 +144,10 @@ export async function computeDeduplicationPlan(pairs, jobOptions = {}) {
       storage.loadReportByExtractionKey(compareKey)]
       );
 
-      if (baselineHit && (baselineHit.totalElements ?? 0) > 0) {
+      if (baselineHit && (baselineHit.totalElements ?? 0) > 0 && await hasVisual(baselineHit.id)) {
         dedupedSides.baseline = { reportId: baselineHit.id };
       }
-      if (compareHit && (compareHit.totalElements ?? 0) > 0) {
+      if (compareHit && (compareHit.totalElements ?? 0) > 0 && await hasVisual(compareHit.id)) {
         dedupedSides.compare = { reportId: compareHit.id };
       }
     } catch (err) {
@@ -230,13 +250,17 @@ function _buildJobSpec(snapshot) {
     comparisonIdsByPairIndex[p.pairIndex] = p.comparisonId;
   }
 
+  const activeTolerances = resolveActiveTolerances(snapshot);
+
   return {
     jobId: _newId(),
     filename,
     pairs,
     concurrency: opts.concurrency,
     hostCooldownMs: opts.hostCooldownMs,
-    comparisonIdsByPairIndex
+    comparisonIdsByPairIndex,
+    tolerances: tolerancesPayloadFromActive(activeTolerances),
+    tolerancesSnapshot: buildToleranceSnapshot(activeTolerances)
   };
 }
 
@@ -262,6 +286,9 @@ export async function routeBulkStartClick() {
     pairIdMap.set(pair.pairIndex, pair.pairId);
   }
   _pairIdsByJobId.set(jobSpec.jobId, pairIdMap);
+  if (jobSpec.tolerancesSnapshot) {
+    _toleranceSnapshotByJobId.set(jobSpec.jobId, jobSpec.tolerancesSnapshot);
+  }
 
 
 
@@ -281,7 +308,9 @@ export async function routeBulkStartClick() {
         totalPairs: jobSpec.pairs.length,
         concurrency: jobSpec.concurrency,
         browser: browserDescriptor,
-        createdAt
+        createdAt,
+        tolerances: jobSpec.tolerances,
+        tolerancesSnapshot: jobSpec.tolerancesSnapshot
       });
     }
     if (typeof storage.saveBulkPair === 'function') {
@@ -384,6 +413,7 @@ export async function routeBulkResetClick() {
   if (job?.jobId) {
     _pairIdsByJobId.delete(job.jobId);
     _pairMetaByJobId.delete(job.jobId);
+    _toleranceSnapshotByJobId.delete(job.jobId);
     const prefix = `${job.jobId}:`;
     for (const k of _lastPersistedPhaseByPairKey.keys()) {
       if (k.startsWith(prefix)) {_lastPersistedPhaseByPairKey.delete(k);}
@@ -396,6 +426,108 @@ export async function routeBulkResetClick() {
 
 function _isReusedSide(reportLike) {
   return Boolean(reportLike && reportLike.reused === true);
+}
+
+function _toBlob(blobData) {
+  if (!blobData) {return null;}
+  if (blobData instanceof Blob) {return blobData;}
+  if (!blobData.buffer) {return null;}
+  const u8 = blobData.buffer instanceof Uint8Array ? blobData.buffer : new Uint8Array(blobData.buffer);
+  return new Blob([u8], { type: blobData.mimeType || 'image/webp' });
+}
+
+// Persist a fresh extraction's screenshots per-report so they survive dedup
+// reuse across future comparisons (mirrors SauceLabs per-session artifacts).
+async function _persistReportVisual(reportId, manifest, blobs) {
+  if (!reportId || !manifest) {return;}
+  try {
+    await storage.saveReportVisualManifest(reportId, manifest);
+    if (blobs && typeof blobs === 'object') {
+      for (const [kfId, blobData] of Object.entries(blobs)) {
+        const blob = _toBlob(blobData);
+        if (blob) {await storage.saveReportVisualBlob(reportId, kfId, blob);}
+      }
+    }
+  } catch (err) {
+    console.error('[bulk] _persistReportVisual failed', { reportId, error: err?.message });
+  }
+}
+
+// Load a side's extraction manifest + raw-keyframe blobs. Fresh sides carry
+// them inline on the report payload; reused sides load from IDB by reportId.
+async function _resolveSideVisual(reportSide, reportId) {
+  if (reportSide && !_isReusedSide(reportSide) && reportSide.visualManifest) {
+    const blobs = new Map();
+    const raw = reportSide.visualBlobs ?? {};
+    for (const [kfId, blobData] of Object.entries(raw)) {
+      const blob = _toBlob(blobData);
+      if (blob) {blobs.set(kfId, blob);}
+    }
+    return { manifest: reportSide.visualManifest, blobs };
+  }
+  if (!reportId) {return { manifest: null, blobs: new Map() };}
+  try {
+    const [manifest, blobs] = await Promise.all([
+      storage.loadReportVisualManifest(reportId),
+      storage.loadReportVisualBlobs(reportId)
+    ]);
+    return { manifest: manifest ?? null, blobs: blobs ?? new Map() };
+  } catch (err) {
+    console.error('[bulk] _resolveSideVisual load failed', { reportId, error: err?.message });
+    return { manifest: null, blobs: new Map() };
+  }
+}
+
+// After comparison, reconstruct comparison-scoped visual records from both
+// sides' extraction manifests and persist only the diffing keyframes/rects/blobs
+// under comparisonId — exactly what _rebuildVisualDiffsFromSession expects.
+async function _reconstructAndPersistVisuals({
+  comparisonId,
+  baselineReportId,
+  compareReportId,
+  comparisonResults,
+  unmatchedElements,
+  baselineReport,
+  compareReport
+}) {
+  if (!comparisonId) {return { status: 'skipped', reason: 'No comparison id' };}
+  const [baseVisual, cmpVisual] = await Promise.all([
+    _resolveSideVisual(baselineReport, baselineReportId),
+    _resolveSideVisual(compareReport, compareReportId)
+  ]);
+  if (!baseVisual.manifest && !cmpVisual.manifest) {
+    return { status: 'skipped', reason: 'No screenshots were captured at extraction time' };
+  }
+
+  const { keyframeRecords, rectRecords, blobPlan } = reconstructBulkVisualRecords({
+    sessionId: comparisonId,
+    comparisonResults,
+    unmatchedElements: unmatchedElements ?? { baseline: [], compare: [] },
+    baselineManifest: baseVisual.manifest,
+    compareManifest: cmpVisual.manifest
+  });
+
+  if (keyframeRecords.length === 0 && rectRecords.length === 0) {
+    return { status: 'completed', reason: null };
+  }
+
+  // Persist index records (keyframes + rects) BEFORE blobs: if interrupted, the
+  // rebuild still has a structurally-valid manifest (blobs degrade to a "missing"
+  // placeholder) rather than orphan blobs with no records to reference them.
+  if (keyframeRecords.length > 0) {
+    await Promise.all(keyframeRecords.map((kf) => storage.saveVisualKeyframe(kf)));
+  }
+  if (rectRecords.length > 0) {
+    await storage.saveVisualElementRects(rectRecords);
+  }
+  const blobsBySide = { baseline: baseVisual.blobs, compare: cmpVisual.blobs };
+  for (const { side, rawKfId, prefixedId } of blobPlan) {
+    const blob = blobsBySide[side]?.get(rawKfId);
+    if (blob) {
+      await storage.saveVisualBlob(`${comparisonId}:${prefixedId}`, blob, comparisonId);
+    }
+  }
+  return { status: 'completed', reason: null };
 }
 
 async function _persistPairResult(payload) {
@@ -431,11 +563,13 @@ async function _persistPairResult(payload) {
       } else if (baselineSide.id) {
         baselineReportId = baselineSide.id;
         const extractionKey = await _keyFor(pairMeta?.baselineUrl ?? baselineSide.url);
+        const { visualManifest, visualBlobs, ...reportToSave } = baselineSide;
         await storage.saveReport({
-          ...baselineSide,
+          ...reportToSave,
           bulkJobId: jobId,
           extractionKey: extractionKey ?? undefined
         });
+        await _persistReportVisual(baselineSide.id, visualManifest, visualBlobs);
       }
     }
 
@@ -446,11 +580,13 @@ async function _persistPairResult(payload) {
       } else if (compareSide.id) {
         compareReportId = compareSide.id;
         const extractionKey = await _keyFor(pairMeta?.compareUrl ?? compareSide.url);
+        const { visualManifest, visualBlobs, ...reportToSave } = compareSide;
         await storage.saveReport({
-          ...compareSide,
+          ...reportToSave,
           bulkJobId: jobId,
           extractionKey: extractionKey ?? undefined
         });
+        await _persistReportVisual(compareSide.id, visualManifest, visualBlobs);
       }
     }
 
@@ -466,11 +602,39 @@ async function _persistPairResult(payload) {
 
       if (comparisonId && baseId && compId) {
         const bulkDefaults = getDefault('comparison.defaultTolerances', { color: 8, size: 5, opacity: 0.05 });
+        const stored = jobId ? _toleranceSnapshotByJobId.get(jobId) : null;
         const bulkTolerancesSnapshot = {
-          color:   bulkDefaults.color,
-          size:    bulkDefaults.size,
-          opacity: bulkDefaults.opacity
+          enabled: stored ? Boolean(stored.enabled) : false,
+          color:   typeof stored?.color === 'number' ? stored.color : bulkDefaults.color,
+          size:    typeof stored?.size === 'number' ? stored.size : bulkDefaults.size,
+          opacity: typeof stored?.opacity === 'number' ? stored.opacity : bulkDefaults.opacity
         };
+        const wantsScreenshots = pairMeta?.includeScreenshots !== false;
+        let visualDiffStatus = null;
+        try {
+          const reconResult = await _reconstructAndPersistVisuals({
+            comparisonId,
+            baselineReportId: baseId,
+            compareReportId: compId,
+            comparisonResults: slim.comparison?.results ?? [],
+            unmatchedElements: slim.unmatchedElements ?? null,
+            baselineReport: baselineSide,
+            compareReport: compareSide
+          });
+          if (wantsScreenshots && reconResult) {
+            visualDiffStatus = {
+              status: reconResult.status,
+              reason: reconResult.reason ?? null,
+              devToolsWarnings: []
+            };
+          }
+        } catch (visualErr) {
+          console.error('[bulk] visual reconstruction failed', visualErr);
+          if (wantsScreenshots) {
+            visualDiffStatus = { status: 'failed', reason: visualErr?.message ?? 'Reconstruction failed', devToolsWarnings: [] };
+          }
+        }
+
         const meta = {
           id: comparisonId,
           pairKey: buildPairKey(baseId, compId, mode),
@@ -483,33 +647,11 @@ async function _persistPairResult(payload) {
           duration: slim.duration ?? 0,
           timestamp: slim.completedAt ?? new Date().toISOString(),
           bulkJobId: jobId,
-          visualDiffStatus: slim.visualDiffStatus ?? null,
-          visualSessionId: slim.sessionId ?? null,
+          visualDiffStatus,
+          visualSessionId: comparisonId,
           tolerancesSnapshot: bulkTolerancesSnapshot
         };
         await storage.saveComparison(meta, slim.comparison?.results ?? []);
-
-        try {
-          if (slim.visualBlobs && typeof slim.visualBlobs === 'object') {
-            for (const [keyframeId, blobData] of Object.entries(slim.visualBlobs)) {
-              if (blobData && blobData.buffer) {
-                const u8 = blobData.buffer instanceof Uint8Array ?
-                blobData.buffer :
-                new Uint8Array(blobData.buffer);
-                const blob = new Blob([u8], { type: blobData.mimeType || 'image/webp' });
-                await storage.saveVisualBlob(`${comparisonId}:${keyframeId}`, blob, comparisonId);
-              }
-            }
-          }
-          if (Array.isArray(slim.visualKeyframes) && slim.visualKeyframes.length > 0) {
-            await Promise.all(slim.visualKeyframes.map((kf) => storage.saveVisualKeyframe(kf)));
-          }
-          if (Array.isArray(slim.visualRectRecords) && slim.visualRectRecords.length > 0) {
-            await storage.saveVisualElementRects(slim.visualRectRecords);
-          }
-        } catch (visualErr) {
-          console.error('[bulk] visual persistence failed', visualErr);
-        }
       }
     }
 
@@ -986,7 +1128,9 @@ export async function detectAndOfferResume() {
     summary: chosen.summary ?? null,
     startedAt: chosen.startedAt ?? null,
     completedAt: null,
-    activePairIndex: null
+    activePairIndex: null,
+    tolerances: chosen.tolerances ?? null,
+    tolerancesSnapshot: chosen.tolerancesSnapshot ?? null
   };
 
   dispatch('BULK_JOB_RESUME_OFFERED', {
@@ -1080,6 +1224,10 @@ async function _handleResumeAccepted(job, incompletePairs) {
   const heterogeneous = _planIsHeterogeneous(incompleteWithIds, getState().selectedBrowser);
   const safeConcurrency = _clampConcurrency(job.concurrency ?? 2, totalMemMB, heterogeneous);
 
+  const activeTolerances = job.tolerancesSnapshot ?? resolveActiveTolerances(getState());
+  const tolerancesPayload = tolerancesPayloadFromActive(activeTolerances);
+  const tolerancesSnapshot = buildToleranceSnapshot(activeTolerances);
+
   const resumeSpec = {
     jobId: job.jobId,
     filename: job.filename ?? '',
@@ -1087,8 +1235,12 @@ async function _handleResumeAccepted(job, incompletePairs) {
     concurrency: safeConcurrency,
     hostCooldownMs: job.hostCooldownMs ?? 0,
     comparisonIdsByPairIndex,
+    tolerances: tolerancesPayload,
+    tolerancesSnapshot,
     resumed: true
   };
+
+  _toleranceSnapshotByJobId.set(job.jobId, tolerancesSnapshot);
 
   _rememberPairMeta(job.jobId, incompleteWithIds);
 

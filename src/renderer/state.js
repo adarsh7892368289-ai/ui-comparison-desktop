@@ -69,7 +69,7 @@ const initialState = {
   sauceCredentialState: 'idle',
   sauceCredentialError: null,
   sauceComparisonResult: null,
-  tolerances: { ...configGet('comparison.defaultTolerances') }
+  tolerances: { enabled: false, ...configGet('comparison.defaultTolerances') }
 };
 
 let _state = { ...initialState };
@@ -203,15 +203,29 @@ function reduce(state, type, payload) {
       const defaults = configGet('comparison.defaultTolerances');
       const seed = (payload.tolerances && typeof payload.tolerances === 'object') ? payload.tolerances : defaults;
       const next = {
+        enabled: typeof seed.enabled === 'boolean' ? seed.enabled : Boolean(state.tolerances?.enabled),
         color:   _clampNumber(seed.color,   0, 255, defaults.color),
         size:    _clampNumber(seed.size,    0, 100, defaults.size),
         opacity: _clampNumber(seed.opacity, 0, 1,   defaults.opacity)
       };
-      const cur = state.tolerances ?? defaults;
-      if (cur.color === next.color && cur.size === next.size && cur.opacity === next.opacity) {
+      const cur = state.tolerances ?? { enabled: false, ...defaults };
+      if (
+        cur.enabled === next.enabled &&
+        cur.color === next.color &&
+        cur.size === next.size &&
+        cur.opacity === next.opacity
+      ) {
         return state;
       }
       return { ...state, tolerances: next };
+    }
+
+    case 'SET_TOLERANCE_ENABLED': {
+      const defaults = configGet('comparison.defaultTolerances');
+      const enabled = Boolean(payload.enabled);
+      const base = state.tolerances ?? { enabled: false, ...defaults };
+      if (base.enabled === enabled) { return state; }
+      return { ...state, tolerances: { ...base, enabled } };
     }
 
     case 'SET_TOLERANCE_FIELD': {
@@ -219,7 +233,7 @@ function reduce(state, type, payload) {
       const max = payload.field === 'color' ? 255 : payload.field === 'size' ? 100 : 1;
       const defaults = configGet('comparison.defaultTolerances');
       const value = _clampNumber(payload.value, 0, max, defaults[payload.field]);
-      const base = state.tolerances ?? defaults;
+      const base = state.tolerances ?? { enabled: false, ...defaults };
       if (base[payload.field] === value) { return state; }
       return { ...state, tolerances: { ...base, [payload.field]: value } };
     }

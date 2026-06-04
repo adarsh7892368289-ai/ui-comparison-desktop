@@ -121,6 +121,15 @@ function esc(str) {
   replace(/"/g, '&quot;');
 }
 
+function jsonForScript(value) {
+  return JSON.stringify(value ?? null).
+  replace(/</g, '\\u003c').
+  replace(/>/g, '\\u003e').
+  replace(/&/g, '\\u0026').
+  replace(/\u2028/g, '\\u2028').
+  replace(/\u2029/g, '\\u2029');
+}
+
 function buildDiagnosticBanner(vds) {
   if (!vds || vds.status === 'success' || vds.status === 'completed' || vds.status === 'devtools-blocked') {return '';}
   const isFailed = vds.status === 'failed';
@@ -232,14 +241,23 @@ ${buildDiagnosticBanner(visualDiffStatus)}${buildDevToolsBanner(raw.devToolsWarn
     </div>
     <div class="sidebar-wrapper"><aside class="sidebar" id="diff-panel">${buildSidebar(summary, raw)}</aside><div id="summary-panel"></div></div>
     <div class="resize-handle" id="resize-left" title="Drag to resize"></div>
-    <main class="center-panel">
+    <main class="center-panel" data-view="tree">
       <div class="tree-toolbar">
-        <button class="toolbar-btn" id="expand-all-btn">\u25BC Expand All</button>
-        <button class="toolbar-btn" id="collapse-all-btn">\u25BA Collapse All</button>
+        <div class="view-toggle" role="tablist" aria-label="View mode">
+          <button class="view-toggle-btn active" id="view-tree-btn" role="tab" aria-selected="true" data-view="tree">Tree</button>
+          <button class="view-toggle-btn" id="view-flat-btn" role="tab" aria-selected="false" data-view="flat">List</button>
+        </div>
+        <button class="toolbar-btn tree-only" id="expand-all-btn">\u25BC Expand All</button>
+        <button class="toolbar-btn tree-only" id="collapse-all-btn">\u25BA Collapse All</button>
         <span class="tree-count" id="tree-count"></span>
       </div>
       <div class="tree-panel" id="tree-panel">
         <div class="list-loading" id="list-loading"><div class="list-spinner"></div><span>Building tree\u2026</span></div>
+      </div>
+      <div class="flatlist-panel" id="flatlist-panel">
+        <div class="flatlist-scroll" id="flatlist-scroll">
+          <div class="list-loading" id="flatlist-loading"><div class="list-spinner"></div><span>Building list\u2026</span></div>
+        </div>
       </div>
     </main>
     <div class="resize-handle" id="resize-right" title="Drag to resize"></div>
@@ -613,6 +631,50 @@ body{
 .sidebar-wrapper.summary-active #diff-panel{display:none}
 .sidebar-wrapper.summary-active #summary-panel{display:flex;flex-direction:column;flex:1;min-height:0}
 
+.view-toggle{display:inline-flex;border:1px solid var(--color-border-default);border-radius:5px;overflow:hidden}
+.view-toggle-btn{background:transparent;border:none;color:var(--color-text-tertiary);font-size:11px;font-weight:500;height:26px;padding:0 12px;cursor:pointer;transition:background .08s,color .08s}
+.view-toggle-btn:not(:last-child){border-right:1px solid var(--color-border-default)}
+.view-toggle-btn:hover{background:var(--color-bg-hover-alpha);color:var(--color-text-secondary)}
+.view-toggle-btn.active{background:var(--color-brand-subtle-faint);color:var(--color-brand-hover);font-weight:600}
+.center-panel[data-view="flat"] .tree-only{display:none}
+.center-panel[data-view="flat"] #tree-panel{display:none}
+.center-panel[data-view="tree"] #flatlist-panel{display:none}
+.flatlist-panel{display:flex;flex-direction:column;flex:1;min-height:0;background:var(--color-surface-base)}
+.flatlist-scroll{overflow-y:auto;flex:1;min-height:0;background:var(--color-surface-base);scrollbar-width:thin;scrollbar-color:var(--color-border-default) transparent}
+.flatlist-scroll::-webkit-scrollbar{width:4px}
+.flatlist-scroll::-webkit-scrollbar-track{background:transparent}
+.flatlist-scroll::-webkit-scrollbar-thumb{background:var(--color-border-default);border-radius:4px}
+.flatlist-scroll::-webkit-scrollbar-thumb:hover{background:var(--color-border-strong)}
+.flatlist-section{display:flex;flex-direction:column}
+.flatlist-section.flat-hidden{display:none}
+.flatlist-header{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:8px;padding:7px 12px 7px 9px;background:var(--color-surface-chrome);border-bottom:1px solid var(--color-border-subtle);border-top:1px solid var(--color-border-subtle);border-left:3px solid var(--color-border-default)}
+.flatlist-header-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--color-text-tertiary)}
+.flatlist-header-count{margin-left:auto;display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:18px;padding:0 6px;border-radius:5px;font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;background:var(--color-surface-raised);color:var(--color-text-secondary);border:1px solid var(--color-border-subtle)}
+.flatlist-section[data-sev="critical"] .flatlist-header{border-left-color:var(--color-sev-critical);background:var(--color-sev-critical-bg)}
+.flatlist-section[data-sev="critical"] .flatlist-header-label{color:var(--color-sev-critical)}
+.flatlist-section[data-sev="high"] .flatlist-header{border-left-color:var(--color-sev-high);background:var(--color-sev-high-bg)}
+.flatlist-section[data-sev="high"] .flatlist-header-label{color:var(--color-sev-high)}
+.flatlist-section[data-sev="medium"] .flatlist-header{border-left-color:var(--color-sev-medium);background:var(--color-sev-medium-bg)}
+.flatlist-section[data-sev="medium"] .flatlist-header-label{color:var(--color-sev-medium)}
+.flatlist-section[data-sev="low"] .flatlist-header{border-left-color:var(--color-sev-low);background:var(--color-sev-low-bg)}
+.flatlist-section[data-sev="low"] .flatlist-header-label{color:var(--color-sev-low)}
+.flatlist-section[data-sev="added"] .flatlist-header{border-left-color:var(--color-nb-insertion-fg);background:var(--color-nb-insertion-bg)}
+.flatlist-section[data-sev="added"] .flatlist-header-label{color:var(--color-nb-insertion-fg)}
+.flatlist-section[data-sev="removed"] .flatlist-header{border-left-color:var(--color-nb-removal-fg);background:var(--color-nb-removal-bg)}
+.flatlist-section[data-sev="removed"] .flatlist-header-label{color:var(--color-nb-removal-fg)}
+.flat-row{display:flex;align-items:center;gap:6px;min-height:28px;padding:0 12px;border-bottom:1px solid var(--color-border-subtle);cursor:pointer;user-select:none;transition:background .08s;position:relative}
+.flat-row.flat-hidden{display:none}
+.flat-row:hover{background:var(--color-tree-hover)}
+.flat-row.flat-static{cursor:default}
+.flat-row.flat-static:hover{background:transparent}
+.flat-row.flat-selected{background:var(--color-brand-subtle)}
+.flat-row.flat-selected::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--color-brand);border-radius:0 1px 1px 0}
+.flat-row-label{font-size:12px;color:var(--color-tree-diff);font-weight:600;font-family:ui-monospace,'Geist Mono','Cascadia Code','Fira Code',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+.flatlist-more{padding:10px 12px;font-size:11px;color:var(--color-text-tertiary);text-align:center;border-bottom:1px solid var(--color-border-subtle)}
+.flatlist-empty{color:var(--color-text-tertiary);text-align:center;padding:40px 0;font-size:13px}
+.flatlist-scroll{animation:flatlist-fade .18s ease}
+@keyframes flatlist-fade{from{opacity:0}to{opacity:1}}
+
 .exec-summary{display:flex;flex-direction:column;gap:14px}
 .exec-zone{background:var(--color-surface-base);border:1px solid var(--color-border-subtle);border-radius:8px;padding:14px}
 .exec-zone-title{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--color-text-tertiary);font-weight:700;margin-bottom:12px}
@@ -756,6 +818,9 @@ body{
 .vdiff-thumb-wrap.loading::before{content:'';display:block;position:absolute;inset:0;background:linear-gradient(90deg,var(--color-surface-raised) 25%,var(--color-surface-overlay) 50%,var(--color-surface-raised) 75%);background-size:200% 100%;animation:thumb-shimmer 1.2s infinite linear;border-radius:4px}
 .vdiff-thumb-wrap[data-misaligned]::after{content:'';position:absolute;inset:0;border:2px solid #f59e0b;pointer-events:none;z-index:3}
 .vdiff-misalign-badge{position:absolute;bottom:4px;left:4px;right:4px;background:rgba(245,158,11,0.92);color:#1a1200;font-size:10px;font-weight:600;padding:3px 6px;border-radius:3px;text-align:center;z-index:4;pointer-events:none}
+.vdiff-context-badge{position:absolute;bottom:4px;left:4px;right:4px;background:var(--color-surface-overlay);color:var(--color-text-tertiary);font-size:10px;font-weight:600;padding:3px 6px;border-radius:3px;text-align:center;z-index:4;pointer-events:none;border:1px dashed var(--color-border-strong)}
+.vdiff-context-tag{font-size:8px;font-weight:700;letter-spacing:.06em;padding:1px 4px;border-radius:3px;background:var(--color-surface-overlay);color:var(--color-text-tertiary);border:1px solid var(--color-border-default);text-transform:none}
+.vdiff-thumb-wrap[data-context]{opacity:.82}
 @keyframes thumb-shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
 .vdiff-thumb{display:block;transform-origin:top left}
 .vdiff-thumb-svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible;z-index:2}
@@ -857,6 +922,7 @@ body{
 .impact-chip:focus-visible,
 .root-cause-card:focus-visible,
 .activity-btn:focus-visible,
+.flat-row:focus-visible,
 .vdiff-open-btn:focus-visible{
   outline:2px solid var(--color-border-focus);
   outline-offset:1px;
@@ -883,17 +949,17 @@ body{
 }
 
 function buildJs(grouped, manifest, blobData, raw) {
-  const data = JSON.stringify(grouped);
-  const manifestJson = JSON.stringify(manifest ?? {});
-  const blobJson = JSON.stringify(blobData ?? {});
-  const hpidMetaJson = JSON.stringify(
+  const data = jsonForScript(grouped);
+  const manifestJson = jsonForScript(manifest ?? {});
+  const blobJson = jsonForScript(blobData ?? {});
+  const hpidMetaJson = jsonForScript(
     Object.fromEntries(
       (raw?.comparison?.results ?? []).
       filter((r) => r.hpid).
       map((r) => [r.hpid, { t: r.tagName ?? null, c: r.className ?? null, id: r.elementId ?? null }])
     )
   );
-  const meta = JSON.stringify({
+  const meta = jsonForScript({
     baselineUrl: raw?.baseline?.url ?? '',
     compareUrl: raw?.compare?.url ?? '',
     baselineHost: (() => {try {return new URL(raw?.baseline?.url ?? '').hostname;} catch {return 'Baseline';}})(),
@@ -906,7 +972,7 @@ var GROUPED         = ${data};
 var VISUAL_MANIFEST = ${manifestJson};
 var VISUAL_DATA     = ${blobJson};
 var COMPARISON_META = ${meta};
-var DEVTOOLS_WARNINGS = ${JSON.stringify(raw.devToolsWarnings ?? [])};
+var DEVTOOLS_WARNINGS = ${jsonForScript(raw.devToolsWarnings ?? [])};
 var HPID_META       = ${hpidMetaJson};
 var SEVERITY_COLORS = {critical:'#ef4444',high:'#f97316',medium:'#eab308',low:'#6b7280',removed:'#ef4444',added:'#22c55e'};
 var URL_NOISE_ATTRS=new Set(['href','src','srcset','action','data-href','data-url','data-link','data-src','formaction']);
@@ -921,6 +987,7 @@ var _syncCtrl     = null;
 var _zoom         = 1;
 var _resizeObs    = null;
 var _activeEntry  = null;
+var _activeHpid   = null;
   var _inlineThumbObs  = null;
   var _inlineThumbData = [];
 var _selectedNode = null;
@@ -1002,6 +1069,7 @@ function classifyNode(hpid){
 
 function teardown(){
   if(_selectedNode){ _selectedNode.classList.remove('tree-selected'); _selectedNode=null; }
+  document.querySelectorAll('.flat-row.flat-selected').forEach(function(r){ r.classList.remove('flat-selected'); });
   detailEl.querySelectorAll('img').forEach(function(img){ img.onload=null; img.onerror=null; img.removeAttribute('src'); });
   if(_inlineThumbObs) { _inlineThumbObs.disconnect(); _inlineThumbObs = null; }
   _inlineThumbData = [];
@@ -1015,6 +1083,7 @@ function teardown(){
   }
   if(layout){ layout.style.setProperty('--col-right','0px'); layout.classList.add('detail-empty'); }
   _activeEntry=null;
+  _activeHpid=null;
 }
 
 function initSummaryOverlay(){
@@ -1079,7 +1148,7 @@ function initSummaryOverlay(){
       var cat=item.dataset.cat;
       document.querySelectorAll('[data-cat].filter-btn').forEach(function(b){ b.classList.remove('active'); });
       var b=document.querySelector('[data-cat="'+cat+'"].filter-btn');
-      if(b){ b.classList.add('active'); activeCat=cat; applyFilters(); }
+      if(b){ b.classList.add('active'); activeCat=cat; applyAllFilters(); }
     });
   });
   (function(){
@@ -1272,6 +1341,7 @@ function applyThumb(img, svgEl, container, rect, diffs, dpr, flags){
   var hT=Math.max(0,(p.ry-p.paddedY)*sy);
   var hW=Math.max(0,p.rw*sx); var hH=Math.max(0,p.rh*sy);
   if(hW<2||hH<2) return;
+  if(flags&&flags.context){ drawContextMarker(svgEl,hL,hT,hW,hH); return; }
   var sev=diffs&&diffs[0]?diffs[0].severity:'medium';
   var color=SEVERITY_COLORS[sev]||'#7c3aed';
   var defs=svgNS('defs');
@@ -1295,6 +1365,12 @@ function applyThumb(img, svgEl, container, rect, diffs, dpr, flags){
     lbl2.textContent='\u2193 Partially below fold';
     svgEl.appendChild(lbl2);
   }
+}
+
+function drawContextMarker(svgEl, x, y, w, h){
+  var marker=svgNS('rect');
+  setAttrs(marker,{x:x,y:y,width:w,height:h,fill:'none',stroke:'#94a3b8','stroke-width':1.5,'stroke-dasharray':'4,4',rx:2,opacity:.7,'vector-effect':'non-scaling-stroke'});
+  svgEl.appendChild(marker);
 }
 
 function applyCrop(img, rect, dpr){
@@ -1345,6 +1421,7 @@ function drawModalHighlights(svgEl, imgEl, rect, diffs, dpr, flags){
   var rh=rect.height||rect.h||0;
   var dx=rx*sx, dy=ry*sy, dw=rw*sx, dh=rh*sy;
   if(dw<2||dh<2) return;
+  if(flags&&flags.context){ drawContextMarker(svgEl,dx,dy,dw,dh); return; }
   var sev=diffs&&diffs[0]?diffs[0].severity:'medium';
   var color=SEVERITY_COLORS[sev]||'#7c3aed';
   var defs=svgNS('defs');
@@ -1370,23 +1447,37 @@ function drawModalHighlights(svgEl, imgEl, rect, diffs, dpr, flags){
   }
 }
 
-function buildVisualDiffSection(hpid){
+function isContextSide(role, status){
+  return (status==='added'&&role==='baseline')||(status==='removed'&&role==='compare');
+}
+
+function buildVisualDiffSection(hpid, status){
   var entry=VISUAL_MANIFEST[hpid]; if(!entry) return '';
+  var missingText={
+    baseline: status==='added'?'Not present in '+esc(COMPARISON_META.baselineHost||'baseline'):'No capture',
+    compare:  status==='removed'?'Not present in '+esc(COMPARISON_META.compareHost||'compare'):'No capture'
+  };
   function col(kfId,label,cls,rect,misaligned,misalignReason){
+    var role=cls.replace('label-','');
+    var isContext=isContextSide(role,status);
     var rAttr=rect?' data-rect="'+esc(JSON.stringify(rect))+'"':'';
-    var misalignBadge=misaligned
+    var ctxAttr=isContext?' data-context="true"':'';
+    var ctxBadge=isContext
+      ?'<div class="vdiff-context-badge" title="This element is not present on this side — showing the surrounding region for reference">Not present here</div>'
+      :'';
+    var misalignBadge=misaligned&&!isContext
       ?'<div class="vdiff-misalign-badge" title="Capture may be inaccurate: '+(misalignReason||'element not in viewport at capture time')+'">&#9888; Potentially misaligned</div>'
       :'';
     return '<div class="vdiff-thumb-col">'+
-      '<div class="vdiff-pane-label '+cls+'">'+label+'</div>'+
+      '<div class="vdiff-pane-label '+cls+'">'+label+(isContext?' <span class="vdiff-context-tag">context</span>':'')+'</div>'+
       (kfId
-        ?'<div class="vdiff-thumb-wrap" data-role="'+cls.replace('label-','')+'"'+
-              (misaligned?' data-misaligned="true" data-misalign-reason="'+esc(misalignReason||'')+'"':'')+'>'+
+        ?'<div class="vdiff-thumb-wrap" data-role="'+role+'"'+ctxAttr+
+              (misaligned&&!isContext?' data-misaligned="true" data-misalign-reason="'+esc(misalignReason||'')+'"':'')+'>'+
             '<img class="vdiff-thumb" data-kf-id="'+esc(kfId)+'"'+rAttr+' alt="'+label+'" decoding="async">'+
             '<svg class="vdiff-thumb-svg" aria-hidden="true"></svg>'+
-            misalignBadge+
+            ctxBadge+misalignBadge+
           '</div>'
-        :'<div class="vdiff-missing">No capture</div>')+
+        :'<div class="vdiff-missing">'+missingText[role]+'</div>')+
       '</div>';
   }
   return '<div class="vdiff-inline">'+
@@ -1412,10 +1503,11 @@ function attachVdiffInlineImages(hpid){
     var wrapper=img.parentElement;
     var role=(wrapper&&wrapper.dataset&&wrapper.dataset.role)||'baseline';
     var dpr=role==='compare'?(entry.compareActualDPR||2):(entry.baselineActualDPR||2);
-    var diffs=entry.diffs||[];
+    var isContext=!!(wrapper&&wrapper.dataset&&wrapper.dataset.context==='true');
+    var diffs=isContext?[]:(entry.diffs||[]);
     var flags=role==='compare'
-      ?{rectClipped:!!entry.compareRectClipped}
-      :{rectClipped:!!entry.baselineRectClipped};
+      ?{rectClipped:!isContext&&!!entry.compareRectClipped,context:isContext}
+      :{rectClipped:!isContext&&!!entry.baselineRectClipped,context:isContext};
     var svgEl=wrapper&&wrapper.querySelector('.vdiff-thumb-svg');
     _inlineThumbData.push({img:img,svgEl:svgEl,wrapper:wrapper,rect:rect,diffs:diffs,dpr:dpr,flags:flags});
     if(wrapper) wrapper.classList.add('loading');
@@ -1504,10 +1596,12 @@ function renderMutationPanel(cl){
     '<div class="detail-body">'+(isIns
       ?'<div class="mutation-desc">Present in <strong>'+esc(COMPARISON_META.compareHost||'COMPARE')+'</strong> \u2014 absent in <strong>'+esc(COMPARISON_META.baselineHost||'BASELINE')+'</strong>.</div>'
       :'<div class="mutation-desc">Present in <strong>'+esc(COMPARISON_META.baselineHost||'BASELINE')+'</strong> \u2014 absent in <strong>'+esc(COMPARISON_META.compareHost||'COMPARE')+'</strong>.</div>')+
-    '</div>';
+    '</div>'+
+    buildVisualDiffSection(item.hpid, isIns?'added':'removed');
   attachCrumbHandlers(detailEl);
   if(layout){ if(!parseInt(layout.style.getPropertyValue('--col-right'))) layout.style.setProperty('--col-right','420px'); layout.classList.remove('detail-empty'); }
   attachCopyHandlers();
+  if(item.hpid&&VISUAL_MANIFEST[item.hpid]){ void layout.getBoundingClientRect(); attachVdiffInlineImages(item.hpid); }
 }
 
 function renderDiffDetail(item, hpid, severity){
@@ -1607,6 +1701,7 @@ function handleNodeSelection(hpid, nodeEl){
   teardown();
   var tgtEl=nodeEl||treeEl.querySelector('.tree-node[data-hpid="'+hpid+'"]');
   if(tgtEl){ _selectedNode=tgtEl; tgtEl.classList.add('tree-selected'); }
+  if(hpid){ var flatRow=document.querySelector('.flat-row[data-hpid="'+hpid+'"]'); if(flatRow) flatRow.classList.add('flat-selected'); }
   var cl=classifyNode(hpid);
   switch(cl.type){
     case 'STRUCTURAL':   renderStructuralContext(cl);                       break;
@@ -1641,19 +1736,26 @@ function setModalImage(imgEl, svgEl, kfId, rect, diffs, dpr, flags){
   imgEl.src=uri;
 }
 
+function statusForHpid(hpid){
+  var entry=hpid?HPID_ITEM_MAP.get(hpid):null;
+  return entry&&(entry.sev==='added'||entry.sev==='removed')?entry.sev:null;
+}
+
 function redrawAll(){
   var modal=document.getElementById('vdiff-modal'); if(!_activeEntry) return;
   var e=_activeEntry;
+  var status=statusForHpid(_activeHpid);
   ['baseline','compare'].forEach(function(role){
     var img=modal.querySelector('.vdiff-screenshot[data-role="'+role+'"]');
     var svg=modal.querySelector('.vdiff-svg-overlay[data-role="'+role+'"]');
     var rect=role==='baseline'?e.baselineRect:e.compareRect;
     var dpr =role==='baseline'?(e.baselineActualDPR||2):(e.compareActualDPR||2);
+    var isContext=isContextSide(role,status);
     var flags=role==='baseline'
-      ?{rectClipped:!!e.baselineRectClipped}
-      :{rectClipped:!!e.compareRectClipped};
+      ?{rectClipped:!isContext&&!!e.baselineRectClipped,context:isContext}
+      :{rectClipped:!isContext&&!!e.compareRectClipped,context:isContext};
     if(!img||!img.naturalWidth) return;
-    drawModalHighlights(svg,img,rect,e.diffs,dpr,flags);
+    drawModalHighlights(svg,img,rect,isContext?[]:e.diffs,dpr,flags);
   });
   var bKfM2 = (e.baselineKeyframeId||'').match(/kf_(\\d+)$/);
   var cKfM2 = (e.compareKeyframeId||'').match(/kf_(\\d+)$/);
@@ -1680,6 +1782,10 @@ function applyZoom(z){
 function openDiffModal(hpid){
   var entry=VISUAL_MANIFEST[hpid]; if(!entry) return;
   _activeEntry=entry;
+  _activeHpid=hpid;
+  var status=statusForHpid(hpid);
+  var baseContext=isContextSide('baseline',status);
+  var cmpContext=isContextSide('compare',status);
   var modal=document.getElementById('vdiff-modal');
   modal.querySelector('.vdiff-modal__title').textContent=HPID_LABEL_MAP.get(hpid)||hpid;
   var ghost=modal.querySelector('.vdiff-ghost');
@@ -1696,14 +1802,14 @@ function openDiffModal(hpid){
   setModalImage(
     modal.querySelector('.vdiff-screenshot[data-role="baseline"]'),
     modal.querySelector('.vdiff-svg-overlay[data-role="baseline"]'),
-    entry.baselineKeyframeId, entry.baselineRect, entry.diffs, entry.baselineActualDPR||2,
-    {rectClipped:!!entry.baselineRectClipped}
+    entry.baselineKeyframeId, entry.baselineRect, baseContext?[]:entry.diffs, entry.baselineActualDPR||2,
+    {rectClipped:!baseContext&&!!entry.baselineRectClipped,context:baseContext}
   );
   setModalImage(
     modal.querySelector('.vdiff-screenshot[data-role="compare"]'),
     modal.querySelector('.vdiff-svg-overlay[data-role="compare"]'),
-    entry.compareKeyframeId, entry.compareRect, entry.diffs, entry.compareActualDPR||2,
-    {rectClipped:!!entry.compareRectClipped}
+    entry.compareKeyframeId, entry.compareRect, cmpContext?[]:entry.diffs, entry.compareActualDPR||2,
+    {rectClipped:!cmpContext&&!!entry.compareRectClipped,context:cmpContext}
   );
 
   var pA=modal.querySelector('[data-pane="baseline"]'), pB=modal.querySelector('[data-pane="compare"]');
@@ -1746,6 +1852,7 @@ function closeModal(){
   if(_resizeObs){ _resizeObs.disconnect(); _resizeObs=null; }
   if(_syncCtrl){ _syncCtrl.destroy(); _syncCtrl=null; }
   _activeEntry=null;
+  _activeHpid=null;
 }
 
 function hpidParent(h){ var i=h.lastIndexOf('.'); return i>-1?h.slice(0,i):null; }
@@ -1853,39 +1960,138 @@ document.getElementById('collapse-all-btn')?.addEventListener('click',function()
   });
 });
 
+var FLAT_ROW_CAP=2000;
+var _flatBuilt=false;
+function buildFlatRow(item, sev){
+  var hpid=item.hpid;
+  var label=(hpid&&HPID_LABEL_MAP.get(hpid))||item.elementKey||hpid||'';
+  var row=document.createElement('div');
+  row.className='flat-row';
+  if(hpid){ row.dataset.hpid=hpid; row.setAttribute('role','button'); row.setAttribute('tabindex','0'); }
+  else { row.classList.add('flat-static'); }
+  row.dataset.sev=sev;
+  row.dataset.label=String(label).toLowerCase();
+  var pipSev=(sev==='added'||sev==='removed')?(sev==='added'?'low':'critical'):sev;
+  var pip=document.createElement('span'); pip.className='sev-pip '+pipSev; row.appendChild(pip);
+  var labelSpan=document.createElement('span'); labelSpan.className='flat-row-label'; labelSpan.title=label; labelSpan.textContent=label; row.appendChild(labelSpan);
+  if(isPseudoLabel(label)){ var pb=document.createElement('span'); pb.className='tree-badge nb-pseudo'; pb.textContent='PSEUDO'; row.appendChild(pb); }
+  else { var nb=narrativeBadge(item,sev); var badgeEl=document.createElement('span'); badgeEl.className='tree-badge '+nb.cls; badgeEl.textContent=nb.label; row.appendChild(badgeEl); }
+  if(item.isApex){ var apx=document.createElement('span'); apx.className='tree-apex-badge'; apx.title=item.suppressionSummary||'Apex node'; apx.textContent='APEX'; row.appendChild(apx); }
+  if(item.totalDiffs){ var cnt=document.createElement('span'); cnt.className='tree-diff-count'; cnt.title=item.totalDiffs+' diffs'; cnt.textContent=item.totalDiffs+'d'; row.appendChild(cnt); }
+  if(item.recurrenceCount>1){ var inst=document.createElement('span'); inst.className='tree-instances'; inst.textContent=(item.instanceIndex||1)+' of '+item.recurrenceCount; row.appendChild(inst); }
+  if(hpid&&VISUAL_MANIFEST[hpid]){ var dot=document.createElement('span'); dot.className='tree-visual-dot'; dot.title='Visual diff available'; row.appendChild(dot); }
+  return row;
+}
+function buildFlatList(){
+  if(_flatBuilt) return;
+  _flatBuilt=true;
+  var scroll=document.getElementById('flatlist-scroll'); if(!scroll) return;
+  var loading=document.getElementById('flatlist-loading'); if(loading) loading.remove();
+  var sections=[
+    { sev:'critical', label:'Critical' },
+    { sev:'high',     label:'High'     },
+    { sev:'medium',   label:'Medium'   },
+    { sev:'low',      label:'Low'      },
+    { sev:'added',    label:'Only in '+(COMPARISON_META.compareHost||'Compare')  },
+    { sev:'removed',  label:'Only in '+(COMPARISON_META.baselineHost||'Baseline') }
+  ];
+  var frag=document.createDocumentFragment();
+  var total=0, rendered=0, capped=false;
+  sections.forEach(function(sec){
+    var items=GROUPED.groups[sec.sev]||[];
+    if(!items.length) return;
+    total+=items.length;
+    var sectionEl=document.createElement('div'); sectionEl.className='flatlist-section'; sectionEl.dataset.sev=sec.sev;
+    var header=document.createElement('div'); header.className='flatlist-header'; header.setAttribute('role','heading'); header.setAttribute('aria-level','2');
+    var hLabel=document.createElement('span'); hLabel.className='flatlist-header-label'; hLabel.textContent=sec.label; header.appendChild(hLabel);
+    var hBadge=document.createElement('span'); hBadge.className='flatlist-header-count'; hBadge.textContent=String(items.length); header.appendChild(hBadge);
+    sectionEl.appendChild(header);
+    items.forEach(function(item){
+      if(rendered>=FLAT_ROW_CAP){ capped=true; return; }
+      sectionEl.appendChild(buildFlatRow(item, sec.sev));
+      rendered++;
+    });
+    frag.appendChild(sectionEl);
+  });
+  if(total===0){
+    var empty=document.createElement('div'); empty.className='flatlist-empty'; empty.textContent='No differences found'; frag.appendChild(empty);
+  } else {
+    var emptyFiltered=document.createElement('div'); emptyFiltered.className='flatlist-empty'; emptyFiltered.style.display='none'; emptyFiltered.textContent='No elements match current filters'; frag.appendChild(emptyFiltered);
+  }
+  if(capped){
+    var more=document.createElement('div'); more.className='flatlist-more'; more.textContent='Showing first '+FLAT_ROW_CAP+' of '+total+' — use filters or search to narrow.'; frag.appendChild(more);
+  }
+  scroll.appendChild(frag);
+  scroll.addEventListener('click',function(e){
+    var row=e.target.closest('.flat-row'); if(!row||!row.dataset.hpid) return;
+    handleNodeSelection(row.dataset.hpid);
+    var n=treeEl.querySelector('.tree-node[data-hpid="'+row.dataset.hpid+'"]');
+    if(n) n.scrollIntoView({behavior:'smooth',block:'center'});
+  });
+  scroll.addEventListener('keydown',function(e){
+    if(e.key!=='Enter'&&e.key!==' ') return;
+    var row=e.target.closest('.flat-row'); if(!row||!row.dataset.hpid) return;
+    e.preventDefault(); handleNodeSelection(row.dataset.hpid);
+  });
+  applyFlatFilters();
+}
+function matchesFilters(hpid, label, q, fallbackSev){
+  var entry=hpid?HPID_ITEM_MAP.get(hpid):null;
+  var sev=entry?entry.sev:fallbackSev;
+  var sevMatch=activeSev==='all'||sev===activeSev;
+  var catMatch=activeCat==='all'||(entry?!!(Object.keys(entry.item?.diffsByCategory||{}).some(function(c){ return c===activeCat; })):false);
+  var txtMatch=!q||(label||'').indexOf(q)>-1;
+  return sevMatch&&catMatch&&txtMatch;
+}
 function applyFilters(){
   var q=searchEl.value.toLowerCase().trim();
   treeEl.querySelectorAll('.tree-node').forEach(function(node){
-    var hpid=node.dataset.hpid;
-    var entry=HPID_ITEM_MAP.get(hpid);
-    var sev=entry?.sev;
     var label=(node.querySelector('.tree-label')?.textContent||'').toLowerCase();
-    var sevMatch=activeSev==='all'||sev===activeSev;
-    var catMatch=activeCat==='all'||!!(entry&&Object.keys(entry.item?.diffsByCategory||{}).some(function(c){ return c===activeCat; }));
-    var txtMatch=!q||label.includes(q);
-    node.style.display=(sevMatch&&catMatch&&txtMatch)?'':'none';
+    node.style.display=matchesFilters(node.dataset.hpid,label,q)?'':'none';
   });
 }
+function applyFlatFilters(){
+  var scroll=document.getElementById('flatlist-scroll'); if(!scroll) return;
+  var q=searchEl.value.toLowerCase().trim();
+  var visible=0;
+  scroll.querySelectorAll('.flatlist-section').forEach(function(section){
+    var shown=0;
+    section.querySelectorAll('.flat-row').forEach(function(row){
+      var ok=matchesFilters(row.dataset.hpid, row.dataset.label||'', q, row.dataset.sev);
+      row.classList.toggle('flat-hidden', !ok);
+      if(ok){ shown++; visible++; }
+    });
+    section.classList.toggle('flat-hidden', shown===0);
+  });
+  var centerPanel=document.querySelector('.center-panel');
+  if(centerPanel&&centerPanel.dataset.view==='flat'){
+    var countEl=document.getElementById('tree-count');
+    if(countEl) countEl.textContent=visible+' element'+(visible!==1?'s':'');
+  }
+  var empty=scroll.querySelector('.flatlist-empty');
+  if(empty) empty.style.display=visible===0?'':'none';
+}
+function applyAllFilters(){ applyFilters(); applyFlatFilters(); }
 document.querySelectorAll('[data-sev].filter-btn').forEach(function(btn){
   btn.addEventListener('click',function(){
     document.querySelectorAll('[data-sev].filter-btn').forEach(function(b){ b.classList.remove('active'); });
-    btn.classList.add('active'); activeSev=btn.dataset.sev; applyFilters();
+    btn.classList.add('active'); activeSev=btn.dataset.sev; applyAllFilters();
   });
 });
 document.querySelectorAll('[data-cat].filter-btn').forEach(function(btn){
   btn.addEventListener('click',function(){
     document.querySelectorAll('[data-cat].filter-btn').forEach(function(b){ b.classList.remove('active'); });
-    btn.classList.add('active'); activeCat=btn.dataset.cat; applyFilters();
+    btn.classList.add('active'); activeCat=btn.dataset.cat; applyAllFilters();
   });
 });
-var _sd; searchEl.addEventListener('input',function(){ clearTimeout(_sd); _sd=setTimeout(applyFilters,200); });
+var _sd; searchEl.addEventListener('input',function(){ clearTimeout(_sd); _sd=setTimeout(applyAllFilters,200); });
 
 document.addEventListener('keydown',function(e){
   if(e.key==='f'&&!['INPUT','TEXTAREA'].includes(document.activeElement.tagName)){ searchEl.focus(); e.preventDefault(); }
   if(e.key==='Escape'){
     var m=document.getElementById('vdiff-modal'); if(m&&!m.hasAttribute('hidden')){ closeModal(); return; }
     var ov=document.querySelector('.sidebar-wrapper.summary-active'); if(ov){ ov.classList.remove('summary-active'); document.getElementById('panel-summary-btn')?.classList.remove('active'); return; }
-    if(searchEl.value){ searchEl.value=''; applyFilters(); }
+    if(searchEl.value){ searchEl.value=''; applyAllFilters(); }
   }
 });
 
@@ -1938,8 +2144,32 @@ document.addEventListener('mousemove',function(e){
 });
 document.addEventListener('mouseleave',function(){ tooltipEl.hidden=true; },true);
 
+function initViewToggle(){
+  var centerPanel=document.querySelector('.center-panel'); if(!centerPanel) return;
+  var treeBtn=document.getElementById('view-tree-btn');
+  var flatBtn=document.getElementById('view-flat-btn');
+  var countEl=document.getElementById('tree-count');
+  var treeCountText='';
+  function setView(view){
+    if(centerPanel.dataset.view===view) return;
+    centerPanel.dataset.view=view;
+    if(treeBtn){ var t=view==='tree'; treeBtn.classList.toggle('active',t); treeBtn.setAttribute('aria-selected',String(t)); }
+    if(flatBtn){ var f=view==='flat'; flatBtn.classList.toggle('active',f); flatBtn.setAttribute('aria-selected',String(f)); }
+    if(view==='flat'){
+      if(countEl) treeCountText=countEl.textContent;
+      buildFlatList();
+      applyFlatFilters();
+    } else if(countEl){
+      countEl.textContent=treeCountText;
+    }
+  }
+  if(treeBtn) treeBtn.addEventListener('click',function(){ setView('tree'); });
+  if(flatBtn) flatBtn.addEventListener('click',function(){ setView('flat'); });
+}
+
 initSummaryOverlay();
 buildTreeView();
+initViewToggle();
 
 document.getElementById('theme-toggle')?.addEventListener('click', function(){
   var html = document.documentElement;

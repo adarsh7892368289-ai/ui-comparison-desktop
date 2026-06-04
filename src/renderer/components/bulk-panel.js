@@ -18,6 +18,11 @@ import { getErrorHint } from '@core/export/bulk-pair-state-labels.js';
 import storage from '../../infrastructure/idb-repository.js';
 import { Toast } from '../ui.js';
 import { sanitizeErrorMessage } from '../utils/sanitize.js';
+import {
+  resolveActiveTolerances,
+  persistTolerancesImmediate,
+  persistTolerancesDebounced } from
+'../application/compare-workflow.js';
 
 const TERMINAL_STATUSES = new Set(['completed', 'partial', 'failed', 'cancelled', 'interrupted']);
 
@@ -197,6 +202,33 @@ function createBulkPanel(containerEl) {
               <span class="visual-toggle__thumb" aria-hidden="true"></span>
             </div>
           </label>
+          <label class="toggle-row" for="bulk-tolerance-toggle">
+            <div class="toggle-row__text">
+              <span class="toggle-row__label">Tolerance</span>
+              <span class="toggle-row__hint">Ignore small differences below thresholds</span>
+            </div>
+            <div class="visual-toggle__track">
+              <input type="checkbox" id="bulk-tolerance-toggle">
+              <span class="visual-toggle__thumb" aria-hidden="true"></span>
+            </div>
+          </label>
+          <div class="tolerance-collapsible" id="bulk-tolerance-collapsible" hidden>
+            <div class="tolerance-grid" role="group" aria-label="Bulk tolerance values">
+              <div class="tolerance-cell">
+                <label class="tolerance-cell__label" for="bulk-tolerance-color">Color (ΔRGB)</label>
+                <input type="number" id="bulk-tolerance-color" class="tolerance-cell__input" min="0" max="255" step="1" inputmode="numeric">
+              </div>
+              <div class="tolerance-cell">
+                <label class="tolerance-cell__label" for="bulk-tolerance-size">Size (px)</label>
+                <input type="number" id="bulk-tolerance-size" class="tolerance-cell__input" min="0" max="100" step="1" inputmode="numeric">
+              </div>
+              <div class="tolerance-cell">
+                <label class="tolerance-cell__label" for="bulk-tolerance-opacity">Opacity (Δ)</label>
+                <input type="number" id="bulk-tolerance-opacity" class="tolerance-cell__input" min="0" max="1" step="0.01" inputmode="decimal">
+              </div>
+            </div>
+            <p class="field-hint">Differences within these thresholds are ignored.</p>
+          </div>
           <details class="bulk-idle__advanced">
             <summary>Advanced</summary>
             <div class="form-field bulk-idle__advanced-field">
@@ -217,10 +249,60 @@ function createBulkPanel(containerEl) {
     containerEl.querySelector('#bulk-pick-btn')?.
     addEventListener('click', () => fileInput?.click());
     fileInput?.addEventListener('change', _onFilePicked);
+
+    _wireBulkToleranceControls();
   }
 
   function _showInlineIdleError(message, withTemplateBtn = false) {
     _renderIdle({ message, withTemplateBtn });
+  }
+
+  let _bulkToleranceUnsub = null;
+
+  function _wireBulkToleranceControls() {
+    const toggleEl = containerEl.querySelector('#bulk-tolerance-toggle');
+    const colorEl = containerEl.querySelector('#bulk-tolerance-color');
+    const sizeEl = containerEl.querySelector('#bulk-tolerance-size');
+    const opacityEl = containerEl.querySelector('#bulk-tolerance-opacity');
+    const collapsibleEl = containerEl.querySelector('#bulk-tolerance-collapsible');
+
+    if (!toggleEl || !colorEl || !sizeEl || !opacityEl || !collapsibleEl) {return;}
+
+    toggleEl.addEventListener('change', (e) => {
+      dispatch('SET_TOLERANCE_ENABLED', { enabled: Boolean(e.target.checked) });
+      persistTolerancesImmediate();
+    });
+
+    const _wireField = (el, field, parser) => {
+      el.addEventListener('input', (e) => {
+        const raw = e.target.value;
+        if (raw === '' || raw === '-') {return;}
+        const value = parser(raw);
+        if (!Number.isFinite(value)) {return;}
+        dispatch('SET_TOLERANCE_FIELD', { field, value });
+        persistTolerancesDebounced();
+      });
+      el.addEventListener('change', () => persistTolerancesImmediate());
+    };
+    _wireField(colorEl, 'color', (v) => parseInt(v, 10));
+    _wireField(sizeEl, 'size', (v) => parseInt(v, 10));
+    _wireField(opacityEl, 'opacity', (v) => parseFloat(v));
+
+    if (_bulkToleranceUnsub) {try {_bulkToleranceUnsub();} catch {void 0;}}
+    let _prev = null;
+    const sync = (state) => {
+      const t = state.tolerances;
+      if (t === _prev) {return;}
+      _prev = t;
+      const active = resolveActiveTolerances(state);
+      collapsibleEl.hidden = !active.enabled;
+      toggleEl.checked = Boolean(active.enabled);
+      if (document.activeElement !== colorEl) {colorEl.value = String(active.color);}
+      if (document.activeElement !== sizeEl) {sizeEl.value = String(active.size);}
+      if (document.activeElement !== opacityEl) {opacityEl.value = String(active.opacity);}
+    };
+    _bulkToleranceUnsub = subscribe(sync);
+    sync(getState());
   }
 
   async function _onFilePicked(ev) {
@@ -1455,6 +1537,7 @@ function createBulkPanel(containerEl) {
   return {
     destroy() {
       try {unsubscribe();} catch {void 0;}
+      if (_bulkToleranceUnsub) {try {_bulkToleranceUnsub();} catch {void 0;}_bulkToleranceUnsub = null;}
       if (_keyboardUnbind) {try {_keyboardUnbind();} catch {void 0;}_keyboardUnbind = null;}
       _resetViewportRefs();
       if (_state.elapsedInterval) {

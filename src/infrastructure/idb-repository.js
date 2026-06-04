@@ -4,7 +4,7 @@ import logger from './logger.js';
 import { performanceMonitor } from './performance-monitor.js';
 
 const DB_NAME = 'ui_comparison_db';
-const DB_VERSION = 11;
+const DB_VERSION = 12;
 const STORE_REPORTS = 'reports';
 const STORE_ELEMENTS = 'elements';
 const STORE_COMPARISONS = 'comparisons';
@@ -13,6 +13,7 @@ const STORE_COMP_SUMMARY = 'comparison_summary';
 const STORE_VISUAL_BLOBS = 'visual_blobs';
 const STORE_VISUAL_KEYFRAMES = 'visual_keyframes';
 const STORE_VISUAL_ELEMENT_RECTS = 'visual_element_rects';
+const STORE_REPORT_VISUAL_MANIFESTS = 'report_visual_manifests';
 const STORE_OP_LOG = 'operation_log';
 const STORE_APP_META = 'app_meta';
 const STORE_BULK_JOBS = 'bulk_jobs';
@@ -231,6 +232,18 @@ function upgradeToV11(db) {
   }
 }
 
+function upgradeToV12(db, upgradeTx) {
+  if (!db.objectStoreNames.contains(STORE_REPORT_VISUAL_MANIFESTS)) {
+    db.createObjectStore(STORE_REPORT_VISUAL_MANIFESTS, { keyPath: 'reportId' });
+  }
+  if (db.objectStoreNames.contains(STORE_VISUAL_BLOBS)) {
+    const blobStore = upgradeTx.objectStore(STORE_VISUAL_BLOBS);
+    if (!blobStore.indexNames.contains('by_reportId')) {
+      blobStore.createIndex('by_reportId', 'reportId', { unique: false });
+    }
+  }
+}
+
 function runUpgrade(db, upgradeTx, oldVersion) {
   if (oldVersion < 1) {buildReportStores(db);}
   if (oldVersion < 2) {buildComparisonStores(db);}
@@ -242,6 +255,7 @@ function runUpgrade(db, upgradeTx, oldVersion) {
   if (oldVersion < 9) {upgradeToV9(db, upgradeTx);}
   if (oldVersion < 10) {upgradeToV10(db);}
   if (oldVersion < 11) {upgradeToV11(db);}
+  if (oldVersion < 12) {upgradeToV12(db, upgradeTx);}
 }
 
 class IDBRepository {
@@ -470,12 +484,21 @@ class IDBRepository {
       const stores = [
       STORE_REPORTS, STORE_ELEMENTS,
       STORE_COMPARISONS, STORE_COMP_DIFFS, STORE_COMP_SUMMARY,
-      STORE_VISUAL_BLOBS, STORE_VISUAL_KEYFRAMES, STORE_VISUAL_ELEMENT_RECTS];
+      STORE_VISUAL_BLOBS, STORE_VISUAL_KEYFRAMES, STORE_VISUAL_ELEMENT_RECTS,
+      STORE_REPORT_VISUAL_MANIFESTS];
 
       const tx = db.transaction(stores, 'readwrite');
 
       tx.objectStore(STORE_REPORTS).delete(id);
       tx.objectStore(STORE_ELEMENTS).delete(id);
+      tx.objectStore(STORE_REPORT_VISUAL_MANIFESTS).delete(id);
+
+      const rvBlobStore = tx.objectStore(STORE_VISUAL_BLOBS);
+      const rvBlobReq = rvBlobStore.index('by_reportId').openKeyCursor(IDBKeyRange.only(id));
+      rvBlobReq.onsuccess = () => {
+        const cursor = rvBlobReq.result;
+        if (cursor) {rvBlobStore.delete(cursor.primaryKey);cursor.continue();}
+      };
 
       for (const compId of compIdsToDelete) {
         tx.objectStore(STORE_COMPARISONS).delete(compId);
@@ -1067,6 +1090,98 @@ class IDBRepository {
     }
   }
 
+  saveReportVisualManifest(reportId, manifest) {
+    return this.#enqueue(() => this.#saveReportVisualManifestInner(reportId, manifest));
+  }
+
+  async #saveReportVisualManifestInner(reportId, manifest) {
+    if (!reportId || !manifest) {return { success: true };}
+    try {
+      const db = await this.#getDB();
+      const tx = db.transaction(STORE_REPORT_VISUAL_MANIFESTS, 'readwrite');
+      tx.objectStore(STORE_REPORT_VISUAL_MANIFESTS).put({ reportId, manifest });
+      await transactionToPromise(tx);
+      return { success: true };
+    } catch (writeError) {
+      trackError(ERROR_CODES.STORAGE_WRITE_FAILED, writeError.message);
+      return { success: false, error: writeError.message };
+    }
+  }
+
+  async loadReportVisualManifest(reportId) {
+    if (!reportId) {return null;}
+    try {
+      const db = await this.#getDB();
+      const tx = db.transaction(STORE_REPORT_VISUAL_MANIFESTS, 'readonly');
+      const record = await requestToPromise(tx.objectStore(STORE_REPORT_VISUAL_MANIFESTS).get(reportId));
+      return record?.manifest ?? null;
+    } catch (readError) {
+      trackError(ERROR_CODES.STORAGE_READ_FAILED, readError.message);
+      return null;
+    }
+  }
+
+  saveReportVisualBlob(reportId, keyframeId, blob) {
+    return this.#enqueue(() => this.#saveReportVisualBlobInner(reportId, keyframeId, blob));
+  }
+
+  async #saveReportVisualBlobInner(reportId, keyframeId, blob) {
+    if (!reportId || !keyframeId || !blob) {return { success: true };}
+    try {
+      const db = await this.#getDB();
+      const tx = db.transaction(STORE_VISUAL_BLOBS, 'readwrite');
+      tx.objectStore(STORE_VISUAL_BLOBS).put({
+        key: `report:${reportId}:${keyframeId}`, blob, reportId, timestamp: new Date().toISOString()
+      });
+      await transactionToPromise(tx);
+      return { success: true };
+    } catch (writeError) {
+      trackError(ERROR_CODES.STORAGE_WRITE_FAILED, writeError.message);
+      return { success: false, error: writeError.message };
+    }
+  }
+
+  async loadReportVisualBlobs(reportId) {
+    if (!reportId) {return new Map();}
+    try {
+      const db = await this.#getDB();
+      const tx = db.transaction(STORE_VISUAL_BLOBS, 'readonly');
+      const records = await requestToPromise(
+        tx.objectStore(STORE_VISUAL_BLOBS).index('by_reportId').getAll(IDBKeyRange.only(reportId))
+      );
+      const out = new Map();
+      for (const r of records ?? []) {
+        const kfId = String(r.key).slice(`report:${reportId}:`.length);
+        if (kfId && r.blob) {out.set(kfId, r.blob);}
+      }
+      return out;
+    } catch (readError) {
+      trackError(ERROR_CODES.STORAGE_READ_FAILED, readError.message);
+      return new Map();
+    }
+  }
+
+  deleteReportVisualData(reportId) {
+    return this.#enqueue(() => this.#deleteReportVisualDataInner(reportId));
+  }
+
+  async #deleteReportVisualDataInner(reportId) {
+    if (!reportId) {return { success: true };}
+    try {
+      const db = await this.#getDB();
+      const blobKeys = await this.#getAllKeysByIndex(db, STORE_VISUAL_BLOBS, 'by_reportId', reportId);
+      const tx = db.transaction([STORE_VISUAL_BLOBS, STORE_REPORT_VISUAL_MANIFESTS], 'readwrite');
+      const blobStore = tx.objectStore(STORE_VISUAL_BLOBS);
+      for (const k of blobKeys) {blobStore.delete(k);}
+      tx.objectStore(STORE_REPORT_VISUAL_MANIFESTS).delete(reportId);
+      await transactionToPromise(tx);
+      return { success: true };
+    } catch (deleteError) {
+      trackError(ERROR_CODES.STORAGE_WRITE_FAILED, deleteError.message);
+      return { success: false, error: deleteError.message };
+    }
+  }
+
   deleteVisualDataBySession(sessionId) {
     return this.#enqueue(() => this.#deleteVisualDataBySessionInner(sessionId));
   }
@@ -1534,6 +1649,7 @@ class IDBRepository {
       tx.objectStore(STORE_APP_SETTINGS).put({
         key:        SETTINGS_KEY_TOLERANCE_PROFILE,
         tolerances: {
+          enabled: typeof t.enabled === 'boolean' ? t.enabled : false,
           color:   typeof t.color === 'number' ? t.color : null,
           size:    typeof t.size === 'number' ? t.size : null,
           opacity: typeof t.opacity === 'number' ? t.opacity : null

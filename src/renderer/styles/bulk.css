@@ -636,9 +636,9 @@
   padding: var(--space-3);
   color: var(--color-destructive);
   background: var(--color-destructive-subtle);
-  border-left: 3px solid var(--color-destructive);
+  border: 1px solid var(--color-destructive-border);
   font-size: var(--text-sm);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
 }
 
 .nav-section-status {

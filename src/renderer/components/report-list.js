@@ -1,10 +1,11 @@
 import { sanitize } from '../utils/sanitize.js';
 import { STAGE_RE, hostFromUrl, lastPathSegment, envTag } from '../utils/report-metadata.js';
 import { relativeTime, absoluteCalendarDate } from '../utils/time.js';
-import { iconArrowUp, iconArrowUpDown, iconFileDown, iconTarget, iconTrash2, iconSquare, iconCheckSquare } from '../utils/icons.js';
+import { iconArrowUp, iconArrowUpDown, iconTarget, iconSquare, iconCheckSquare, iconMoreHorizontal, iconX } from '../utils/icons.js';
 import { SINGLE_EXTRACTED_REPORT_EXPORT_MENU } from '@core/export/extraction-exporters/extracted-report-export-catalog.js';
 import { handleExportReport } from '../application/export-workflow.js';
 import { Modal } from './modal.js';
+import { buildReportDetailsPanel, getReportDeviceInfo } from './report-details-panel.js';
 
 const HEADER_HEIGHT = 28;
 const DENSITY_HEIGHTS = { compact: 52, default: 64, comfortable: 80 };
@@ -53,6 +54,15 @@ export class ReportList {
     this._multiSelectActive = false;
     this._selectedIds = new Set();
     this._anchorId = null;
+    this._expandedReportId = null;
+    this._detailsDrawer = null;
+    this._detailsDrawerCard = null;
+    this._detailsDrawerOutsideHandler = null;
+    this._detailsDrawerEscHandler = null;
+    this._detailsDrawerResizeHandler = null;
+    this._activeOverflow = null;
+    this._hasOpenOverflow = false;
+    this._renderedRange = null;
 
     this._viewport = _el('div', 'vscroll-viewport');
     this._spacer = _el('div', 'vscroll-spacer');
@@ -62,8 +72,23 @@ export class ReportList {
     this._viewport.appendChild(this._spacer);
     this._container.prepend(this._viewport);
 
-    this._onScroll = this._render.bind(this);
+    this._scrollRafPending = false;
+    this._onScroll = () => {
+      this._closeAllOverflowMenus();
+      if (this._scrollRafPending) {return;}
+      this._scrollRafPending = true;
+      requestAnimationFrame(() => {
+        this._scrollRafPending = false;
+        this._render(true);
+        if (this._detailsDrawer) {this._positionDetailsDrawer();}
+      });
+    };
     this._viewport.addEventListener('scroll', this._onScroll, { passive: true });
+
+    this._onWindowResize = () => {
+      this._activeOverflow?.position();
+    };
+    window.addEventListener('resize', this._onWindowResize);
     this._resizeObs = new ResizeObserver(() => {
       const h = this._viewport.clientHeight;
       if (h > 0) { this._lastKnownHeight = h; }
@@ -78,6 +103,12 @@ export class ReportList {
   setReports(reports, query) {
     this._reports = reports || [];
     this._query = query || '';
+    if (this._expandedReportId
+        && !this._reports.some(r => r.id === this._expandedReportId)) {
+      this._closeDetailsDrawer();
+    } else if (this._detailsDrawer) {
+      this._refreshDetailsDrawerContent();
+    }
     this._buildRowItems();
     const firstReportIdx = this._rowItems.findIndex(x => x.type === 'report');
     this._focusedLogicalIndex = firstReportIdx >= 0 ? firstReportIdx : -1;
@@ -86,6 +117,9 @@ export class ReportList {
 
   setJobMeta(jobMetaMap) {
     this._jobMeta = jobMetaMap instanceof Map ? jobMetaMap : new Map();
+    if (this._detailsDrawer) {
+      this._refreshDetailsDrawerContent();
+    }
     if (this._config.groupBy === 'job') {
       this._buildRowItems();
       this._render();
@@ -189,8 +223,13 @@ export class ReportList {
   }
 
   destroy() {
+    this._closeAllOverflowMenus();
+    this._closeDetailsDrawer();
     this._viewport.removeEventListener('scroll', this._onScroll);
     this._viewport.removeEventListener('keydown', this._onKeydown);
+    if (this._onWindowResize) {
+      window.removeEventListener('resize', this._onWindowResize);
+    }
     this._resizeObs.disconnect();
   }
 
@@ -361,7 +400,11 @@ export class ReportList {
     return Math.max(this._lastKnownHeight || 0, Math.floor(window.innerHeight * 0.6));
   }
 
-  _render() {
+  _render(fromScroll = false) {
+    if (this._activeOverflow) {
+      const trigger = this._activeOverflow.trigger;
+      if (!trigger.isConnected) this._closeAllOverflowMenus();
+    }
     const scrollTop = this._viewport.scrollTop;
     const viewH = this._viewportCssHeight();
     const cardH = this._cardHeight();
@@ -371,6 +414,7 @@ export class ReportList {
       this._window.textContent = '';
       this._window.style.top = '0px';
       this._viewport.tabIndex = -1;
+      this._renderedRange = null;
       return;
     }
 
@@ -388,6 +432,13 @@ export class ReportList {
     for (let i = startIdx; i < n; i++) {
       if (this._offsets[i] >= renderBottom) { endIdx = i; break; }
     }
+
+    if (fromScroll && this._renderedRange
+      && this._renderedRange.startIdx === startIdx
+      && this._renderedRange.endIdx === endIdx) {
+      return;
+    }
+    this._renderedRange = { startIdx, endIdx };
 
     this._window.style.top = this._offsets[startIdx] + 'px';
 
@@ -409,7 +460,6 @@ export class ReportList {
 
     this._window.textContent = '';
     this._window.appendChild(frag);
-    this._refreshStates();
   }
 
   _renderHeader(item) {
@@ -482,6 +532,8 @@ export class ReportList {
     const density = this._config.density;
 
     const card = _el('div', 'report-card');
+    if (isBaseline) {card.classList.add('report-card--baseline');}
+    if (isCompare) {card.classList.add('report-card--compare');}
     card.dataset.reportId = report.id;
     card.setAttribute('role', 'listitem');
     card.setAttribute('tabindex', isRovingFocused ? '0' : '-1');
@@ -621,37 +673,7 @@ export class ReportList {
     compareBtn.addEventListener('click', e => { e.stopPropagation(); this._cb.onCompare?.(report); });
     actions.appendChild(compareBtn);
 
-    const details = document.createElement('details');
-    details.className = 'export-dropdown';
-    const summary = _el('summary', 'btn-ghost btn-sm');
-    summary.innerHTML = iconFileDown(14);
-    summary.title = 'Export options';
-    summary.setAttribute('aria-label', 'Export report options');
-    summary.addEventListener('click', e => { e.stopPropagation(); });
-    details.appendChild(summary);
-    const menu = _el('div', 'export-menu');
-    menu.setAttribute('role', 'menu');
-    for (const { format, label } of SINGLE_EXTRACTED_REPORT_EXPORT_MENU) {
-      const btn = _el('button', 'export-menu-item', label);
-      btn.setAttribute('role', 'menuitem');
-      btn.type = 'button';
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        details.removeAttribute('open');
-        handleExportReport(report, format);
-      });
-      menu.appendChild(btn);
-    }
-    details.appendChild(menu);
-    actions.appendChild(details);
-
-    const deleteBtn = _el('button', 'btn-icon-danger');
-    deleteBtn.dataset.action = 'delete';
-    deleteBtn.title = 'Delete report';
-    deleteBtn.setAttribute('aria-label', `Delete report from ${sanitize(host)}`);
-    deleteBtn.innerHTML = iconTrash2(16);
-    deleteBtn.addEventListener('click', e => { e.stopPropagation(); this._cb.onDelete?.(report); });
-    actions.appendChild(deleteBtn);
+    actions.appendChild(this._buildOverflowMenu(report, host));
 
     card.appendChild(actions);
 
@@ -670,6 +692,363 @@ export class ReportList {
     card.appendChild(badge);
 
     return card;
+  }
+
+  _buildOverflowMenu(report, host) {
+    const wrap = _el('div', 'report-card-overflow');
+    wrap.dataset.reportId = report.id;
+
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'btn-ghost btn-sm report-card-overflow__trigger';
+    trigger.dataset.action = 'overflow-menu';
+    trigger.innerHTML = iconMoreHorizontal(16);
+    trigger.title = 'More actions';
+    trigger.setAttribute('aria-label', 'More actions');
+    trigger.setAttribute('aria-haspopup', 'menu');
+    trigger.setAttribute('aria-expanded', 'false');
+    trigger.addEventListener('click', (e) => { e.stopPropagation(); });
+    wrap.appendChild(trigger);
+
+    const buildMenu = () => {
+      const menu = _el('div', 'export-menu report-card-overflow-menu');
+      menu.setAttribute('role', 'menu');
+      menu.dataset.reportId = report.id;
+
+      const expanded = this._expandedReportId === report.id;
+      const detailsItem = _el(
+        'button',
+        'export-menu-item report-card-overflow-menu__item',
+        expanded ? 'Hide details' : 'View details'
+      );
+      detailsItem.setAttribute('role', 'menuitem');
+      detailsItem.type = 'button';
+      detailsItem.addEventListener('click', (e) => {
+        e.stopPropagation();
+        closeMenu();
+        this._toggleDetails(report.id);
+      });
+      menu.appendChild(detailsItem);
+
+      menu.appendChild(_el('div', 'export-menu-sep'));
+
+      const exportLabel = _el('div', 'report-card-overflow-menu__group-label', 'Export as');
+      exportLabel.setAttribute('aria-hidden', 'true');
+      menu.appendChild(exportLabel);
+      for (const { format, label } of SINGLE_EXTRACTED_REPORT_EXPORT_MENU) {
+        const btn = _el('button', 'export-menu-item report-card-overflow-menu__item', label);
+        btn.setAttribute('role', 'menuitem');
+        btn.type = 'button';
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          closeMenu();
+          handleExportReport(report, format);
+        });
+        menu.appendChild(btn);
+      }
+
+      menu.appendChild(_el('div', 'export-menu-sep'));
+
+      const deleteItem = _el(
+        'button',
+        'export-menu-item export-menu-item--danger report-card-overflow-menu__item',
+        'Delete'
+      );
+      deleteItem.setAttribute('role', 'menuitem');
+      deleteItem.type = 'button';
+      deleteItem.dataset.action = 'delete';
+      deleteItem.setAttribute('aria-label', `Delete report from ${sanitize(host)}`);
+      deleteItem.addEventListener('click', (e) => {
+        e.stopPropagation();
+        closeMenu();
+        this._cb.onDelete?.(report);
+      });
+      menu.appendChild(deleteItem);
+
+      menu.addEventListener('pointerenter', cancelClose);
+      menu.addEventListener('pointerleave', scheduleClose);
+      menu.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          closeMenu();
+          trigger.focus();
+        }
+      });
+
+      return menu;
+    };
+
+    let menuEl = null;
+    let closeTimer = null;
+    const cancelClose = () => {
+      if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
+    };
+    const scheduleClose = () => {
+      cancelClose();
+      closeTimer = setTimeout(() => closeMenu(), 150);
+    };
+    const positionMenu = () => {
+      if (!menuEl) return;
+      const triggerRect = trigger.getBoundingClientRect();
+      const margin = 8;
+      const menuRect = menuEl.getBoundingClientRect();
+      const menuW = menuRect.width || 180;
+      const menuH = menuRect.height || 200;
+      const viewportH = window.innerHeight;
+      const viewportW = window.innerWidth;
+
+      const spaceBelow = viewportH - triggerRect.bottom;
+      const spaceAbove = triggerRect.top;
+      const placeBelow = spaceBelow >= menuH + margin || spaceBelow >= spaceAbove;
+
+      let top = placeBelow
+        ? triggerRect.bottom
+        : triggerRect.top - menuH;
+      top = Math.max(margin, Math.min(top, viewportH - menuH - margin));
+
+      let left = triggerRect.right - menuW;
+      left = Math.max(margin, Math.min(left, viewportW - menuW - margin));
+
+      menuEl.dataset.placement = placeBelow ? 'below' : 'above';
+      menuEl.style.top = Math.round(top) + 'px';
+      menuEl.style.left = Math.round(left) + 'px';
+    };
+    const open = () => {
+      cancelClose();
+      this._closeAllOverflowMenus();
+      if (!menuEl) {
+        menuEl = buildMenu();
+        menuEl.classList.add('report-card-overflow-menu--portal');
+        document.body.appendChild(menuEl);
+      }
+      wrap.classList.add('report-card-overflow--open');
+      trigger.setAttribute('aria-expanded', 'true');
+      this._activeOverflow = { wrap, trigger, menuEl, close: closeMenu, position: positionMenu };
+      this._hasOpenOverflow = true;
+      requestAnimationFrame(positionMenu);
+    };
+    const closeMenu = () => {
+      cancelClose();
+      wrap.classList.remove('report-card-overflow--open');
+      trigger.setAttribute('aria-expanded', 'false');
+      if (menuEl) {
+        menuEl.remove();
+        menuEl = null;
+      }
+      if (this._activeOverflow?.wrap === wrap) {
+        this._activeOverflow = null;
+      }
+    };
+
+    wrap._closeOverflow = closeMenu;
+    wrap._reposition = positionMenu;
+
+    wrap.addEventListener('pointerenter', open);
+    wrap.addEventListener('pointerleave', scheduleClose);
+    wrap.addEventListener('focusin', open);
+    wrap.addEventListener('focusout', (e) => {
+      if (wrap.contains(e.relatedTarget)) return;
+      if (menuEl && menuEl.contains(e.relatedTarget)) return;
+      scheduleClose();
+    });
+    trigger.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        open();
+        requestAnimationFrame(() => {
+          const first = menuEl?.querySelector('.export-menu-item');
+          first?.focus();
+        });
+      } else if (e.key === 'Escape') {
+        closeMenu();
+      }
+    });
+
+    return wrap;
+  }
+
+  _closeAllOverflowMenus() {
+    if (this._activeOverflow) {
+      this._activeOverflow.close();
+    }
+    if (!this._hasOpenOverflow) {return;}
+    this._hasOpenOverflow = false;
+    document.querySelectorAll('.report-card-overflow-menu--portal').forEach((el) => el.remove());
+    this._window.querySelectorAll('.report-card-overflow--open').forEach((el) => {
+      el.classList.remove('report-card-overflow--open');
+      el.querySelector('.report-card-overflow__trigger')?.setAttribute('aria-expanded', 'false');
+    });
+  }
+
+  _toggleDetails(reportId) {
+    if (this._expandedReportId === reportId) {
+      this._closeDetailsDrawer();
+      return;
+    }
+    this._openDetailsDrawer(reportId);
+  }
+
+  _openDetailsDrawer(reportId) {
+    const report = this._reports.find(r => r.id === reportId);
+    if (!report) return;
+
+    this._closeAllOverflowMenus();
+
+    if (!this._detailsDrawer) {
+      const drawer = _el('div', 'report-details-drawer');
+      drawer.setAttribute('role', 'dialog');
+      drawer.setAttribute('aria-modal', 'false');
+      drawer.setAttribute('aria-label', 'Report details');
+      drawer.tabIndex = -1;
+
+      const header = _el('div', 'report-details-drawer__header');
+      const titleWrap = _el('div', 'report-details-drawer__title-wrap');
+      const title = _el('h3', 'report-details-drawer__title', 'Report details');
+      const deviceBadge = _el('span', 'report-details-drawer__device');
+      deviceBadge.hidden = true;
+      titleWrap.appendChild(title);
+      titleWrap.appendChild(deviceBadge);
+      header.appendChild(titleWrap);
+      this._detailsDrawerDeviceBadge = deviceBadge;
+      const closeBtn = document.createElement('button');
+      closeBtn.type = 'button';
+      closeBtn.className = 'report-details-drawer__close';
+      closeBtn.setAttribute('aria-label', 'Close report details');
+      closeBtn.title = 'Close (Esc)';
+      closeBtn.innerHTML = iconX(16);
+      closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._closeDetailsDrawer();
+      });
+      header.appendChild(closeBtn);
+      drawer.appendChild(header);
+
+      const body = _el('div', 'report-details-drawer__body');
+      drawer.appendChild(body);
+      this._detailsDrawerCard = body;
+      this._detailsDrawer = drawer;
+
+      drawer.addEventListener('mousedown', (e) => e.stopPropagation());
+
+      document.body.appendChild(drawer);
+    }
+
+    this._expandedReportId = reportId;
+    this._refreshDetailsDrawerContent();
+    this._positionDetailsDrawer();
+    this._activateDetailsDrawerListeners();
+
+    requestAnimationFrame(() => {
+      this._detailsDrawer?.classList.add('report-details-drawer--visible');
+    });
+  }
+
+  _refreshDetailsDrawerContent() {
+    if (!this._detailsDrawer || !this._expandedReportId) return;
+    const report = this._reports.find(r => r.id === this._expandedReportId);
+    if (!report) {
+      this._closeDetailsDrawer();
+      return;
+    }
+    const badge = this._detailsDrawerDeviceBadge;
+    if (badge) {
+      const info = getReportDeviceInfo(report);
+      if (info) {
+        badge.innerHTML = `${info.iconSvg(13)}<span>${info.label}</span>`;
+        badge.title = `Captured on ${info.label.toLowerCase()}`;
+        badge.dataset.device = info.deviceType;
+        badge.hidden = false;
+      } else {
+        badge.hidden = true;
+        badge.removeAttribute('data-device');
+      }
+    }
+
+    const panel = buildReportDetailsPanel(report, this._jobMeta);
+    this._detailsDrawerCard.textContent = '';
+    this._detailsDrawerCard.appendChild(panel);
+  }
+
+  _positionDetailsDrawer() {
+    if (!this._detailsDrawer) return;
+    const leftPanel = document.getElementById('left-panel');
+    if (!leftPanel) return;
+    const panelRect = leftPanel.getBoundingClientRect();
+    const left = Math.max(0, Math.round(panelRect.right));
+
+    const viewportH = window.innerHeight;
+    const margin = 12;
+    const desiredHeight = Math.max(220, Math.round(panelRect.height / 2));
+    const height = Math.min(desiredHeight, Math.max(220, viewportH - margin * 2));
+
+    const card = this._expandedReportId
+      ? this._window.querySelector(`.report-card[data-report-id="${this._expandedReportId}"]`)
+      : null;
+    let anchorTop;
+    if (card) {
+      const cardRect = card.getBoundingClientRect();
+      anchorTop = Math.round(cardRect.top);
+    } else {
+      anchorTop = Math.round(panelRect.top);
+    }
+
+    const minTop = margin;
+    const maxTop = Math.max(minTop, viewportH - height - margin);
+    const clampedTop = Math.min(Math.max(anchorTop, minTop), maxTop);
+
+    this._detailsDrawer.style.left = left + 'px';
+    this._detailsDrawer.style.top = clampedTop + 'px';
+    this._detailsDrawer.style.height = height + 'px';
+  }
+
+  _activateDetailsDrawerListeners() {
+    this._deactivateDetailsDrawerListeners();
+
+    this._detailsDrawerOutsideHandler = (e) => {
+      if (!this._detailsDrawer) return;
+      const path = e.composedPath ? e.composedPath() : [];
+      if (path.includes(this._detailsDrawer)) return;
+      this._closeDetailsDrawer();
+    };
+    document.addEventListener('mousedown', this._detailsDrawerOutsideHandler, true);
+
+    this._detailsDrawerEscHandler = (e) => {
+      if (e.key !== 'Escape') return;
+      if (!this._detailsDrawer) return;
+      const tag = e.target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      e.preventDefault();
+      this._closeDetailsDrawer();
+    };
+    document.addEventListener('keydown', this._detailsDrawerEscHandler);
+
+    this._detailsDrawerResizeHandler = () => this._positionDetailsDrawer();
+    window.addEventListener('resize', this._detailsDrawerResizeHandler);
+  }
+
+  _deactivateDetailsDrawerListeners() {
+    if (this._detailsDrawerOutsideHandler) {
+      document.removeEventListener('mousedown', this._detailsDrawerOutsideHandler, true);
+      this._detailsDrawerOutsideHandler = null;
+    }
+    if (this._detailsDrawerEscHandler) {
+      document.removeEventListener('keydown', this._detailsDrawerEscHandler);
+      this._detailsDrawerEscHandler = null;
+    }
+    if (this._detailsDrawerResizeHandler) {
+      window.removeEventListener('resize', this._detailsDrawerResizeHandler);
+      this._detailsDrawerResizeHandler = null;
+    }
+  }
+
+  _closeDetailsDrawer() {
+    this._expandedReportId = null;
+    this._deactivateDetailsDrawerListeners();
+    if (this._detailsDrawer) {
+      const drawer = this._detailsDrawer;
+      this._detailsDrawer = null;
+      this._detailsDrawerCard = null;
+      drawer.remove();
+    }
   }
 
   _renderCheckbox(reportId, reportLabel) {

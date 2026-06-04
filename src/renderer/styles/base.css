@@ -413,3 +413,9 @@ button, [role="button"], input, select { min-height: 28px; }
   }
   .icon-spin { animation: none; }
 }
+
+html.theme-switching *,
+html.theme-switching *::before,
+html.theme-switching *::after {
+  transition: none !important;
+}

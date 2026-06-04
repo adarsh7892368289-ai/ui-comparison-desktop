@@ -546,21 +546,26 @@ function _findFileRecursive(dir, filename) {
 }
 
 function _extractZip(zipPath, destDir) {
-  const { execSync } = require('child_process');
+  const { execFileSync } = require('child_process');
   if (process.platform === 'win32') {
-    execSync(
-      `powershell -NoProfile -Command "Expand-Archive -Force -Path '${zipPath}' -DestinationPath '${destDir}'"`,
-      { windowsHide: true }
+    execFileSync(
+      'powershell',
+      [
+        '-NoProfile',
+        '-Command',
+        'Expand-Archive -Force -LiteralPath $env:SAUCE_ZIP_PATH -DestinationPath $env:SAUCE_DEST_DIR'
+      ],
+      { windowsHide: true, env: { ...process.env, SAUCE_ZIP_PATH: zipPath, SAUCE_DEST_DIR: destDir } }
     );
   } else {
-    execSync(`unzip -o "${zipPath}" -d "${destDir}"`, { stdio: 'ignore' });
+    execFileSync('unzip', ['-o', zipPath, '-d', destDir], { stdio: 'ignore' });
   }
   return destDir;
 }
 
 function _extractTarGz(tarPath, destDir) {
-  const { execSync } = require('child_process');
-  execSync(`tar -xzf "${tarPath}" -C "${destDir}"`, { stdio: 'ignore' });
+  const { execFileSync } = require('child_process');
+  execFileSync('tar', ['-xzf', tarPath, '-C', destDir], { stdio: 'ignore' });
   return destDir;
 }
 

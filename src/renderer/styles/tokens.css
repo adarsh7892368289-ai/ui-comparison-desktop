@@ -60,8 +60,13 @@
   --status-bar-height: 28px;
 
   --z-dropdown: 10;
+  --z-sticky: 20;
+  --z-popover: 100;
+  --z-modal-backdrop: 900;
+  --z-modal: 910;
+  --z-toast: 1000;
+  --z-tooltip: 1100;
   --main-pane-sticky-offset: 56px;
-  --z-tooltip: 10000;
 
   --transition-fast:   var(--dur-fast) var(--ease-standard);
   --transition-normal: var(--dur-base) var(--ease-standard);

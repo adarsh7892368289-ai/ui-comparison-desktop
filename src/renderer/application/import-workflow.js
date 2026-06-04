@@ -5,104 +5,103 @@ import { Toast, Modal, syncCompareButton } from '../ui.js';
 import { loadAndRenderReports } from './report-manager.js';
 import { syncReportSelectTrigger } from '../components/report-select-combobox.js';
 import { tryLoadCachedComparison } from './compare-workflow.js';
+import { parseReportAoa } from '@core/export/extraction-exporters/report-table-parser.js';
+import { unescapeCsv } from '@core/export/export-utils/csv-utils.js';
 
 const api = window.electronAPI;
 
-function parseCsvToReport(content) {
-  let rows;
-  try {
-    const workbook  = XLSX.read(content, { type: 'string' });
-    const sheetName = workbook.SheetNames[0];
-    if (!sheetName) {
-      console.warn('CSV import: no sheet found in file');
-      return null;
-    }
-    rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: '' });
-  } catch (parseErr) {
-    console.warn('CSV import: failed to parse CSV —', parseErr.message);
-    return null;
-  }
+const CSV_REPORT_SEPARATOR = /^##\s*=====\s*REPORT\s+\d+/iu;
+const BOM_CODE = 0xFEFF;
 
-  if (!rows.length) {
-    console.warn('CSV import: no data rows found');
-    return null;
-  }
-
-  const first = rows[0];
-  if (!first.url) {
-    console.warn('CSV import: unknown CSV format — no url column found; import skipped');
-    return null;
-  }
-
-  let elements = [];
-  if (typeof first.elements === 'string' && first.elements) {
-    try {
-      elements = JSON.parse(first.elements);
-    } catch {
-      elements = [];
-    }
-  } else if (rows.length > 1) {
-    elements = rows.map(r => ({ ...r }));
-  }
-
-  return {
-    id:            first.id            || crypto.randomUUID(),
-    name:          first.name          || first.url,
-    url:           first.url,
-    timestamp:     first.timestamp     || new Date().toISOString(),
-    environment:   first.environment   || null,
-    schemaVersion: first.schemaVersion || null,
-    elements,
-  };
+function _stripBom(text) {
+  return text && text.charCodeAt(0) === BOM_CODE ? text.slice(1) : text;
 }
 
-function parseExcelToReport(base64Content) {
-  const buffer = Uint8Array.from(atob(base64Content), c => c.charCodeAt(0));
-  let rows;
-  try {
-    const workbook  = XLSX.read(buffer, { type: 'array' });
-    const sheetName = workbook.SheetNames[0];
-    if (!sheetName) {
-      console.warn('Excel import: no sheet found in file');
-      return null;
+function _sheetToAoa(sheet) {
+  return XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: true });
+}
+
+function _splitCsvIntoReportBlocks(content) {
+  const lines = _stripBom(content).split(/\r?\n/u);
+  const blocks = [];
+  let current = null;
+  for (const line of lines) {
+    if (CSV_REPORT_SEPARATOR.test(line.trim())) {
+      if (current && current.length) blocks.push(current);
+      current = [];
+      continue;
     }
-    rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: '' });
-  } catch (parseErr) {
-    console.warn('Excel import: failed to parse workbook —', parseErr.message);
-    return null;
+    if (current == null) current = [];
+    current.push(line);
   }
+  if (current && current.length) blocks.push(current);
+  return blocks.length ? blocks : [lines];
+}
 
-  if (!rows.length) {
-    console.warn('Excel import: no data rows found');
-    return null;
-  }
-
-  const first = rows[0];
-  if (!first.url) {
-    console.warn('Excel import: unknown sheet format — no url column found; import skipped');
-    return null;
-  }
-
-  let elements = [];
-  if (typeof first.elements === 'string' && first.elements) {
+function parseCsvToReports(content) {
+  const blocks = _splitCsvIntoReportBlocks(content);
+  const reports = [];
+  for (const block of blocks) {
+    const csv = block.join('\n');
+    let aoa;
     try {
-      elements = JSON.parse(first.elements);
-    } catch {
-      elements = [];
+      const wb = XLSX.read(csv, { type: 'string' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      if (!sheet) continue;
+      aoa = _sheetToAoa(sheet).map((row) =>
+        (Array.isArray(row) ? row.map(unescapeCsv) : row));
+    } catch (err) {
+      console.warn('CSV import: failed to parse block —', err.message);
+      continue;
     }
-  } else if (rows.length > 1) {
-    elements = rows.map(r => ({ ...r }));
+    const report = parseReportAoa(aoa);
+    if (report) reports.push(report);
+  }
+  return reports;
+}
+
+function parseExcelToReports(base64Content) {
+  const buffer = Uint8Array.from(atob(base64Content), (c) => c.charCodeAt(0));
+  let workbook;
+  try {
+    workbook = XLSX.read(buffer, { type: 'array' });
+  } catch (err) {
+    console.warn('Excel import: failed to parse workbook —', err.message);
+    return [];
   }
 
-  return {
-    id:            first.id            || crypto.randomUUID(),
-    name:          first.name          || first.url,
-    url:           first.url,
-    timestamp:     first.timestamp     || new Date().toISOString(),
-    environment:   first.environment   || null,
-    schemaVersion: first.schemaVersion || null,
-    elements,
-  };
+  const names = workbook.SheetNames || [];
+  const reports = [];
+  const metaSheet = names.find((n) => /^metadata$/iu.test(n));
+  const reportSheets = names.filter((n) => /^report[_\s]?\d+/iu.test(n));
+
+  if (reportSheets.length > 0) {
+    for (const name of reportSheets) {
+      const report = parseReportAoa(_sheetToAoa(workbook.Sheets[name]));
+      if (report) reports.push(report);
+    }
+    return reports;
+  }
+
+  if (metaSheet) {
+    const combined = [..._sheetToAoa(workbook.Sheets[metaSheet])];
+    const elemSheet = names.find((n) => /^elements$/iu.test(n));
+    if (elemSheet) {
+      combined.push(['EXTRACTED ELEMENTS']);
+      const elemRows = _sheetToAoa(workbook.Sheets[elemSheet]);
+      for (const r of elemRows) combined.push(r);
+    }
+    const report = parseReportAoa(combined);
+    if (report) reports.push(report);
+    return reports;
+  }
+
+  const sheet = workbook.Sheets[names[0]];
+  if (sheet) {
+    const report = parseReportAoa(_sheetToAoa(sheet));
+    if (report) reports.push(report);
+  }
+  return reports;
 }
 
 async function handleImportReport(file, slot) {
@@ -130,20 +129,20 @@ async function handleImportReport(file, slot) {
       return;
     }
 
-    let report;
+    let parsedReports;
     try {
       if (ipcResult.ext === 'json') {
-        report = JSON.parse(ipcResult.content);
-        if (Array.isArray(report)) { report = report[0]; }
+        const json = JSON.parse(ipcResult.content);
+        parsedReports = Array.isArray(json) ? json : [json];
       } else if (ipcResult.ext === 'csv') {
-        report = parseCsvToReport(ipcResult.content);
-        if (!report) {
+        parsedReports = parseCsvToReports(ipcResult.content);
+        if (!parsedReports.length) {
           Toast.error('CSV format not recognised — check the file was exported from this application');
           return;
         }
       } else if (ipcResult.ext === 'xlsx' || ipcResult.ext === 'xls') {
-        report = parseExcelToReport(ipcResult.content);
-        if (!report) {
+        parsedReports = parseExcelToReports(ipcResult.content);
+        if (!parsedReports.length) {
           Toast.error('Excel format not recognised — check the file was exported from this application');
           return;
         }
@@ -156,53 +155,75 @@ async function handleImportReport(file, slot) {
       return;
     }
 
-    if (!report || !report.url) {
+    const valid = (parsedReports || []).filter((r) => r && r.url);
+    if (!valid.length) {
       Toast.error('Imported file does not contain a valid report');
       return;
     }
 
-    const state    = getState();
-    const reports  = state.reports ?? [];
-    const existing = reports.find(r => r.url === report.url);
-    if (existing) {
-      const confirmed = await Modal.confirm(
-        'Duplicate report',
-        `A report from "${report.url}" already exists. Replace it?`,
-        { confirmText: 'Replace' }
-      );
-      if (!confirmed) { return; }
-      await storage.deleteReport(existing.id);
+    const targetsSlot = slot === 'baseline' || slot === 'compare';
+    const toImport = targetsSlot ? valid.slice(0, 1) : valid;
+
+    let importedCount = 0;
+    let skipped = 0;
+    let lastImported = null;
+
+    for (const report of toImport) {
+      const reports  = getState().reports ?? [];
+      const existing = reports.find((r) => r.url === report.url);
+      if (existing) {
+        const label = toImport.length > 1 ? ` (${importedCount + skipped + 1}/${toImport.length})` : '';
+        const confirmed = await Modal.confirm(
+          'Duplicate report',
+          `A report from "${report.url}" already exists. Replace it?${label}`,
+          { confirmText: 'Replace' }
+        );
+        if (!confirmed) { skipped++; continue; }
+        await storage.deleteReport(existing.id);
+      }
+
+      const imported = {
+        ...report,
+        id:        report.id        ?? crypto.randomUUID(),
+        timestamp: report.timestamp ?? new Date().toISOString(),
+        source:    report.source    ?? 'imported',
+      };
+
+      await storage.saveReport(imported);
+      lastImported = imported;
+      importedCount++;
     }
 
-    const imported = {
-      ...report,
-      id:        report.id        ?? crypto.randomUUID(),
-      timestamp: report.timestamp ?? new Date().toISOString(),
-      source:    'imported',
-    };
-
-    await storage.saveReport(imported);
     await loadAndRenderReports();
 
-    if (slot !== 'baseline' && slot !== 'compare') {
+    if (importedCount === 0) {
+      Toast.info('No reports imported');
+      return;
+    }
+
+    if (!targetsSlot) {
       syncCompareButton();
       tryLoadCachedComparison();
-      Toast.success('Imported report — select it in Compare to use it.');
+      Toast.success(importedCount === 1
+        ? 'Imported report — select it in Compare to use it.'
+        : `Imported ${importedCount} reports — select them in Compare to use them.`);
       return;
     }
 
     const selId = slot === 'baseline' ? 'baseline-report' : 'compare-report';
     const sel   = document.getElementById(selId);
-    if (sel) {
-      sel.value = imported.id;
+    if (sel && lastImported) {
+      sel.value = lastImported.id;
       syncReportSelectTrigger(sel);
     }
 
-    const actionKey = slot === 'baseline' ? 'BASELINE_SELECTED' : 'COMPARE_SELECTED';
-    dispatch(actionKey, { id: imported.id });
+    if (lastImported) {
+      const actionKey = slot === 'baseline' ? 'BASELINE_SELECTED' : 'COMPARE_SELECTED';
+      dispatch(actionKey, { id: lastImported.id });
+    }
     syncCompareButton();
 
-    Toast.success(`Report imported — ${imported.totalElements ?? 0} elements`);
+    Toast.success(`Report imported — ${lastImported?.totalElements ?? 0} elements`);
   } catch (err) {
     Toast.error(err.message ?? 'Import failed');
   }

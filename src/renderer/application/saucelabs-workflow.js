@@ -5,7 +5,11 @@ import storage, { buildPairKey } from '../../infrastructure/idb-repository.js';
 import { loadAndRenderReports } from './report-manager.js';
 import { loadComparisonFromCacheByPairIds } from './compare-workflow.js';
 import { Comparator } from '@core/comparison/comparator.js';
-import { get as getDefault } from '@config/defaults.js';
+import {
+  resolveActiveTolerances,
+  buildToleranceSnapshot,
+  tolerancesPayloadFromActive } from
+'./compare-workflow.js';
 import {
   buildCompareHpidRemap,
   computeDiffKeyframeIds,
@@ -530,8 +534,10 @@ async function _handleExtractionComplete(data) {
     extractionResult: data.report
   })) return;
 
+  const sauceSnapshot = await _resolveSauceSnapshot(data.jobId, data.sessionId);
+
   try {
-    await _persistReport(data.report);
+    await _persistReport(data.report, { snapshot: sauceSnapshot });
   } catch (err) {
     console.error('[sauce-workflow] report persistence failed', err);
   }
@@ -590,10 +596,19 @@ async function _handleComparisonComplete(data) {
 
   const timer = new PhaseTimer({ jobId, logger: console, component: 'sauce-workflow' });
 
+  let baseSnapshot = null;
+  let cmpSnapshot = null;
+  try {
+    baseSnapshot = await _resolveSauceSnapshot(jobId, data.baselineSessionId);
+    cmpSnapshot = await _resolveSauceSnapshot(jobId, data.compareSessionId);
+  } catch (err) {
+    console.error('[sauce-workflow] resolve sauce snapshot failed', err);
+  }
+
   try {
     await timer.time('persistReports', async () => {
-      await _persistReport(baselineReport);
-      await _persistReport(compareReport);
+      await _persistReport(baselineReport, { snapshot: baseSnapshot });
+      await _persistReport(compareReport, { snapshot: cmpSnapshot });
     });
   } catch (err) {
     console.error('[sauce-workflow] report persistence failed', err);
@@ -602,13 +617,17 @@ async function _handleComparisonComplete(data) {
   let comparisonId = null;
   let persistenceResult = null;
   try {
+    const activeTolerances = resolveActiveTolerances(getState());
+    const tolerancesPayload = tolerancesPayloadFromActive(activeTolerances);
+    const sauceTolerancesSnapshot = buildToleranceSnapshot(activeTolerances);
+
     const comparator = new Comparator();
     const baselineInput = { ...baselineReport, elements: baselineReport.elements ?? [] };
     const compareInput = { ...compareReport, elements: compareReport.elements ?? [] };
 
     let comparisonResult = null;
     await timer.time('compare', async () => {
-      const gen = comparator.compare(baselineInput, compareInput, DEFAULT_SAUCE_COMPARISON_MODE);
+      const gen = comparator.compare(baselineInput, compareInput, DEFAULT_SAUCE_COMPARISON_MODE, tolerancesPayload);
       for await (const frame of gen) {
         if (frame.type === 'result') {
           comparisonResult = frame.payload;
@@ -626,13 +645,6 @@ async function _handleComparisonComplete(data) {
         baselineManifest,
         compareManifest
       );
-
-      const sauceDefaults = getDefault('comparison.defaultTolerances', { color: 8, size: 5, opacity: 0.05 });
-      const sauceTolerancesSnapshot = {
-        color:   sauceDefaults.color,
-        size:    sauceDefaults.size,
-        opacity: sauceDefaults.opacity
-      };
 
       const meta = {
         id: comparisonId,
@@ -881,8 +893,113 @@ function _base64ToUint8Array(base64) {
   return bytes;
 }
 
-async function _persistReport(report) {
+function _buildSauceSnapshot(jobRecord, sessionId) {
+  if (!jobRecord) return null;
+  const device = jobRecord.device && typeof jobRecord.device === 'object'
+    ? {
+        name: jobRecord.device.name || null,
+        orientation: jobRecord.device.orientation || null,
+        viewport: jobRecord.device.viewport || null,
+        deviceScaleFactor: typeof jobRecord.device.deviceScaleFactor === 'number'
+          ? jobRecord.device.deviceScaleFactor
+          : null,
+        isMobile: !!jobRecord.device.isMobile,
+        hasTouch: !!jobRecord.device.hasTouch
+      }
+    : null;
+  const snapshot = {
+    jobId: jobRecord.id || null,
+    sessionId: sessionId || null,
+    region: jobRecord.region || null,
+    platform: jobRecord.platform || null,
+    browserName: jobRecord.browserName || null,
+    screenResolution: jobRecord.screenResolution || null,
+    playwrightVersion: jobRecord.playwrightVersion || null,
+    device,
+    buildName: jobRecord.buildName || null,
+    tags: Array.isArray(jobRecord.tags) ? jobRecord.tags.slice() : null,
+    tunnelName: jobRecord.tunnelName || null,
+    tunnelOwner: jobRecord.tunnelOwner || null,
+    visibility: jobRecord.visibility || null,
+    timeout: typeof jobRecord.timeout === 'number' ? jobRecord.timeout : null,
+  };
+  for (const k of Object.keys(snapshot)) {
+    if (snapshot[k] == null || (Array.isArray(snapshot[k]) && snapshot[k].length === 0)) {
+      delete snapshot[k];
+    }
+  }
+  return Object.keys(snapshot).length > 0 ? snapshot : null;
+}
+
+function _captureConfigFromSauce(snapshot) {
+  if (!snapshot) return null;
+  const device = snapshot.device;
+  const isMobile = !!(device && (device.isMobile || device.name));
+
+  let deviceType = 'desktop';
+  let deviceName = null;
+  let viewport = null;
+  let orientation = null;
+  let devicePixelRatio = null;
+  let hasTouch = null;
+
+  if (isMobile) {
+    deviceName = device.name || null;
+    const name = String(deviceName || '');
+    const vp = device.viewport && typeof device.viewport === 'object' ? device.viewport : null;
+    const w = vp && typeof vp.width === 'number' ? vp.width : null;
+    const h = vp && typeof vp.height === 'number' ? vp.height : null;
+    if (w != null && h != null) viewport = { width: w, height: h };
+    const minEdge = w != null && h != null ? Math.min(w, h) : null;
+    if (/iPad|Tablet|Nexus 7|Nexus 10|SM-T|Galaxy Tab/i.test(name)) {
+      deviceType = 'tablet';
+    } else if (minEdge != null) {
+      deviceType = minEdge >= 600 ? 'tablet' : 'phone';
+    } else {
+      deviceType = 'phone';
+    }
+    orientation = device.orientation || (viewport ? (viewport.width >= viewport.height ? 'landscape' : 'portrait') : null);
+    devicePixelRatio = typeof device.deviceScaleFactor === 'number' ? device.deviceScaleFactor : null;
+    hasTouch = device.hasTouch != null ? !!device.hasTouch : true;
+  }
+
+  const cfg = {
+    source: 'cloud',
+    deviceType,
+    deviceName,
+    viewport,
+    devicePixelRatio,
+    screenResolution: snapshot.screenResolution || null,
+    orientation,
+    hasTouch,
+    userAgent: null
+  };
+  return cfg;
+}
+
+async function _resolveSauceSnapshot(jobId, sessionId) {
+  if (!jobId || typeof storage.loadSauceJob !== 'function') return null;
+  try {
+    const job = await storage.loadSauceJob(jobId);
+    return _buildSauceSnapshot(job, sessionId);
+  } catch (err) {
+    console.error('[sauce-workflow] loadSauceJob for snapshot failed', err);
+    return null;
+  }
+}
+
+async function _persistReport(report, sauceContext) {
   if (!report || !report.id) return;
+
+  let sauceSnapshot = null;
+  if (sauceContext?.snapshot) {
+    sauceSnapshot = sauceContext.snapshot;
+  } else if (sauceContext?.jobId) {
+    sauceSnapshot = await _resolveSauceSnapshot(
+      sauceContext.jobId,
+      sauceContext.sessionId || report.sauceSessionId
+    );
+  }
 
   const meta = {
     id: report.id,
@@ -896,8 +1013,12 @@ async function _persistReport(report) {
     platform: report.platform || '',
     sauceSessionId: report.sauceSessionId || null,
     sauceJobId: report.sauceJobId || null,
-    source: 'saucelabs'
+    source: 'saucelabs',
+    sauce: sauceSnapshot,
   };
+
+  const cloudCaptureConfig = _captureConfigFromSauce(sauceSnapshot);
+  if (cloudCaptureConfig) {meta.captureConfig = cloudCaptureConfig;}
 
   const elements = report.elements || [];
   if (typeof storage.saveReport === 'function') {
